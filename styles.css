@@ -183,7 +183,7 @@ button:focus-visible, input:focus-visible, summary:focus-visible {
   pointer-events: none;
 }
 .hud div { display: flex; gap: 10px; }
-.hud dt { width: 64px; flex: none; color: var(--ink-soft); }
+.hud dt { width: 96px; flex: none; color: var(--ink-soft); }
 .hud dd { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 @media (max-width: 600px) {

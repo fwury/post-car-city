@@ -1,12 +1,21 @@
 // Stage 3: neighbourhoods and main streets, worked out per district on a
 // raster of its land (inside its greenways, outside its parks).
 //
+// Each neighbourhood is planned for about 15 000 people, the number its
+// shops, schools and services need. Density varies: highest in the mid-rise
+// core around the station, a little higher along boulevards, and otherwise
+// changing smoothly from rowhouses to perimeter blocks; about one district in
+// three also has a campus (university or hospital), which houses fewer
+// people for its size. So a district has as many neighbourhoods as its
+// people fill, and their areas differ: small where dense, large where not.
+//
 // The district core is a neighbourhood like any other, grown from the
 // station. Where a boulevard runs through the district, neighbourhood
 // centres sit on it and the boulevard is their main street. The remaining
-// centres are spread by farthest-point sampling and a few Lloyd steps, then
-// every neighbourhood is grown over a noisy cost field, so the shapes come
-// out very irregular. Boundaries are traced once per shared stretch and
+// centres are spread by farthest-point sampling and a few Lloyd steps
+// (weighted towards where people live), then every neighbourhood is grown
+// over a noisy cost field, its spreading slowed or quickened until its
+// population is about right, so the shapes come out very irregular. Boundaries are traced once per shared stretch and
 // smoothed in a fixed direction, so both sides match exactly.
 //
 // Main streets (tram, 31 m) are laid out in mainStreets.js as an organic
@@ -21,12 +30,24 @@ import { LruCache } from './cache.js';
 import { keyInts } from './cores.js';
 import { Heap } from './growth.js';
 import { createMainStreets } from './mainStreets.js';
-import { fill, distanceField } from '../util/raster.js';
+import { fill, distanceField, stamp } from '../util/raster.js';
 export { MAIN_STREET_REACH } from './mainStreets.js';
 import { polygonArea, signedArea, simplify, chaikin, pointInPolygon } from '../util/geom.js';
 
 export const NEIGHBOURHOOD_AREA = 0.75e6; // m², typical
-export const NEIGHBOURHOODS = [8, 12]; // per district, besides the core
+export const NEIGHBOURHOOD_PEOPLE = 15000; // residents a neighbourhood's shops, schools and services are planned for
+const BASE_DENSITY = 0.0182; // residents per m² of neighbourhood land, before the variations below
+const CORE_BOOST = 0.8; // the core is this much denser (mid-rise around the station)...
+const CORE_FADE = 900; // ...fading out over about this many metres
+const FORM_LOW = 0.55; // housing form: rowhouses and villas at the low end...
+const FORM_HIGH = 1.45; // ...mid-rise perimeter blocks at the high end
+const FORM_SCALE = 2500; // metres over which the form of housing changes
+const BOULEVARD_BOOST = 0.15; // a little denser along a boulevard
+const CAMPUS_CHANCE = 0.35; // share of districts with a campus neighbourhood (university, hospital)
+const BALANCE_STEPS = 10;
+const LLOYD_STEPS = 6; // rounds of moving the free centres to the middle of their people // rounds of evening out populations after the main streets are in
+const CAMPUS_SHARE = 0.45; // share of a campus neighbourhood's land that is not housing
+export const NEIGHBOURHOODS = [1, 22]; // per district, besides the core (as many as its people fill)
 export const RING_MARGIN = 80; // land this close to a district's greenway is the greenway's
 export const SPINE_REACH = 450; // metres of its main street either side of a centre a neighbourhood grows from
 export const GATEWAY_TWO = 2600; // a shared greenway this long gets two gateways for main streets, else one
@@ -35,6 +56,7 @@ const EDGE_CLEAR = 380; // and this far from a boulevard crossing
 const CELL = 50;
 const SMOOTH_TOL = 32; // metres of raster staircase removed before smoothing
 const OUTSIDE = -1;
+const LABELS = 64; // more than the neighbourhoods a district can have (edge keys are corner * LABELS + label)
 
 const LAND = 1;
 const PARK = 3;
@@ -70,6 +92,8 @@ function along(pts, s) {
 export function createNeighbourhoods(seed, { boulevards }) {
   const mainStreets = createMainStreets(seed);
   const friction = createNoise(seed, 'neighbourhood-friction');
+  // Housing form: perimeter blocks where high, rowhouses and villas where low.
+  const form = createNoise(seed, 'housing-form');
   const cache = new LruCache(4000);
   const crossings = new LruCache(60000);
 
@@ -139,8 +163,25 @@ export function createNeighbourhoods(seed, { boulevards }) {
     for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) if (i === 0 || j === 0 || i === W - 1 || j === H - 1) mask[j * W + i] = 0;
     const land = [];
     for (let n = 0; n < N; n++) if (mask[n] === LAND) land.push(n);
-    const coreCells = Math.max(20, (Math.PI * d.coreRadius * d.coreRadius) / (CELL * CELL));
-    const count = 1 + Math.min(NEIGHBOURHOODS[1], Math.max(NEIGHBOURHOODS[0], Math.round((land.length - coreCells) * CELL * CELL / NEIGHBOURHOOD_AREA)));
+    // ---- People ----
+    // Residents per m² of land: densest around the station, a little denser
+    // along boulevards, and varying smoothly with the form of housing.
+    const onBlvd = new Uint8Array(N);
+    for (const l of d.network.lines) stamp(CELL, onBlvd, W, H, x0, y0, l.points);
+    const fromBlvd = distanceField(CELL, onBlvd, W, H);
+    const dens = new Float64Array(N);
+    let people = 0;
+    for (const n of land) {
+      const r = Math.hypot(cx(n) - S[0], cy(n) - S[1]);
+      const f = Math.min(1, Math.max(0, form.fbm(cx(n) / FORM_SCALE, cy(n) / FORM_SCALE, 2) * 1.8 + 0.5));
+      dens[n] = BASE_DENSITY * (1 + CORE_BOOST * Math.exp(-((r / CORE_FADE) ** 2))) * (FORM_LOW + (FORM_HIGH - FORM_LOW) * f) * (1 + BOULEVARD_BOOST * Math.exp(-fromBlvd[n] / 250));
+      people += dens[n] * CELL * CELL;
+    }
+    // A campus takes in a university or hospital, so it houses fewer people
+    // for its size.
+    const hasCampus = toUnit(hash(seed, 'campus', ...keyInts(d.coreInfo))) < CAMPUS_CHANCE;
+    const residents = people - (hasCampus ? CAMPUS_SHARE * NEIGHBOURHOOD_PEOPLE : 0);
+    const count = 1 + Math.min(NEIGHBOURHOODS[1], Math.max(NEIGHBOURHOODS[0], Math.round(residents / NEIGHBOURHOOD_PEOPLE) - 1));
 
     // Distance from the district's greenways (and parks), so centres keep off them.
     const edgeSrc = new Uint8Array(N);
@@ -159,7 +200,9 @@ export function createNeighbourhoods(seed, { boulevards }) {
       for (let i = 3; i < q.length - 3 && centres.length < count; i += 3) {
         const n = cellOf(q[i][0], q[i][1]);
         if (n < 0 || mask[n] !== LAND || fromEdge[n] < 300) continue;
-        if (len(sub(q[i], S)) < spacing * 1.1 || !farFrom(q[i], spacing)) continue;
+        // Closer together where more people live.
+        const local = Math.sqrt(NEIGHBOURHOOD_PEOPLE / dens[n]) * 1.05;
+        if (len(sub(q[i], S)) < local * 1.1 || !farFrom(q[i], local)) continue;
         centres.push(q[i]);
         onBoulevard.push({ t: unit(sub(q[i + 3], q[i - 3])) });
       }
@@ -187,8 +230,10 @@ export function createNeighbourhoods(seed, { boulevards }) {
       onBoulevard.push({ t: null });
       for (let k = 0; k < pool.length; k++) nearest[k] = Math.min(nearest[k], Math.hypot(cx(pool[k]) - p[0], cy(pool[k]) - p[1]));
     }
-    // Lloyd steps for the free centres; the fixed ones stay put.
-    for (let it = 0; it < 4; it++) {
+    // Lloyd steps for the free centres; the fixed ones stay put. Land is
+    // weighted by the square of its density, which makes each region hold
+    // about as many people rather than as much land.
+    for (let it = 0; it < LLOYD_STEPS; it++) {
       const sx = new Float64Array(count);
       const sy = new Float64Array(count);
       const sn = new Float64Array(count);
@@ -206,9 +251,10 @@ export function createNeighbourhoods(seed, { boulevards }) {
             b = k;
           }
         }
-        sx[b] += x;
-        sy[b] += y;
-        sn[b]++;
+        const wt = (dens[n] / BASE_DENSITY) ** 2;
+        sx[b] += x * wt;
+        sy[b] += y * wt;
+        sn[b] += wt;
       }
       const taken = new Set(centres.slice(0, fixed).map((c) => cellOf(c[0], c[1])));
       for (let k = fixed; k < count; k++) {
@@ -233,6 +279,27 @@ export function createNeighbourhoods(seed, { boulevards }) {
         centres[k] = [cx(b), cy(b)];
       }
     }
+
+    // The campus, if any: one of the free centres, picked by its place alone.
+    let campus = null;
+    if (hasCampus) {
+      let best = -1;
+      for (let k = fixed; k < count; k++) {
+        const u = toUnit(hash(seed, 'campus-site', Math.floor(centres[k][0] / CELL), Math.floor(centres[k][1] / CELL)));
+        if (u > best) {
+          best = u;
+          campus = centres[k];
+        }
+      }
+    }
+    const housing = (k) => (centres[k] === campus ? 1 - CAMPUS_SHARE : 1);
+    // People living in each neighbourhood of a labelling.
+    const peopleOf = (lab, m) => {
+      const pop = new Float64Array(m);
+      for (const n of land) if (lab[n] >= 0) pop[lab[n]] += dens[n] * CELL * CELL;
+      for (let k = 0; k < m; k++) pop[k] *= housing(k);
+      return pop;
+    };
 
     // ---- Growth ----
     const label = new Int16Array(N).fill(OUTSIDE);
@@ -275,17 +342,16 @@ export function createNeighbourhoods(seed, { boulevards }) {
         }
       }
     }
-    // Grow, then even out the sizes by making big neighbourhoods spread more
-    // slowly: the core aims for its own size, the rest share what is left. A
-    // centre left with almost no land is dropped.
+    // Grow, then even out the populations by making the more populous
+    // neighbourhoods spread more slowly, so a dense one ends up small and a
+    // sparse one large. A centre left with almost no one is dropped.
     const speed = centres.map(() => rng.range(0.92, 1.08));
-    for (let it = 0; it < 5; it++) {
+    for (let it = 0; it < 6; it++) {
       grow(speed);
       const m = centres.length;
-      const share = (land.length - coreCells) / (m - 1);
-      const target = (k) => (k === 0 ? coreCells : share);
-      const size = new Float64Array(m);
-      for (const n of land) if (label[n] >= 0) size[label[n]]++;
+      const size = peopleOf(label, m);
+      const share = size.reduce((a, b) => a + b, 0) / m;
+      const target = () => share;
       let small = -1;
       for (let k = 1; k < m; k++) if (size[k] < share * 0.3 && (small < 0 || size[k] < size[small])) small = k;
       if (small >= 0 && it < 4 && m > 3) {
@@ -293,8 +359,8 @@ export function createNeighbourhoods(seed, { boulevards }) {
         for (const arr of [centres, seedCells, speed, onBoulevard]) arr.splice(small, 1);
         continue;
       }
-      if (it >= 2) break;
-      for (let k = 0; k < m; k++) speed[k] = Math.max(0.4, Math.min(2.5, speed[k] * (size[k] / target(k)) ** 0.4));
+      if (it >= 4) break;
+      for (let k = 0; k < m; k++) speed[k] = Math.max(0.4, Math.min(2.5, speed[k] * (size[k] / target(k)) ** 0.5));
     }
     const total = centres.length;
     // Single cells cut off from their own kind join their neighbours.
@@ -419,15 +485,24 @@ export function createNeighbourhoods(seed, { boulevards }) {
         }
       }
     }
+    // Even out the populations: the more populous a neighbourhood, the
+    // slower it spreads next round. The best-balanced round is kept.
     const speed2 = hoods.map(() => 1);
-    for (let it = 0; it < 3; it++) {
+    let bestLabel = null;
+    let bestErr = Infinity;
+    for (let it = 0; it < BALANCE_STEPS; it++) {
       regrow(speed2);
-      if (it === 2) break;
-      const size = new Float64Array(total);
-      for (const n of land) if (label[n] >= 0) size[label[n]]++;
-      const share = (land.length - coreCells) / (total - 1);
-      for (let k = 0; k < total; k++) speed2[k] = Math.max(0.5, Math.min(2.2, speed2[k] * (size[k] / (k === 0 ? coreCells : share)) ** 0.4));
+      const size = peopleOf(label, total);
+      const share = size.reduce((a, b) => a + b, 0) / total;
+      let err = 0;
+      for (let k = 0; k < total; k++) err += (size[k] / share - 1) ** 2;
+      if (err < bestErr) {
+        bestErr = err;
+        bestLabel = label.slice();
+      }
+      for (let k = 0; k < total; k++) speed2[k] = Math.max(0.4, Math.min(2.5, speed2[k] * (size[k] / share) ** 0.35));
     }
+    label.set(bestLabel);
     // Keep each neighbourhood to the one piece that holds its centre; stray
     // pieces go to the neighbourhoods around them.
     const keep = new Uint8Array(N);
@@ -480,6 +555,15 @@ export function createNeighbourhoods(seed, { boulevards }) {
       h.area = h.polygon.length > 2 ? polygonArea(h.polygon) - h.holes.reduce((a, r) => a + (r.length > 2 ? polygonArea(r) : 0), 0) : 0;
       delete h.spine;
     }
+    const pop = peopleOf(label, total);
+    for (const h of hoods) {
+      h.population = Math.round(pop[h.id]);
+      h.campus = centres[h.id] === campus;
+      // People per km² of the neighbourhood's land, and the housing that implies.
+      h.density = h.area > 0 ? Math.round(pop[h.id] / (h.area / 1e6)) : 0;
+      const net = h.campus ? h.density / (1 - CAMPUS_SHARE) : h.density;
+      h.character = h.core ? 'core' : h.campus ? 'campus' : net > 24000 ? 'perimeter blocks' : net > 15000 ? 'mixed' : 'rowhouses';
+    }
     return { hoods, chains: again.chains, crossings, lines: streets.lines };
   }
 
@@ -502,7 +586,7 @@ export function createNeighbourhoods(seed, { boulevards }) {
       to.push(b);
       own.push(l);
       across.push(x);
-      const k = a * 16 + l;
+      const k = a * LABELS + l;
       let list = out.get(k);
       if (!list) out.set(k, (list = []));
       list.push(e);
@@ -548,7 +632,7 @@ export function createNeighbourhoods(seed, { boulevards }) {
       while (e !== undefined && !used[e]) {
         used[e] = 1;
         loop.push(e);
-        const cands = (out.get(to[e] * 16 + own[e]) || []).filter((f) => !used[f]);
+        const cands = (out.get(to[e] * LABELS + own[e]) || []).filter((f) => !used[f]);
         if (cands.length <= 1) {
           e = cands[0];
           continue;

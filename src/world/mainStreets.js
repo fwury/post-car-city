@@ -15,7 +15,12 @@
 // neighbourhood further out (whose route then carries on from there), or a
 // gateway on the district's greenways (where the street carries on into the
 // next district), or failing those the nearest street ahead. Gateways no
-// route reached get a street of their own into the district.
+// route reached get a street of their own into the district. A street may
+// also end at the gate of a district park, which in a wedge of land between
+// two greenways is often the only place it can go.
+//
+// Last, any neighbourhood still without a route of its own gets a cross
+// street through its centre (or close to it), from a T to a T or a park gate.
 //
 // Then every loose end is joined up or trimmed back to its last junction, so
 // no main street dead-ends, and each neighbourhood's centre is put on the
@@ -26,6 +31,7 @@ import { hash, toUnit } from '../core/hash.js';
 import { keyInts } from './cores.js';
 import { distToLine, lineBox, piecesOf } from './boulevards.js';
 import { stamp, distanceField } from '../util/raster.js';
+import { pointInPolygon } from '../util/geom.js';
 
 export const MAIN_STREET_REACH = 600; // nearly all land is this close to a main street
 const CENTRE_SNAP = 450; // a centre off its route moves to a street this close, if one is
@@ -35,8 +41,18 @@ const MAX_ROUTE_TURN = (200 * Math.PI) / 180; // a route through several centres
 const STATION_CLEAR = 250; // routes join the core's streets this far from the station, not at it
 const ROUTE_GAP = 300; // a loose end stops this close beside a street running the same way
 const PAIR_REACH = 1000; // two loose ends this close may join up as one street
+const FILL_SHIFT = 180; // a cross street for a neighbourhood left without a route may pass this far from its centre
+const FILL_GAP = 220; // and may come this close beside a street running the same way
+const FILL_EDGE_GAP = 0; // and may front onto a greenway (held SLIDE_HOLD off it)
+const SLIDE_HOLD = 110; // metres from a greenway's line a street fronting onto it keeps
+const FILL_LONGEST = 2400; // metres, end to end
+const STRAIGHT_RUN = 200; // metres a cross street holds its heading before easing into the field
+const PARK_CELL = 3; // raster value of district park land (see neighbourhoods.js)
+const PARK_GATES = 2; // main streets that may end at one district park's gate, per district
+const PARK_GATE_GAP = 300; // metres between two such gates
+const CAND_GAP = 80; // metres between the points a join tries for
 const HIT_GAP = 50; // a street running into another keeps this clear of its other junctions
-const TARGET_GAP = 160; // how close a street drawn towards a target may run alongside another
+const TARGET_GAP = 260; // how close a street drawn towards a target may run alongside another
 const SLIDE_GAP = 160; // a street heading for a gateway turns along the greenway this close to it
 const CURL_SPAN = 300; // metres over which...
 const CURL_TURN = (100 * Math.PI) / 180; // ...a street turns at most this much
@@ -256,16 +272,16 @@ export function createMainStreets(seed) {
       return out;
     }
     // Is a street running the same way within r of p (other than line `own`)?
-    function crowded(p, dir, r, own) {
+    function crowded(p, dir, r, own, edgeGap = EDGE_GAP) {
       // Not along a greenway edge either.
-      for (const k of edgeNear(p[0], p[1], EDGE_GAP)) {
+      for (const k of edgeNear(p[0], p[1], edgeGap)) {
         const g = edgeSegs[k];
         if (Math.abs(g[4] * dir[0] + g[5] * dir[1]) < PARALLEL) continue;
-        if (segDist(p[0], p[1], g[0], g[1], g[2], g[3]) < EDGE_GAP) return true;
+        if (segDist(p[0], p[1], g[0], g[1], g[2], g[3]) < edgeGap) return true;
       }
       for (const k of segsNear(p[0], p[1], r)) {
         const g = segs[k];
-        if (g[6] === own) continue;
+        if (g[6] === own || trimmed(g)) continue;
         if (Math.abs(g[4] * dir[0] + g[5] * dir[1]) < PARALLEL) continue;
         if (segDist(p[0], p[1], g[0], g[1], g[2], g[3]) < r) return true;
       }
@@ -338,6 +354,25 @@ export function createMainStreets(seed) {
     // What the last resolve pass kept of each line: [lo, hi], an untrimmed
     // end left open so a line extended later keeps its new part.
     const kept = new Map();
+    // Streets ending at a district park's gate, by park.
+    const gates = new Map();
+    function parkGate(q) {
+      const n = grid.cellOf(q[0], q[1]);
+      if (n < 0 || grid.mask[n] !== PARK_CELL) return null;
+      const pk = d.parks.find((x) => pointInPolygon(q[0], q[1], x.shape));
+      if (!pk) return null;
+      const at = gates.get(pk.key) || [];
+      if (at.length >= PARK_GATES || at.some((g) => len(sub(g, q)) < PARK_GATE_GAP)) return null;
+      return pk.key;
+    }
+    const isGate = (k) => k.startsWith('park:');
+    const gateOf = (k) => k.slice(5, k.lastIndexOf('#'));
+    function addGate(key, q) {
+      if (!gates.has(key)) gates.set(key, []);
+      const at = gates.get(key);
+      at.push(q);
+      return `park:${key}#${at.length}`;
+    }
     const routeOf = new Map(); // hood id -> line through its centre
     const arrived = new Map(); // hood id -> line whose outward half ended at its centre
     const gatewayUsed = new Set();
@@ -364,7 +399,7 @@ export function createMainStreets(seed) {
     // Ends on reaching the target, in a T on the first street that carries on
     // past it (when `stopAtHit`), at the greenway, or beside a parallel street.
     // With `aim` the target only draws the street on; it is not an end.
-    function steer(p, dir, id, { target = null, approach = null, stopAtHit = false, gap = ROUTE_GAP, pull = 0.5, aim = false } = {}) {
+    function steer(p, dir, id, { target = null, approach = null, stopAtHit = false, gap = ROUTE_GAP, pull = 0.5, aim = false, straight = false, slide = false, edgeGap = EDGE_GAP, parkEnds = false } = {}) {
       const pts = [p];
       let cur = p;
       let d0 = dir;
@@ -376,7 +411,9 @@ export function createMainStreets(seed) {
       const heading = [0];
       const back = Math.round(CURL_SPAN / STEP);
       while (travelled < MAX_LENGTH) {
+        // (A straight street eases only gradually into the field.)
         let want = follow(cur[0], cur[1], d0);
+        if (straight && travelled < STRAIGHT_RUN) want = unit([want[0] + d0[0] * 2, want[1] + d0[1] * 2]);
         let r = Infinity;
         if (target) {
           r = len(sub(target, cur));
@@ -407,6 +444,18 @@ export function createMainStreets(seed) {
             }
           }
         }
+        if (slide) {
+          // Up against the greenway: turn to front onto it rather than run into it.
+          // It eases in to run SLIDE_HOLD from the greenway's line.
+          const e = edgeAlong(cur, SLIDE_GAP);
+          if (e) {
+            const tt = dot(e.t, d0) >= 0 ? e.t : [-e.t[0], -e.t[1]];
+            const k = Math.min(1, (1 - e.r / SLIDE_GAP) * 2);
+            const a = Math.max(-0.3, Math.min(0.7, (SLIDE_HOLD - e.r) / SLIDE_HOLD));
+            const along = unit([tt[0] + e.away[0] * a, tt[1] + e.away[1] * a]);
+            want = unit([want[0] * (1 - k) + along[0] * k, want[1] * (1 - k) + along[1] * k]);
+          }
+        }
         const v = towards(d0, want, MAX_TURN);
         const turn = heading[heading.length - 1] + Math.atan2(d0[0] * v[1] - d0[1] * v[0], dot(d0, v));
         const was = heading[Math.max(0, heading.length - back)];
@@ -422,11 +471,19 @@ export function createMainStreets(seed) {
             return { pts, end: 'hit' };
           }
         }
+        // A street may end at the gate of a district park.
+        if (parkEnds && !isLand(next[0], next[1])) {
+          const park = parkGate(next);
+          if (park) {
+            pts.push(next);
+            return { pts, end: 'park', park };
+          }
+        }
         // A gateway lies on the greenway's line, so the last stretch to it leaves the land.
         if (!isLand(next[0], next[1]) && !(target && approach && r < STUB + 80)) return { pts, end: 'edge' };
         // Never alongside another street (one with a target is let close in
         // only near the end, where it turns in to meet it).
-        if (travelled > 100 && (pts.length & 1) === 0 && (!target || r > 200) && crowded(next, v, target ? TARGET_GAP : gap, id)) return { pts, end: 'crowded' };
+        if (travelled > 100 && (pts.length & 1) === 0 && (!target || r > 200) && crowded(next, v, target ? TARGET_GAP : gap, id, edgeGap)) return { pts, end: 'crowded' };
         pts.push(next);
         heading.push(turn);
         cur = next;
@@ -479,8 +536,9 @@ export function createMainStreets(seed) {
       }
       // Otherwise on along the field to the first street that carries on past it,
       // or failing that, drawn towards the nearest such street ahead.
-      const r = steer(p, out, id, { stopAtHit: true });
+      const r = steer(p, out, id, { stopAtHit: true, parkEnds: true });
       if (r.end === 'hit' && fits(r.pts)) return { pts: r.pts };
+      if (r.end === 'park' && fits(r.pts)) return { pts: r.pts, park: r.park };
       const q = streetAhead(p, out, id);
       if (q) {
         const r2 = steer(p, out, id, { target: q, stopAtHit: true, pull: 0.6, aim: true });
@@ -595,6 +653,7 @@ export function createMainStreets(seed) {
         gatewayUsed.add(res.gateway.key);
         l.crossingEnd = res.gateway.key;
       }
+      if (res.park) l.crossingEnd = addGate(res.park, l.points[l.points.length - 1]);
     }
 
     const routeOrder = hoods.filter((h) => !h.core && !h.onBoulevard).sort((a, b) => fromCore(a.seed) - fromCore(b.seed) || a.id - b.id);
@@ -615,7 +674,10 @@ export function createMainStreets(seed) {
         const r = len(sub(h.seed, x.p));
         if (r < 2500 && dot(sub(h.seed, x.p), x.n) > 0 && (!goal || r < goal.r)) goal = { r, p: h.seed };
       }
-      const on = steer(stub[stub.length - 1], x.n, id, { target: goal ? goal.p : S, stopAtHit: true, pull: 0.4, aim: true });
+      // It joins the nearest street ahead (clear of the station), or failing
+      // that heads for the nearest centre with a route, or the core.
+      const ahead = streetAhead(stub[stub.length - 1], x.n, id, STATION_CLEAR);
+      const on = steer(stub[stub.length - 1], x.n, id, { target: ahead || (goal ? goal.p : S), stopAtHit: true, pull: ahead ? 0.5 : 0.4, aim: true });
       const pts = stub.concat(on.pts.slice(1));
       const l = place(pts.length >= 3 ? pts : pts.concat([[pts[pts.length - 1][0] + x.n[0], pts[pts.length - 1][1] + x.n[1]]]), { crossing: x.key, protectStart: true });
       stubIds.add(l.id);
@@ -699,6 +761,11 @@ export function createMainStreets(seed) {
       if (Math.hypot(a[0] - b[0], a[1] - b[1]) < 1) return true;
       return at >= THROUGH_B && at <= q.length - 1 - THROUGH_B;
     }
+    // Is a segment on a part of its line that resolve has trimmed away?
+    function trimmed(g) {
+      const t = kept.get(g[6]);
+      return !!t && (g[7] + 1 < t[0] || g[7] > t[1]);
+    }
     function passesThrough(id, at) {
       if (id < 0) return boulevardThrough(id, at);
       const l = lineById.get(id);
@@ -745,6 +812,11 @@ export function createMainStreets(seed) {
         }
       }
       cands.sort((a, b) => a.r - b.r);
+      // Spread out: no two candidates within CAND_GAP of each other.
+      const spread = [];
+      for (const c of cands) if (!spread.some((o) => len(sub(o.q, c.q)) < CAND_GAP)) spread.push(c);
+      cands.length = 0;
+      cands.push(...spread);
       for (const { q } of cands.slice(0, 5)) {
         // A gentle curve carrying on from the street's heading into the target.
         const r = len(sub(q, from));
@@ -817,6 +889,7 @@ export function createMainStreets(seed) {
         return true;
       }
       const x = crossings.find((c) => c.key === l.crossing);
+      if (!x) return false;
       const pts = [x.p];
       let cur = x.p;
       for (let r = STEP; r <= 1500; r += STEP) {
@@ -835,13 +908,16 @@ export function createMainStreets(seed) {
         pts.push(next);
         cur = next;
       }
-      // Really the last resort: a wider, longer join, allowed near other junctions.
-      let extra = connector(l.points[l.points.length - 1], l.id, endDir(l.points, false), 1000, -0.3, null, 40);
-      if (extra.length && !curls(l.points.concat(extra))) {
-        const from = l.points.length - 1;
-        l.points = l.points.concat(extra);
-        addLine(l.points.slice(from), l.id, from);
-        return true;
+      // Really the last resorts: a wider, longer join, allowed near other
+      // junctions, and then a short one right by them (better than a dead end).
+      for (const [limit, cone, gap] of [[1000, -0.3, 40], [300, -0.5, 0]]) {
+        const extra = connector(l.points[l.points.length - 1], l.id, endDir(l.points, false), limit, cone, null, gap);
+        if (extra.length && !curls(l.points.concat(extra))) {
+          const from = l.points.length - 1;
+          l.points = l.points.concat(extra);
+          addLine(l.points.slice(from), l.id, from);
+          return true;
+        }
       }
       return false;
     }
@@ -1103,6 +1179,102 @@ export function createMainStreets(seed) {
       all = keep(resolve());
       settle();
     }
+
+    // Neighbourhoods still without a route of their own get a cross street
+    // through the centre (or a spot close to it), in a T on a through street
+    // at each end, keeping its distance from streets running the same way.
+    const routed = (h) => all.some((l) => l.alive && l.hoodPos && l.hoodPos.has(h.id) && l.hoodPos.get(h.id) >= l.lo && l.hoodPos.get(h.id) <= l.hi);
+    let filled = false;
+    for (const h of hoods.slice().sort((a, b) => fromCore(a.seed) - fromCore(b.seed) || a.id - b.id)) {
+      if (h.core || h.onBoulevard || routed(h)) continue;
+      // A loose street ending close by carries on through the centre instead.
+      let carried = false;
+      for (const a of all) {
+        const l = a.alive && a.lonely && !a.crossingEnd ? lineById.get(a.id) : null;
+        if (!l || len(sub(l.points[l.points.length - 1], h.seed)) > FILL_SHIFT * 1.5) continue;
+        const r = steer(l.points[l.points.length - 1], endDir(l.points, false), l.id, { stopAtHit: true, gap: FILL_GAP, straight: true, slide: true, edgeGap: FILL_EDGE_GAP, parkEnds: true });
+        if (r.end !== 'hit' && r.end !== 'park') continue;
+        const pts = l.points.concat(r.pts.slice(1));
+        if (curls(pts)) continue;
+        const from = l.points.length - 1;
+        l.points = pts;
+        addLine(pts.slice(from), l.id, from);
+        if (r.end === 'park') l.crossingEnd = addGate(r.park, pts[pts.length - 1]);
+        let at = 0;
+        for (let i = 1; i < pts.length; i++) if (len(sub(pts[i], h.seed)) < len(sub(pts[at], h.seed))) at = i;
+        h.seed = pts[at];
+        l.hoodPos = new Map([...(l.hoodPos || []), [h.id, at]]);
+        carried = filled = true;
+        break;
+      }
+      if (carried) continue;
+      const id = nextId;
+      let best = null;
+      const spots = [h.seed];
+      for (let k = 0; k < 8; k++) spots.push([h.seed[0] + Math.cos((k * Math.PI) / 4) * FILL_SHIFT, h.seed[1] + Math.sin((k * Math.PI) / 4) * FILL_SHIFT]);
+      for (const p of spots) {
+        if (!isLand(p[0], p[1]) || segsNear(p[0], p[1], 60).some((k) => segs[k][6] !== 0 && segDist(p[0], p[1], segs[k][0], segs[k][1], segs[k][2], segs[k][3]) < 60)) continue;
+        const [fa, fb] = field(p[0], p[1]);
+        const heads = [fa, fb];
+        for (let k = 0; k < 6; k++) heads.push([Math.cos((k * Math.PI) / 6), Math.sin((k * Math.PI) / 6)]);
+        // A candidate: half a ends in a T or at a park gate, half b in a T.
+        const consider = (a, b) => {
+          if ((a.end !== 'hit' && a.end !== 'park') || b.end !== 'hit') return;
+          const pts = b.pts.slice().reverse().concat(a.pts.slice(1));
+          const L = pathLength(pts);
+          if (L > FILL_LONGEST || curls(pts) || pathLength(a.pts) < JUNCTION_GAP || pathLength(b.pts) < JUNCTION_GAP) return;
+          // Nowhere alongside another street, save where it turns in at its ends.
+          const n0 = Math.ceil(120 / STEP);
+          for (let i = n0; i < pts.length - n0; i += 2) if (crowded(pts[i], unit(sub(pts[i + 1], pts[i - 1])), FILL_GAP, id, 0)) return;
+          // Short, straight, and through the centre itself if it can be.
+          const score = L + turning(pts) * 400 + len(sub(p, h.seed)) * 2;
+          if (!best || score < best.score) best = { score, pts, p, at: b.pts.length - 1, park: a.end === 'park' ? a.park : null };
+        };
+        const opts = { stopAtHit: true, gap: FILL_GAP, straight: true, slide: true, edgeGap: FILL_EDGE_GAP, parkEnds: true };
+        for (const v of heads) {
+          const a = steer(p, v, id, opts);
+          consider(a, steer(p, [-v[0], -v[1]], id, { ...opts, parkEnds: a.end !== 'park' }));
+        }
+        // In a wedge of land ending at a park: up to its gate, and back the
+        // other way to the nearest street that carries on.
+        for (const pk of d.parks) {
+          const c = pk.shape.reduce((m, q) => [m[0] + q[0] / pk.shape.length, m[1] + q[1] / pk.shape.length], [0, 0]);
+          if (len(sub(c, p)) > FILL_LONGEST) continue;
+          const v = unit(sub(c, p));
+          const a = steer(p, v, id, { target: c, aim: true, pull: 0.7, parkEnds: true, stopAtHit: true, gap: FILL_GAP, edgeGap: 0 });
+          if (a.end !== 'park') continue;
+          const back = [-v[0], -v[1]];
+          const q = streetAhead(p, back, id, 0, -0.2);
+          consider(a, q ? steer(p, back, id, { target: q, aim: true, pull: 0.6, stopAtHit: true, gap: FILL_GAP }) : steer(p, back, id, opts));
+        }
+        if (best && p === h.seed) break;
+      }
+      if (!best) continue;
+      h.seed = best.p;
+      const extra = best.park ? { crossingEnd: addGate(best.park, best.pts[best.pts.length - 1]) } : {};
+      const nl = place(best.pts, { hood: h.id, hoodPos: new Map([[h.id, best.at]]), ...extra });
+      filled = true;
+      // A loose street ending close by may bend round into the new one.
+      for (const a of all) {
+        const l = a.alive && a.lonely && !a.crossingEnd ? lineById.get(a.id) : null;
+        if (!l || distToLine(l.points[l.points.length - 1][0], l.points[l.points.length - 1][1], nl.points) > 400) continue;
+        for (const cone of [0.5, 0, -0.5]) {
+          const ex = connector(l.points[l.points.length - 1], l.id, endDir(l.points, false), 400, cone, (o) => o === nl.id, 40);
+          if (ex.length && !curls(l.points.concat(ex))) {
+            const from = l.points.length - 1;
+            l.points = l.points.concat(ex);
+            addLine(l.points.slice(from), l.id, from);
+            break;
+          }
+        }
+      }
+    }
+    // Anything left loose may join the new streets.
+    if (filled) {
+      all = keep(resolve());
+      settle();
+    }
+
     const pointAt = (pts, pos) => {
       const i = Math.min(pts.length - 2, Math.floor(pos));
       const t = pos - i;
@@ -1120,9 +1292,14 @@ export function createMainStreets(seed) {
         out.push({
           key: `${d.key}:m${l.id}`,
           id: l.id,
-          kind: l.crossing ? 'crossing' : 'street',
-          crossing: l.crossing || null,
-          crossingEnd: l.crossingEnd || null,
+          kind: l.crossing && !isGate(l.crossing) ? 'crossing' : 'street',
+          crossing: l.crossing && !isGate(l.crossing) ? l.crossing : null,
+          // (A street turned round to start at a park gate, or ending at one.)
+          parkStart: l.crossing && isGate(l.crossing) ? gateOf(l.crossing) : null,
+          crossingEnd: l.crossingEnd && !isGate(l.crossingEnd) ? l.crossingEnd : null,
+          parkEnd: l.crossingEnd && isGate(l.crossingEnd) ? gateOf(l.crossingEnd) : null,
+          // Neighbourhoods whose own main street this is (through their centre).
+          serves: [...(l.hoodPos || [])].filter(([, i]) => i >= l.lo && i <= l.hi).map(([k]) => k).sort((a, b) => a - b),
           points: pts,
           bbox: lineBox(pts),
           pieces: piecesOf(pts),

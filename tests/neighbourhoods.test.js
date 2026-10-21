@@ -41,7 +41,7 @@ test('stage 3 does not depend on visiting order', () => {
   assert.deepEqual(fwd, rev);
 });
 
-test('districts have a core and 8 to 12 irregular neighbourhoods of about 0.75 km²', () => {
+test('districts have a core and irregular neighbourhoods', () => {
   let conv = 0;
   let n = 0;
   for (const d of inner()) {
@@ -50,14 +50,7 @@ test('districts have a core and 8 to 12 irregular neighbourhoods of about 0.75 k
     assert.ok(core.core && pointInPolygon(d.station[0], d.station[1], core.polygon), `${d.key} core misses its station`);
     assert.ok(core.area > 0.12e6 && core.area < 0.9e6, `${d.key} core is ${(core.area / 1e6).toFixed(2)} km²`);
     const rest = hoods.slice(1);
-    assert.ok(rest.length <= NEIGHBOURHOODS[1], `${d.key} has ${rest.length} neighbourhoods`);
-    // Small districts can drop a boxed-in centre or two.
-    if (d.area > 6e6) assert.ok(rest.length >= NEIGHBOURHOODS[0], `${d.key} has ${rest.length} neighbourhoods`);
-    else assert.ok(rest.length >= NEIGHBOURHOODS[0] - 2, `${d.key} has ${rest.length} neighbourhoods`);
-    if (d.area > 6e6 && d.area < 12e6) {
-      const mean = rest.reduce((s, h) => s + h.area, 0) / rest.length;
-      assert.ok(mean > 0.5e6 && mean < 1.1e6, `${d.key} neighbourhoods average ${(mean / 1e6).toFixed(2)} km²`);
-    }
+    assert.ok(rest.length >= NEIGHBOURHOODS[0] && rest.length <= NEIGHBOURHOODS[1], `${d.key} has ${rest.length} neighbourhoods`);
     for (const h of rest) {
       assert.ok(h.area > 0.05e6, `${h.key} is only ${(h.area / 1e6).toFixed(2)} km²`);
       conv += polygonArea(h.polygon) / polygonArea(hull(h.polygon));
@@ -65,6 +58,45 @@ test('districts have a core and 8 to 12 irregular neighbourhoods of about 0.75 k
     }
   }
   assert.ok(conv / n < 0.9, `neighbourhoods are too regular (convexity ${(conv / n).toFixed(2)})`);
+});
+
+test('each neighbourhood houses about 15 000 people, at its own density', () => {
+  const all = inner().flatMap((d) => d.stage3.hoods);
+  const near = all.filter((h) => h.population >= 12000 && h.population <= 18000).length;
+  assert.ok(near / all.length > 0.85, `only ${near} of ${all.length} neighbourhoods have 12 000 to 18 000 people`);
+  for (const h of all) assert.ok(h.population > 5000 && h.population < 27000, `${h.key} has ${h.population} people`);
+  // So areas differ: dense perimeter blocks small, rowhouses and campuses large.
+  const areas = all.map((h) => h.area).sort((a, b) => a - b);
+  assert.ok(areas[Math.floor(areas.length * 0.95)] / areas[Math.floor(areas.length * 0.05)] > 1.8, 'neighbourhoods are all much the same size');
+  const kinds = new Set(all.map((h) => h.character));
+  for (const k of ['core', 'perimeter blocks', 'mixed', 'rowhouses', 'campus']) assert.ok(kinds.has(k), `no ${k} neighbourhood`);
+  const dense = all.filter((h) => h.character === 'perimeter blocks');
+  const low = all.filter((h) => h.character === 'rowhouses');
+  const mean = (l) => l.reduce((s, h) => s + h.area, 0) / l.length;
+  assert.ok(mean(low) > mean(dense) * 1.3, 'rowhouse neighbourhoods should be larger than perimeter-block ones');
+});
+
+test('every neighbourhood has a main street, and few have more than three', () => {
+  let many = 0;
+  let total = 0;
+  for (const d of inner()) {
+    const lines = d.stage3.lines.map((l) => l.points).concat(d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => l.points));
+    for (const h of d.stage3.hoods) {
+      const inside = (x, y) => pointInPolygon(x, y, h.polygon) && !h.holes.some((r) => pointInPolygon(x, y, r));
+      let streets = 0;
+      for (const p of lines) {
+        let m = 0;
+        for (let i = 1; i < p.length; i++) if (inside((p[i][0] + p[i - 1][0]) / 2, (p[i][1] + p[i - 1][1]) / 2)) m += Math.hypot(p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]);
+        if (m >= 250) streets++;
+      }
+      assert.ok(streets >= 1, `${h.key} has no main street of its own`);
+      if (!h.core) {
+        total++;
+        if (streets > 3) many++;
+      }
+    }
+  }
+  assert.ok(many <= total * 0.05, `${many} of ${total} neighbourhoods have more than three main streets`);
 });
 
 test('neighbouring neighbourhoods share their boundary exactly', () => {
@@ -215,13 +247,19 @@ test('main streets run through the middle of their neighbourhoods', () => {
   assert.ok(inside / total > 0.9, `only ${inside} of ${total} centres lie inside their own neighbourhood`);
 });
 
-test('main streets never dead-end', () => {
+test('main streets never dead-end (they may end at a park gate)', () => {
   for (const d of inner()) {
     const lines = streetsOf(d);
     for (const l of d.stage3.lines) {
-      const ends = [[l.points[0], !!l.crossing], [l.points[l.points.length - 1], !!l.crossingEnd]];
-      for (const [e, crossingStart] of ends) {
+      const ends = [[l.points[0], !!l.crossing, l.parkStart], [l.points[l.points.length - 1], !!l.crossingEnd, l.parkEnd]];
+      for (const [e, crossingStart, park] of ends) {
         if (crossingStart) continue; // carries on in the next district
+        if (park) {
+          // Or ends at the gate of one of the district's parks.
+          const pk = d.parks.find((x) => x.key === park);
+          assert.ok(pk && distToLine(e[0], e[1], pk.shape.concat([pk.shape[0]])) < 60, `${l.key} ends away from park ${park}`);
+          continue;
+        }
         const on = lines.some((q) => q !== l.points && distToLine(e[0], e[1], q) < 1);
         assert.ok(on, `${l.key} dead-ends at ${e.map(Math.round)}`);
       }
