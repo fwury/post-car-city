@@ -1,4 +1,4 @@
-// Draws districts: cores, boulevards, greenways, streams, district parks, lakes.
+// Draws districts: cores, boulevards, greenways, streams and district parks.
 // Shared by the main thread (close zoom, drawn straight to screen) and the
 // tile workers (far zoom, drawn into cached tiles).
 //
@@ -7,6 +7,13 @@
 // shared feature drawn by both neighbours looks the same as drawn once.
 
 import { BOULEVARD_WIDTH, GREENWAY_MAX } from '../world/districts.js';
+import { ROUNDABOUT_RADIUS } from '../world/boulevards.js';
+import { STREET_TYPES } from '../world/streetTypes.js';
+
+const MAIN_STREET_WIDTH = STREET_TYPES.mainStreet.width;
+const TRAM_WIDTH = 7;
+export const MAIN_STREET_MIN_ZOOM = 0.02;
+const TRAM_MIN_ZOOM = 0.2;
 import { palette } from './styles.js';
 
 export const LOD_STEPS = [
@@ -42,7 +49,6 @@ function pathsFor(world, d, segLen) {
     greenLines: new Path2D(),
     streams: new Path2D(),
     parks: new Path2D(),
-    lakes: new Path2D(),
     ring: new Path2D(),
   };
   addPoly(p.core, d.core, ox, oy, true);
@@ -62,10 +68,40 @@ function pathsFor(world, d, segLen) {
   for (const s of g.streams) addPoly(p.streams, s, ox, oy, false);
   for (const pk of d.parks) {
     addPoly(p.parks, pk.shape, ox, oy, true);
-    if (pk.lake) addPoly(p.lakes, pk.lake.shape, ox, oy, true);
   }
   addPoly(p.ring, g.ring, ox, oy, true);
   pathCache.set(g, p);
+  return p;
+}
+
+// Neighbourhood paths, cached per district's stage 3 result.
+const hoodCache = new WeakMap();
+
+function hoodPathsFor(d, nb) {
+  let p = hoodCache.get(nb);
+  if (p) return p;
+  const [ox, oy] = d.origin;
+  // Colour neighbourhoods so neighbours differ.
+  const adj = nb.hoods.map(() => new Set());
+  for (const c of nb.chains) if (c.a >= 0 && c.b >= 0) {
+    adj[c.a].add(c.b);
+    adj[c.b].add(c.a);
+  }
+  const colour = [];
+  for (const h of nb.hoods) {
+    let k = 0;
+    while (k < 3 && [...adj[h.id]].some((o) => colour[o] === k)) k++;
+    colour[h.id] = k;
+  }
+  p = { tints: palette.hoodTints.map(() => new Path2D()), lines: new Path2D(), centres: nb.hoods.map((h) => h.centre), streets: new Path2D() };
+  for (const h of nb.hoods) {
+    if (h.core || h.polygon.length < 3) continue;
+    addPoly(p.tints[colour[h.id]], h.polygon, ox, oy, true);
+    for (const r of h.holes) if (r.length > 2) addPoly(p.tints[colour[h.id]], r, ox, oy, true);
+  }
+  for (const c of nb.chains) if (c.a >= 0 && c.b >= 0) addPoly(p.lines, c.points, ox, oy, false);
+  for (const l of nb.lines) addPoly(p.streets, l.points, ox, oy, false);
+  hoodCache.set(nb, p);
   return p;
 }
 
@@ -97,6 +133,19 @@ export function drawDistricts(ctx, view, world, layers) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
 
+  const wantHoods = layers.neighbourhoods || (layers.streets && zoom >= MAIN_STREET_MIN_ZOOM);
+  const hoods = wantHoods ? items.map(({ d }) => ({ d, h: hoodPathsFor(d, world.neighbourhoods(d)) })) : [];
+
+  if (layers.neighbourhoods) {
+    palette.hoodTints.forEach((tint, k) => {
+      ctx.fillStyle = tint;
+      for (const { d, h } of hoods) {
+        place(d);
+        ctx.fill(h.tints[k], 'evenodd');
+      }
+    });
+  }
+
   if (layers.cores) {
     ctx.fillStyle = palette.core;
     for (const { d, p } of items) {
@@ -106,15 +155,49 @@ export function drawDistricts(ctx, view, world, layers) {
   }
 
   if (layers.streets) {
-    const lines = world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s).map((b) => ({ b, path: boulevardPath(b) }));
+    const net = world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s);
+    const lines = net.lines.map((b) => ({ b, path: boulevardPath(b) }));
     const w = Math.max(BOULEVARD_WIDTH, px(zoom < 0.03 ? 1.1 : 1.6));
-    const passes = zoom >= 0.05 ? [[palette.roadCasing, w + px(1.5)], [palette.road, w]] : [[palette.road, w]];
-    for (const [colour, width] of passes) {
+    const mw = Math.max(MAIN_STREET_WIDTH, px(zoom < 0.03 ? 0.7 : 1.1));
+    const casing = zoom >= 0.05;
+    const passes = casing ? [[palette.roadCasing, px(1.5)], [palette.road, 0]] : [[palette.road, 0]];
+    for (const [colour, extra] of passes) {
       ctx.strokeStyle = colour;
-      ctx.lineWidth = width;
+      if (layers.streets && zoom >= MAIN_STREET_MIN_ZOOM) {
+        ctx.lineWidth = mw + extra;
+        for (const { d, h } of hoods) {
+          place(d);
+          ctx.stroke(h.streets);
+        }
+      }
+      ctx.lineWidth = w + extra;
       for (const { b, path } of lines) {
         ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
         ctx.stroke(path);
+      }
+    }
+    // Tram tracks down the middle of boulevards and main streets.
+    if (zoom >= TRAM_MIN_ZOOM) {
+      ctx.strokeStyle = palette.tram;
+      ctx.lineWidth = TRAM_WIDTH;
+      for (const { d, h } of hoods) {
+        place(d);
+        ctx.stroke(h.streets);
+      }
+      for (const { b, path } of lines) {
+        ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
+        ctx.stroke(path);
+      }
+    }
+    // Roundabout islands.
+    const island = net.roundabouts.length ? ROUNDABOUT_RADIUS - w / 2 - (zoom >= 0.05 ? px(0.75) : 0) : 0;
+    if (island > px(1)) {
+      ctx.fillStyle = palette.green;
+      ctx.setTransform(s, 0, 0, s, 0, 0);
+      for (const r of net.roundabouts) {
+        ctx.beginPath();
+        ctx.arc(r.x - x0, r.y - y0, island, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
   }
@@ -153,18 +236,25 @@ export function drawDistricts(ctx, view, world, layers) {
     }
   }
 
-  if (layers.water) {
-    ctx.fillStyle = palette.water;
-    for (const { d, p } of items) {
+  if (layers.neighbourhoods) {
+    ctx.strokeStyle = palette.hoodLine;
+    ctx.lineWidth = px(1.2);
+    ctx.setLineDash([px(5), px(4)]);
+    for (const { d, h } of hoods) {
       place(d);
-      ctx.fill(p.lakes);
+      ctx.stroke(h.lines);
     }
+    ctx.setLineDash([]);
     if (zoom >= 0.05) {
-      ctx.strokeStyle = palette.waterEdge;
-      ctx.lineWidth = px(1);
-      for (const { d, p } of items) {
+      ctx.fillStyle = palette.hoodCentre;
+      for (const { d, h } of hoods) {
         place(d);
-        ctx.stroke(p.lakes);
+        ctx.beginPath();
+        for (const [x, y] of h.centres) {
+          ctx.moveTo(x - d.origin[0] + px(3.5), y - d.origin[1]);
+          ctx.arc(x - d.origin[0], y - d.origin[1], px(3.5), 0, Math.PI * 2);
+        }
+        ctx.fill();
       }
     }
   }

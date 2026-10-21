@@ -66,3 +66,69 @@ export function polylineNormals(pts) {
   }
   return out;
 }
+
+// Douglas-Peucker simplification, keeping both ends. Removes the parcel-grid
+// staircase before smoothing.
+export function simplify(pts, tol) {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    const [ax, ay] = pts[a];
+    const [bx, by] = pts[b];
+    const len = Math.hypot(bx - ax, by - ay);
+    let best = -1;
+    let bd = tol;
+    for (let i = a + 1; i < b; i++) {
+      const [px, py] = pts[i];
+      const d = len > 0 ? Math.abs((bx - ax) * (ay - py) - (ax - px) * (by - ay)) / len : Math.hypot(px - ax, py - ay);
+      if (d > bd) {
+        bd = d;
+        best = i;
+      }
+    }
+    if (best > 0) {
+      keep[best] = 1;
+      stack.push([a, best], [best, b]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+export function chaikin(pts, closed) {
+  const out = closed ? [] : [pts[0]];
+  const n = pts.length;
+  const segs = closed ? n : n - 1;
+  for (let i = 0; i < segs; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+    out.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+  }
+  if (!closed) out.push(pts[n - 1]);
+  return out;
+}
+
+// Even spacing along a polyline, keeping both ends.
+export function resample(pts, step) {
+  const out = [pts[0]];
+  let carry = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[i + 1];
+    const len = Math.hypot(bx - ax, by - ay);
+    let t = step - carry;
+    while (t < len) {
+      out.push([ax + ((bx - ax) * t) / len, ay + ((by - ay) * t) / len]);
+      t += step;
+    }
+    carry = len - (t - step);
+  }
+  const last = pts[pts.length - 1];
+  const prev = out[out.length - 1];
+  if (Math.hypot(last[0] - prev[0], last[1] - prev[1]) < step * 0.4 && out.length > 1) out.pop();
+  out.push(last);
+  return out;
+}

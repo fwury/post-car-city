@@ -12,7 +12,7 @@
   <details class="panel" id="panel" open>
     <summary>
       <span class="title">Post-car city</span>
-      <span class="stage">Stage 2: districts</span>
+      <span class="stage">Stage 3: neighbourhoods</span>
     </summary>
 
     <form id="seed-form" class="seed">
@@ -26,10 +26,11 @@
 
     <fieldset class="layers">
       <legend>Map</legend>
+      <label><input type="checkbox" data-layer="neighbourhoods"><span class="swatch" style="--c: var(--hood)"></span> Neighbourhoods</label>
       <label><input type="checkbox" data-layer="cores"><span class="swatch" style="--c: var(--core)"></span> District cores</label>
       <label><input type="checkbox" data-layer="green"><span class="swatch" style="--c: var(--natural)"></span> Greenways and parks</label>
-      <label><input type="checkbox" data-layer="water"><span class="swatch" style="--c: var(--water)"></span> Lakes and streams</label>
-      <label><input type="checkbox" data-layer="streets"><span class="swatch" style="--c: var(--road)"></span> Boulevards</label>
+      <label><input type="checkbox" data-layer="water"><span class="swatch" style="--c: var(--water)"></span> Streams</label>
+      <label><input type="checkbox" data-layer="streets"><span class="swatch" style="--c: var(--road)"></span> Boulevards and main streets</label>
       <label><input type="checkbox" data-layer="transit"><span class="swatch round" style="--c: var(--rail)"></span> Rail stations</label>
     </fieldset>
 
