@@ -1,4 +1,4 @@
-// Draws districts: cores, boulevards, greenways, streams, district parks, lakes.
+// Draws districts: cores, boulevards, greenways, streams and district parks.
 // Shared by the main thread (close zoom, drawn straight to screen) and the
 // tile workers (far zoom, drawn into cached tiles).
 //
@@ -43,7 +43,6 @@ function pathsFor(world, d, segLen) {
     greenLines: new Path2D(),
     streams: new Path2D(),
     parks: new Path2D(),
-    lakes: new Path2D(),
     ring: new Path2D(),
   };
   addPoly(p.core, d.core, ox, oy, true);
@@ -63,7 +62,6 @@ function pathsFor(world, d, segLen) {
   for (const s of g.streams) addPoly(p.streams, s, ox, oy, false);
   for (const pk of d.parks) {
     addPoly(p.parks, pk.shape, ox, oy, true);
-    if (pk.lake) addPoly(p.lakes, pk.lake.shape, ox, oy, true);
   }
   addPoly(p.ring, g.ring, ox, oy, true);
   pathCache.set(g, p);
@@ -163,22 +161,6 @@ export function drawDistricts(ctx, view, world, layers) {
     for (const { d, p } of items) {
       place(d);
       ctx.fill(p.parks);
-    }
-  }
-
-  if (layers.water) {
-    ctx.fillStyle = palette.water;
-    for (const { d, p } of items) {
-      place(d);
-      ctx.fill(p.lakes);
-    }
-    if (zoom >= 0.05) {
-      ctx.strokeStyle = palette.waterEdge;
-      ctx.lineWidth = px(1);
-      for (const { d, p } of items) {
-        place(d);
-        ctx.stroke(p.lakes);
-      }
     }
   }
 

@@ -17,6 +17,8 @@ import { createNoise, createWarp } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
 import { createBoulevards, distToPieces } from './boulevards.js';
+import { createParks } from './parks.js';
+export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
 import { createGrowth, PARCEL } from './growth.js';
 import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf } from '../util/geom.js';
@@ -24,7 +26,6 @@ import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf 
 export const CORE_RADIUS = 380; // about 0.45 km²
 export const GREENWAY_MIN = 50;
 export const GREENWAY_MAX = 160;
-export const PARK_AREA_HA = [40, 70];
 export const BOULEVARD_WIDTH = STREET_TYPES.boulevard.width;
 const DISTRICT_REACH = 7000; // no district extends further than this from its core
 const DISTRICT_SEARCH = 5500; // cores this far outside a view can still reach into it
@@ -35,7 +36,6 @@ const FINE_SPACING = 15; // metres between points of the final boundary
 const RUN_LENGTH = [110, 340]; // straight runs of greenway between bends
 const RUN_OFFSET = 26; // metres a bend may sit off the smoothed line
 const FILLET = 70; // longest rounding either side of a bend
-const PARK_SUPPRESS_RADIUS = 1300;
 
 // Parcel-grid point keys. A boundary point is either the midpoint between two
 // parcels ('h' horizontal or 'v' vertical neighbours) or the centre of a quad
@@ -164,10 +164,33 @@ function straightRuns(pts, rng) {
   return { points: out, runs };
 }
 
+// A district core: an irregular polygon of five to eight straight edges, each
+// edge a street. Vertices stay within CORE_REACH core radii of the station.
+const CORE_REACH = 1.25;
+function coreShape(seed, core, r) {
+  const rng = rngFor(seed, 'core-shape', ...keyInts(core));
+  const n = rng.int(5, 8);
+  const turn = rng.range(0, Math.PI * 2);
+  const pts = [];
+  for (let k = 0; k < n; k++) {
+    const a = turn + ((k + rng.range(-0.32, 0.32)) / n) * Math.PI * 2;
+    // Mostly convex, now and then a vertex pulled in for a notch.
+    const rr = rng.chance(0.12) ? rng.range(0.62, 0.78) : rng.range(0.82, 1.22);
+    pts.push([Math.cos(a) * rr, Math.sin(a) * rr]);
+  }
+  // Scale to an area of about pi r^2, but keep every vertex within reach.
+  const s = Math.min(Math.sqrt((Math.PI * r * r) / polygonArea(pts)), CORE_REACH / Math.max(...pts.map((p) => Math.hypot(p[0], p[1]))));
+  return pts.map(([x, y]) => [core.x + x * r * s, core.y + y * r * s]);
+}
+
 export function createWorld(seed) {
   const cores = createCores(seed);
   const growth = createGrowth(seed, cores);
   const boulevards = createBoulevards(seed);
+  const parks = createParks(seed, {
+    baseOf: (k) => baseOf(k), label: (i, j) => growth.label(i, j), parcel: PARCEL,
+    greenwayWidth: (x, y) => greenwayWidth(x, y), boulevardDistance: (x, y) => boulevardDistance(x, y), network: (b) => boulevards.network(b),
+  });
   // Boundary detail at three scales: broad sweeps, meanders, then smaller kinks.
   const warpBroad = createWarp(seed, 'boundary-sweep', 2600, 210, 2);
   const warpMid = createWarp(seed, 'boundary-detail', 1100, 80, 2);
@@ -178,14 +201,11 @@ export function createWorld(seed) {
     return warpFine(p[0], p[1], p);
   };
   const widthNoise = createNoise(seed, 'greenway-width');
-  const shapeNoise = createNoise(seed, 'blob-shape');
   const meanderNoise = createNoise(seed, 'stream-meander');
 
   const bases = new LruCache(12000);
   const districts = new LruCache(12000);
   const chains = new LruCache(60000);
-  const parks = new LruCache(40000);
-  const junctionChoice = new LruCache(40000);
 
   const label = growth.label;
   const pos = growth.parcelPos;
@@ -345,13 +365,16 @@ export function createWorld(seed) {
 
     let minD = Infinity;
     for (const [x, y] of ring) minD = Math.min(minD, dist(core.x, core.y, x, y));
-    const coreRadius = Math.max(200, Math.min(CORE_RADIUS, (minD - GREENWAY_MAX / 2 - 60) / 1.15));
+    const coreRadius = Math.max(200, Math.min(CORE_RADIUS, (minD - GREENWAY_MAX / 2 - 60) / CORE_REACH));
+    const corePolygon = coreShape(seed, core, coreRadius);
     const bbox = bboxOf(ring, GREENWAY_MAX);
     b = {
       key: D,
       core,
       station: [core.x, core.y],
       coreRadius,
+      corePolygon,
+      coreReach: coreRadius * CORE_REACH,
       parcels,
       area: ring.length ? polygonArea(ring) : 0,
       ring,
@@ -450,92 +473,9 @@ export function createWorld(seed) {
     });
   }
 
-  function radialShape(cx, cy, r, amp, ox, oy, n = 128) {
-    const pts = [];
-    for (let k = 0; k < n; k++) {
-      const a = (k / n) * Math.PI * 2;
-      const rr = r * (1 + amp * shapeNoise.fbm(Math.cos(a) * 1.4 + ox, Math.sin(a) * 1.4 + oy, 5, 2, 0.55));
-      pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]);
-    }
-    return pts;
-  }
-
-  // ---- District parks at junctions ----
-
-  const junctionScore = (j) => toUnit(hash(seed, 'park-score', j.i, j.j));
-
   function baseOf(key) {
     const c = growth.coreOf(key);
     return c ? base(c) : null;
-  }
-
-  // Park geometry for a junction if it has room, ignoring other parks.
-  function parkShape(j) {
-    let p = parks.get(j.key);
-    if (p !== undefined) return p;
-    p = null;
-    if (j.labels.length >= 3) {
-      const rng = rngFor(seed, 'park', j.i, j.j);
-      let r = Math.sqrt((rng.range(PARK_AREA_HA[0], PARK_AREA_HA[1]) * 1e4) / Math.PI);
-      for (const l of j.labels) {
-        const b = baseOf(l);
-        if (!b) continue;
-        r = Math.min(r, (dist(j.x, j.y, b.station[0], b.station[1]) - b.coreRadius * 1.15 - 150) / 1.25);
-      }
-      const road = boulevardDistance(j.x, j.y);
-      r = Math.min(r, (road - BOULEVARD_WIDTH / 2 - 60) / 1.25);
-      if (r >= 180) {
-        const shape = radialShape(j.x, j.y, r, 0.22, rng.range(-50, 50), rng.range(-50, 50));
-        let lake = null;
-        if (rng.chance(0.75)) {
-          const a = rng.range(0, Math.PI * 2);
-          const off = r * rng.range(0, 0.2);
-          const lr = r * rng.range(0.24, 0.36);
-          const lx = j.x + Math.cos(a) * off;
-          const ly = j.y + Math.sin(a) * off;
-          lake = { x: lx, y: ly, r: lr, shape: radialShape(lx, ly, lr, 0.3, rng.range(-50, 50), rng.range(-50, 50), 96) };
-        }
-        p = { key: j.key, x: j.x, y: j.y, r, area: polygonArea(shape), shape, lake, districts: j.labels };
-      }
-    }
-    parks.set(j.key, p);
-    return p;
-  }
-
-  // Each district nominates its best junction that has room for a park.
-  function choiceOf(b) {
-    let c = junctionChoice.get(b.key);
-    if (c !== undefined) return c;
-    c = null;
-    let best = -1;
-    for (const j of b.junctions) {
-      const s = junctionScore(j);
-      if (s > best && parkShape(j)) {
-        best = s;
-        c = j.key;
-      }
-    }
-    junctionChoice.set(b.key, c);
-    return c;
-  }
-
-  const nominated = (j) => j.labels.some((l) => {
-    const b = baseOf(l);
-    return b && choiceOf(b) === j.key;
-  });
-
-  function parkAt(j) {
-    if (!nominated(j)) return null;
-    const s = junctionScore(j);
-    for (const l of j.labels) {
-      const b = baseOf(l);
-      if (!b) continue;
-      for (const w of b.junctions) {
-        if (w.key === j.key || dist(j.x, j.y, w.x, w.y) > PARK_SUPPRESS_RADIUS) continue;
-        if (junctionScore(w) > s && nominated(w)) return null;
-      }
-    }
-    return parkShape(j);
   }
 
   // ---- Full districts ----
@@ -544,9 +484,8 @@ export function createWorld(seed) {
     let d = districts.get(core.key);
     if (d) return d;
     const b = base(core);
-    const dParks = b.junctions.map(parkAt).filter(Boolean);
-    const rng = rngFor(seed, 'core-shape', ...keyInts(core));
-    const coreShape = radialShape(core.x, core.y, b.coreRadius, 0.12, rng.range(-50, 50), rng.range(-50, 50), 96);
+    const dParks = parks.parksOf(b);
+    const coreShape = b.corePolygon;
     const bbox = { ...b.bbox };
     for (const p of dParks) bboxOf(p.shape, 0, bbox);
     const net = boulevards.network(b);

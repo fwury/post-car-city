@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { seedFromText } from '../src/core/hash.js';
 import { createWorld, CORE_RADIUS, GREENWAY_MIN } from '../src/world/districts.js';
 import { CORE_SPACING } from '../src/world/cores.js';
+import { PARK_SPACING, PARK_AREA_HA } from '../src/world/parks.js';
 import { pointInPolygon } from '../src/util/geom.js';
 
 const SEED = seedFromText('1');
@@ -84,7 +85,7 @@ test('district parks sit at junctions, clear of cores and boulevards, shared by 
       const d = world.district(world.growth.coreOf(l));
       assert.ok(d.parks.some((q) => q.key === p.key), `park ${p.key} missing from ${d.key}`);
       for (const pt of p.shape) {
-        assert.ok(Math.hypot(pt[0] - d.station[0], pt[1] - d.station[1]) > d.coreRadius * 1.15, 'park overlaps a core');
+        assert.ok(!pointInPolygon(pt[0], pt[1], d.core), 'park overlaps a core');
       }
     }
     for (const pt of p.shape) assert.ok(world.boulevardDistance(pt[0], pt[1]) > 17, 'park sits on a boulevard');
@@ -155,5 +156,34 @@ test('boundaries meeting at a junction end at exactly the same point', () => {
       const n = ends.filter((p) => p[0] === j.x && p[1] === j.y).length;
       assert.ok(n >= 2, `junction ${j.key} of ${d.key} matches ${n} chain ends`);
     }
+  }
+});
+
+test('district parks are spread out, sized 40 to 70 ha, and flow into their greenways', () => {
+  const ds = world.districtsInRect(-4000, -4000, 18000, 18000);
+  const parks = new Map();
+  for (const d of ds) for (const p of d.parks) parks.set(p.key, p);
+  const list = [...parks.values()];
+  for (const a of list) {
+    assert.ok(a.area > 20e4 && a.area < PARK_AREA_HA[1] * 1.15e4, `park ${a.key} is ${(a.area / 1e4).toFixed(0)} ha`);
+    for (const b of list) if (a !== b) assert.ok(Math.hypot(a.x - b.x, a.y - b.y) >= PARK_SPACING, 'parks too close');
+    // Every greenway leaving the park's junction runs into the park.
+    const d = world.district(world.growth.coreOf(a.districts[0]));
+    for (const c of d.chains) {
+      const p = c.geo.points;
+      const k = p[0][0] === a.x && p[0][1] === a.y ? 3 : p[p.length - 1][0] === a.x && p[p.length - 1][1] === a.y ? p.length - 4 : -1;
+      if (k >= 0) assert.ok(pointInPolygon(p[k][0], p[k][1], a.shape), `park ${a.key} does not reach along its greenway`);
+    }
+  }
+  const touching = inner().map((d) => d.parks.length);
+  const crowded = touching.filter((n) => n >= 3).length;
+  assert.ok(crowded <= touching.length * 0.12, `${crowded} of ${touching.length} districts touch three or more parks`);
+});
+
+test('district cores are irregular polygons with five to eight straight edges', () => {
+  for (const d of inner()) {
+    assert.ok(d.core.length >= 5 && d.core.length <= 8, `${d.key} core has ${d.core.length} edges`);
+    assert.ok(pointInPolygon(d.station[0], d.station[1], d.core));
+    assert.ok(d.coreArea > 0.15e6 && d.coreArea < 0.6e6, `${d.key} core is ${(d.coreArea / 1e6).toFixed(2)} km²`);
   }
 });
