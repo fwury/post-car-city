@@ -29,8 +29,8 @@ export const NEIGHBOURHOOD_AREA = 0.75e6; // m², typical
 export const NEIGHBOURHOODS = [8, 12]; // per district, besides the core
 export const RING_MARGIN = 80; // land this close to a district's greenway is the greenway's
 export const SPINE_REACH = 450; // metres of its main street either side of a centre a neighbourhood grows from
-export const EDGE_SPACING = 650; // metres between main street crossings of a greenway
-const EDGE_END = 330; // crossings keep this far from the ends of a greenway stretch
+export const GATEWAY_TWO = 2600; // a shared greenway this long gets two gateways for main streets, else one
+const EDGE_END = 400; // crossings keep this far from the ends of a greenway stretch
 const EDGE_CLEAR = 380; // and this far from a boulevard crossing
 const CELL = 50;
 const SMOOTH_TOL = 32; // metres of raster staircase removed before smoothing
@@ -84,13 +84,20 @@ export function createNeighbourhoods(seed, { boulevards }) {
     const L = arcLength(pts);
     const span = L - 2 * EDGE_END;
     if (span > 0) {
-      const k = Math.max(1, Math.round(span / EDGE_SPACING));
+      // One gateway, or two on a long stretch, kept clear of the boulevard's crossing.
+      const k = L >= GATEWAY_TWO ? 2 : 1;
       const bp = boulevards.crossingOf(geo).p;
       for (let i = 0; i < k; i++) {
         const u = toUnit(hash(seed, 'street-crossing', hashString(geo.key), i));
-        const s = EDGE_END + ((i + 0.5 + (u - 0.5) * 0.4) * span) / k;
-        const p = along(pts, s);
-        if (len(sub(p, bp)) < EDGE_CLEAR) continue;
+        let s = EDGE_END + ((i + 0.5 + (u - 0.5) * 0.4) * span) / k;
+        let p = along(pts, s);
+        if (len(sub(p, bp)) < EDGE_CLEAR) {
+          // Slide along the stretch to whichever side has room.
+          const moved = [s + EDGE_CLEAR * 1.2, s - EDGE_CLEAR * 1.2].find((q) => q > EDGE_END && q < L - EDGE_END && len(sub(along(pts, q), bp)) >= EDGE_CLEAR);
+          if (moved === undefined) continue;
+          s = moved;
+          p = along(pts, s);
+        }
         const t = unit(sub(along(pts, Math.min(L, s + 60)), along(pts, Math.max(0, s - 60))));
         list.push({ key: `${geo.key}#${i}`, p, t });
       }

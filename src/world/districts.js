@@ -29,6 +29,7 @@ export const CORE_RADIUS = 380; // about 0.45 km²
 export const GREENWAY_MIN = 50;
 export const GREENWAY_MAX = 160;
 export const BOULEVARD_WIDTH = STREET_TYPES.boulevard.width;
+const CORE_CLEAR = 300; // greenways keep this far from a station
 const DISTRICT_REACH = 7000; // no district extends further than this from its core
 const DISTRICT_SEARCH = 5500; // cores this far outside a view can still reach into it
 const SMOOTHING = 4; // Chaikin passes on boundaries
@@ -264,7 +265,7 @@ export function createWorld(seed) {
         if (!loop) {
           for (const jk of [c.keys[0], c.keys[c.keys.length - 1]]) {
             if (!junctions.has(jk)) {
-              const [x, y] = detail(...pointPos(jk));
+              const [x, y] = clearOfCores(...pointPos(jk));
               junctions.set(jk, { key: jk, x, y });
             }
           }
@@ -331,7 +332,7 @@ export function createWorld(seed) {
       for (let s = 0; s < SMOOTHING; s++) pts = chaikin(pts, loop);
       if (loop) pts.push(pts[0]);
       pts = resample(pts, SMOOTH_SPACING);
-      pts = pts.map(([x, y]) => detail(x, y));
+      pts = pts.map(([x, y]) => clearOfCores(x, y));
       const shaped = straightRuns(pts, rngFor(seed, 'greenway-runs', hashString(key)));
       pts = resample(shaped.points, FINE_SPACING);
       const first = canon[0];
@@ -360,6 +361,33 @@ export function createWorld(seed) {
       chains.set(key, g);
     }
     return g;
+  }
+
+  // Warping can carry a boundary over a station in a small district. Near a
+  // core the warp fades out, so the boundary keeps to its smoothed parcel
+  // line (which has the core on the right side), and is then eased outwards
+  // to keep CORE_CLEAR from the station. Both depend only on the point, so
+  // chains and the junctions at their ends move alike.
+  function clearOfCores(x, y) {
+    const R = 2 * CORE_CLEAR;
+    const near = cores.coresInRect(x - R, y - R, x + R, y + R);
+    const w = detail(x, y);
+    let f = 1;
+    for (const c of near) {
+      const t = Math.min(1, Math.max(0, (Math.hypot(x - c.x, y - c.y) - CORE_CLEAR) / CORE_CLEAR));
+      f = Math.min(f, t * t * (3 - 2 * t));
+    }
+    let p = [x + (w[0] - x) * f, y + (w[1] - y) * f];
+    for (const c of near) {
+      const dx = p[0] - c.x;
+      const dy = p[1] - c.y;
+      const r = Math.hypot(dx, dy);
+      if (r >= R || r < 1e-9) continue;
+      // r -> CORE_CLEAR at the core, unchanged at R, and never reordered.
+      const k = (r + ((R - r) ** 2 * CORE_CLEAR) / (R * R)) / r;
+      p = [c.x + dx * k, c.y + dy * k];
+    }
+    return p;
   }
 
   // Width varies slowly along a greenway, with small swells and pinches on top.

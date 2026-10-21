@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { seedFromText } from '../src/core/hash.js';
 import { createWorld } from '../src/world/districts.js';
 import { distToLine } from '../src/world/boulevards.js';
-import { NEIGHBOURHOODS, MAIN_STREET_REACH, RING_MARGIN } from '../src/world/neighbourhoods.js';
+import { NEIGHBOURHOODS, MAIN_STREET_REACH, RING_MARGIN, GATEWAY_TWO } from '../src/world/neighbourhoods.js';
 import { pointInPolygon, polygonArea } from '../src/util/geom.js';
 
 const SEED = seedFromText('1');
@@ -326,7 +326,7 @@ test('neighbourhoods have a fairly direct route to the core', () => {
   assert.ok(unconnected <= total * 0.03, `${unconnected} of ${total} neighbourhoods have no street to the core`);
 });
 
-test('nearly all land is within 450 m of a main street or boulevard', () => {
+test('nearly all land is within 600 m of a main street or boulevard', () => {
   let total = 0;
   let near = 0;
   let worst = 0;
@@ -345,6 +345,62 @@ test('nearly all land is within 450 m of a main street or boulevard', () => {
       }
     }
   }
-  assert.ok(near / total > 0.94, `only ${((100 * near) / total).toFixed(1)}% of land within ${MAIN_STREET_REACH} m`);
-  assert.ok(worst < 1000, `some land is ${worst.toFixed(0)} m from a main street`);
+  assert.ok(near / total > 0.95, `only ${((100 * near) / total).toFixed(1)}% of land within ${MAIN_STREET_REACH} m`);
+  assert.ok(worst < 1500, `some land is ${worst.toFixed(0)} m from a main street`);
+});
+
+test('main streets are no denser than local trade can carry', () => {
+  // About 15 000 people to a neighbourhood: a main street (or boulevard)
+  // every kilometre or so, not one every few hundred metres.
+  const length = (p) => p.reduce((s, q, i) => (i ? s + Math.hypot(q[0] - p[i - 1][0], q[1] - p[i - 1][1]) : 0), 0);
+  let area = 0;
+  let km = 0;
+  let hoods = 0;
+  for (const d of inner()) {
+    area += d.area / 1e6;
+    hoods += d.stage3.hoods.length;
+    for (const p of streetsOf(d)) km += length(p) / 1000;
+  }
+  const density = km / area;
+  assert.ok(density > 1.3 && density < 2.3, `${density.toFixed(2)} km of main street per km²`);
+  const perKm = (hoods * 15000) / km;
+  assert.ok(perKm > 8000, `only ${perKm.toFixed(0)} people per km of main street`);
+});
+
+test('each shared greenway has one gateway for main streets, two if long', () => {
+  for (const d of inner()) {
+    const per = new Map();
+    for (const x of d.stage3.crossings) {
+      const k = x.key.slice(0, x.key.lastIndexOf('#'));
+      per.set(k, (per.get(k) || 0) + 1);
+    }
+    for (const c of d.chains) {
+      const n = per.get(c.geo.key) || 0;
+      const L = c.geo.points.reduce((s, q, i, p) => (i ? s + Math.hypot(q[0] - p[i - 1][0], q[1] - p[i - 1][1]) : 0), 0);
+      assert.ok(n <= (L >= GATEWAY_TWO ? 2 : 1), `${n} gateways on a ${L.toFixed(0)} m greenway in ${d.key}`);
+    }
+  }
+});
+
+test('main streets bend but never curl round', () => {
+  for (const d of inner()) {
+    for (const l of d.stage3.lines) {
+      const p = l.points;
+      const at = [0];
+      const hd = [0];
+      for (let i = 1; i < p.length - 1; i++) {
+        const a = [p[i][0] - p[i - 1][0], p[i][1] - p[i - 1][1]];
+        const b = [p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]];
+        at.push(at[i - 1] + Math.hypot(...a));
+        const turn = Math.hypot(...a) > 1e-9 && Math.hypot(...b) > 1e-9 ? Math.atan2(a[0] * b[1] - a[1] * b[0], a[0] * b[0] + a[1] * b[1]) : 0;
+        hd.push(hd[i - 1] + turn);
+      }
+      for (let i = 0; i < hd.length; i++) {
+        for (let j = i + 1; j < hd.length && at[j] - at[i] <= 600; j++) {
+          const t = (Math.abs(hd[j] - hd[i]) * 180) / Math.PI;
+          assert.ok(t < 135, `${l.key} turns ${t.toFixed(0)}° within 600 m`);
+        }
+      }
+    }
+  }
 });
