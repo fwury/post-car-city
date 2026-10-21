@@ -20,6 +20,10 @@ python3 -m http.server 8123
 
 Then open http://localhost:8123. Views are shareable: `?seed=1&x=1400&y=1400&zoom=0.05`.
 
+## Publish
+
+A GitHub Pages workflow (`.github/workflows/pages.yml`) runs the tests and publishes the site on every push to `main`. Once, in the repository settings under Pages, set Source to GitHub Actions. The site then lives at `https://<user>.github.io/post-car-city/`.
+
 ## Test
 
 ```
