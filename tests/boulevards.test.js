@@ -21,7 +21,7 @@ test('nearly every pair of neighbouring districts is linked by a boulevard', () 
       if (d.network.links.some((l) => l.neighbour === n)) linked++;
     }
     for (const c of d.chains) {
-      if (c.geo.points.length * 30 > MIN_SHARED_EDGE * 1.6) assert.ok(d.network.links.some((l) => l.neighbour === c.neighbour), `${d.key} has no link to ${c.neighbour}`);
+      if (world.boulevards.crossingOf(c.geo).length > MIN_SHARED_EDGE * 1.6) assert.ok(d.network.links.some((l) => l.neighbour === c.neighbour), `${d.key} has no link to ${c.neighbour}`);
     }
   }
   assert.ok(linked / pairs > 0.85, `only ${linked} of ${pairs} neighbour pairs linked`);

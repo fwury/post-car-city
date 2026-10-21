@@ -119,3 +119,41 @@ test('generation code never calls Math.random', () => {
     assert.ok(!readFileSync(file, 'utf8').includes('Math.random'), `${file} uses Math.random`);
   }
 });
+
+test('greenways run mostly straight, with frequent small bends', () => {
+  let straight = 0;
+  let total = 0;
+  let bends = 0;
+  let length = 0;
+  for (const d of inner()) {
+    for (const c of d.chains) {
+      const p = c.geo.points;
+      const heading = (i) => Math.atan2(p[i + 1][1] - p[i][1], p[i + 1][0] - p[i][0]);
+      let inBend = false;
+      for (let i = 0; i < p.length - 10; i++) {
+        let turn = Math.abs(heading(i + 9) - heading(i));
+        if (turn > Math.PI) turn = 2 * Math.PI - turn;
+        let local = Math.abs(heading(i + 3) - heading(i));
+        if (local > Math.PI) local = 2 * Math.PI - local;
+        total++;
+        if (local < 0.035) straight++;
+        if (turn > 0.12 && !inBend) bends++;
+        inBend = turn > 0.12;
+        length += Math.hypot(p[i + 1][0] - p[i][0], p[i + 1][1] - p[i][1]);
+      }
+    }
+  }
+  assert.ok(straight / total > 0.5, `only ${((100 * straight) / total).toFixed(0)}% of greenway is straight`);
+  const perKm = bends / (length / 1000);
+  assert.ok(perKm > 1.5 && perKm < 8, `${perKm.toFixed(1)} bends per km`);
+});
+
+test('boundaries meeting at a junction end at exactly the same point', () => {
+  for (const d of inner()) {
+    const ends = d.chains.flatMap((c) => (c.points[0] === c.points[c.points.length - 1] ? [] : [c.points[0], c.points[c.points.length - 1]]));
+    for (const j of d.junctions) {
+      const n = ends.filter((p) => p[0] === j.x && p[1] === j.y).length;
+      assert.ok(n >= 2, `junction ${j.key} of ${d.key} matches ${n} chain ends`);
+    }
+  }
+});

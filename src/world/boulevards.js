@@ -21,7 +21,6 @@ import { hash, hashString, toUnit } from '../core/hash.js';
 import { createNoise } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { keyInts } from './cores.js';
-import { pointInPolygon } from '../util/geom.js';
 
 export const MIN_SHARED_EDGE = 450; // metres of shared greenway needed for a link
 export const MIN_RADIUS = 50; // metres, tightest bend allowed on a boulevard
@@ -41,6 +40,7 @@ const unit = (v) => {
   return [v[0] / l, v[1] / l];
 };
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+const near = (a, b, r) => (a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2 < r * r;
 
 // Cubic Hermite from p0 (tangent m0) to p1 (tangent m1), sampled about every SAMPLE metres.
 function hermite(p0, m0, p1, m1, out) {
@@ -106,7 +106,7 @@ function crossesAny(pts, lines, end, skip) {
   for (let i = 0; i < pts.length - 1; i++) {
     const a = pts[i];
     const b = pts[i + 1];
-    if (end && len(sub(a, end)) < skip) continue;
+    if (end && near(a, end, skip)) continue;
     const x0 = Math.min(a[0], b[0]);
     const x1 = Math.max(a[0], b[0]);
     const y0 = Math.min(a[1], b[1]);
@@ -114,11 +114,14 @@ function crossesAny(pts, lines, end, skip) {
     for (const l of lines) {
       if (l.bbox.x1 < x0 || l.bbox.x0 > x1 || l.bbox.y1 < y0 || l.bbox.y0 > y1) continue;
       const p = l.points;
-      for (let j = 0; j < p.length - 1; j++) {
-        const c = p[j];
-        const d = p[j + 1];
-        if (Math.max(c[0], d[0]) < x0 || Math.min(c[0], d[0]) > x1 || Math.max(c[1], d[1]) < y0 || Math.min(c[1], d[1]) > y1) continue;
-        if (segmentsCross(a, b, c, d)) return true;
+      for (const q of l.pieces) {
+        if (q.x1 < x0 || q.x0 > x1 || q.y1 < y0 || q.y0 > y1) continue;
+        for (let j = q.i0; j < q.i1; j++) {
+          const c = p[j];
+          const d = p[j + 1];
+          if (Math.max(c[0], d[0]) < x0 || Math.min(c[0], d[0]) > x1 || Math.max(c[1], d[1]) < y0 || Math.min(c[1], d[1]) > y1) continue;
+          if (segmentsCross(a, b, c, d)) return true;
+        }
       }
     }
   }
@@ -136,10 +139,34 @@ function lineBox(points) {
   return { x0, y0, x1, y1 };
 }
 
-// Distance from a point to a polyline.
-export function distToLine(x, y, pts) {
+// Bounding boxes of runs of PIECE segments along a polyline, for pruning.
+const PIECE = 12;
+export function piecesOf(pts) {
+  const out = [];
+  for (let i0 = 0; i0 < pts.length - 1; i0 += PIECE) {
+    const i1 = Math.min(pts.length - 1, i0 + PIECE);
+    out.push({ i0, i1, ...lineBox(pts.slice(i0, i1 + 1)) });
+  }
+  return out;
+}
+
+// Distance from a point to a polyline, skipping pieces further than `best`.
+// Stops early once closer than `enough`.
+export function distToPieces(x, y, pts, pieces, best = Infinity, enough = 0) {
+  for (const q of pieces) {
+    const dx = Math.max(q.x0 - x, 0, x - q.x1);
+    const dy = Math.max(q.y0 - y, 0, y - q.y1);
+    if (dx * dx + dy * dy >= best * best) continue;
+    best = Math.min(best, distToLine(x, y, pts, q.i0, q.i1));
+    if (best < enough) return best;
+  }
+  return best;
+}
+
+// Distance from a point to a polyline (or the part from point i0 to i1).
+export function distToLine(x, y, pts, i0 = 0, i1 = pts.length - 1) {
   let best = Infinity;
-  for (let i = 0; i < pts.length - 1; i++) {
+  for (let i = i0; i < i1; i++) {
     const [ax, ay] = pts[i];
     const [bx, by] = pts[i + 1];
     const dx = bx - ax;
@@ -195,9 +222,25 @@ export function createBoulevards(seed) {
     const L = arcLength(pts);
     const u = toUnit(hash(seed, 'boulevard-crossing', hashString(geo.key)));
     const s = Math.min(L - END_MARGIN, Math.max(END_MARGIN, L * (0.38 + 0.24 * u)));
-    const p = along(pts, s);
+    let p = along(pts, s);
     // Tangent over a wide window, so small wiggles in the greenway don't tilt it.
-    const t = unit(sub(along(pts, Math.min(L, s + 90)), along(pts, Math.max(0, s - 90))));
+    let t = unit(sub(along(pts, Math.min(L, s + 90)), along(pts, Math.max(0, s - 90))));
+    // Better still, cross in the middle of a straight run near that point.
+    let best = -Infinity;
+    for (const r of geo.runs || []) {
+      const rl = len(sub(r.b, r.a));
+      if (rl < 60) continue;
+      const m = [(r.a[0] + r.b[0]) / 2, (r.a[1] + r.b[1]) / 2];
+      const score = rl - 1.2 * len(sub(m, p));
+      if (score > best && len(sub(m, p)) < Math.max(200, L * 0.18)) {
+        best = score;
+        c = { m, t: unit(sub(r.b, r.a)) };
+      }
+    }
+    if (c) {
+      p = c.m;
+      t = c.t;
+    }
     c = { p, t, length: L };
     crossings.set(geo.key, c);
     return c;
@@ -283,7 +326,7 @@ export function createBoulevards(seed) {
     let roundabout = null;
     const salt = keyInts(b.core).reduce((a, v) => (a * 31 + v) | 0, 7);
     const add = (points, kind, link, extra = {}) => {
-      const l = { key: `${b.key}:${kind}:${link ? link.key : ''}`, points, kind, bbox: lineBox(points), ...extra };
+      const l = { key: `${b.key}:${kind}:${link ? link.key : ''}`, points, kind, bbox: lineBox(points), pieces: piecesOf(points), ...extra };
       lines.push(l);
       return l;
     };
@@ -378,15 +421,15 @@ export function createBoulevards(seed) {
   // A link that ends at a right-angled T junction on the network built so far.
   function branch(b, l, lines, junctions, links, salt) {
     const S = b.station;
-    const ring = b.ring.filter((_, i) => i % 3 === 0);
-        const cands = [];
+    const ringPieces = piecesOf(b.ring);
+    const cands = [];
     for (const line of lines) {
       if (line.kind === 'roundabout') continue;
       const p = line.points;
       for (let i = 2; i < p.length - 2; i += 3) {
         const q = p[i];
-        if (links.some((o) => len(sub(o.p, q)) < EDGE_CLEAR)) continue;
-        if (junctions.some((j) => len(sub(j, q)) < T_SPACING && len(sub(j, S)) > 1)) continue;
+        if (links.some((o) => near(o.p, q, EDGE_CLEAR))) continue;
+        if (junctions.some((j) => near(j, q, T_SPACING) && !near(j, S, 1))) continue;
         const tau = unit(sub(p[i + 2], p[i - 2]));
         const dv = sub(q, l.p);
         const dl = len(dv);
@@ -406,12 +449,13 @@ export function createBoulevards(seed) {
       if (!fallback) fallback = pts;
       if (minRadius(pts) < MIN_RADIUS) continue;
       if (crossesAny(pts, lines, c.q, 40)) continue;
-      // Stay inside the district and clear of its greenways, past the crossing itself.
+      // Stay clear of the district's greenways past the crossing itself (and
+      // so inside the district: leaving it would mean passing close by them).
       let bad = false;
       for (let i = 0; i < pts.length && !bad; i += 4) {
         const [x, y] = pts[i];
-        if (len(sub(pts[i], l.p)) < STUB + 80) continue;
-        bad = !pointInPolygon(x, y, ring) || distToLine(x, y, ring) < EDGE_GAP;
+        if (near(pts[i], l.p, STUB + 80)) continue;
+        bad = distToPieces(x, y, b.ring, ringPieces, EDGE_GAP, EDGE_GAP) < EDGE_GAP;
       }
       if (bad) continue;
       return { pts, at: c.q };

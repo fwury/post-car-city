@@ -11,12 +11,12 @@
 // in a fixed direction, and shared by both districts, so the two sides always
 // match exactly.
 
-import { hash, toUnit } from '../core/hash.js';
+import { hash, hashString, toUnit } from '../core/hash.js';
 import { rngFor } from '../core/rng.js';
 import { createNoise, createWarp } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
-import { createBoulevards, distToLine } from './boulevards.js';
+import { createBoulevards, distToPieces } from './boulevards.js';
 import { createCores, keyInts } from './cores.js';
 import { createGrowth, PARCEL } from './growth.js';
 import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf } from '../util/geom.js';
@@ -30,7 +30,11 @@ const DISTRICT_REACH = 7000; // no district extends further than this from its c
 const DISTRICT_SEARCH = 5500; // cores this far outside a view can still reach into it
 const SMOOTHING = 4; // Chaikin passes on boundaries
 const SIMPLIFY = 120; // metres of staircase removed before smoothing
-const SMOOTH_SPACING = 30; // typical metres between smoothed boundary points
+const SMOOTH_SPACING = 30; // metres between points of the smoothed boundary
+const FINE_SPACING = 15; // metres between points of the final boundary
+const RUN_LENGTH = [110, 340]; // straight runs of greenway between bends
+const RUN_OFFSET = 26; // metres a bend may sit off the smoothed line
+const FILLET = 70; // longest rounding either side of a bend
 const PARK_SUPPRESS_RADIUS = 1300;
 
 // Parcel-grid point keys. A boundary point is either the midpoint between two
@@ -106,11 +110,73 @@ function resample(pts, step) {
   return out;
 }
 
+// Replace a smooth line by straight runs with rounded bends between them, the
+// way a linear park follows old field edges: mostly straight, with a bend
+// every hundred metres or so. Both ends stay exactly where they are. Returns
+// the new line and its straight runs (each from a to b).
+function straightRuns(pts, rng) {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]));
+  const L = cum[cum.length - 1];
+  const at = (s) => {
+    let i = 1;
+    while (i < pts.length - 1 && cum[i] < s) i++;
+    const t = cum[i] > cum[i - 1] ? (s - cum[i - 1]) / (cum[i] - cum[i - 1]) : 0;
+    const a = pts[i - 1];
+    const b = pts[i];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t, nx: -(b[1] - a[1]) / len, ny: (b[0] - a[0]) / len };
+  };
+  const B = [pts[0]];
+  let s = rng.range(...RUN_LENGTH);
+  while (s < L - RUN_LENGTH[0] * 0.7) {
+    const q = at(s);
+    const off = rng.range(-RUN_OFFSET, RUN_OFFSET);
+    B.push([q.x + q.nx * off, q.y + q.ny * off]);
+    s += rng.range(...RUN_LENGTH);
+  }
+  B.push(pts[pts.length - 1]);
+  if (B.length < 3) return { points: pts, runs: [] };
+  const out = [B[0]];
+  const runs = [];
+  let runStart = B[0];
+  for (let k = 1; k < B.length - 1; k++) {
+    const [px, py] = B[k - 1];
+    const [cx, cy] = B[k];
+    const [nx, ny] = B[k + 1];
+    const l0 = Math.hypot(cx - px, cy - py) || 1;
+    const l1 = Math.hypot(nx - cx, ny - cy) || 1;
+    const f = Math.min(FILLET, l0 * 0.4, l1 * 0.4);
+    const P = [cx - ((cx - px) / l0) * f, cy - ((cy - py) / l0) * f];
+    const Q = [cx + ((nx - cx) / l1) * f, cy + ((ny - cy) / l1) * f];
+    runs.push({ a: runStart, b: P });
+    out.push(P);
+    for (let i = 1; i < 6; i++) {
+      const t = i / 6;
+      const u = 1 - t;
+      out.push([u * u * P[0] + 2 * u * t * cx + t * t * Q[0], u * u * P[1] + 2 * u * t * cy + t * t * Q[1]]);
+    }
+    out.push(Q);
+    runStart = Q;
+  }
+  runs.push({ a: runStart, b: B[B.length - 1] });
+  out.push(B[B.length - 1]);
+  return { points: out, runs };
+}
+
 export function createWorld(seed) {
   const cores = createCores(seed);
   const growth = createGrowth(seed, cores);
   const boulevards = createBoulevards(seed);
-  const detail = createWarp(seed, 'boundary-detail', 1300, 70, 2);
+  // Boundary detail at three scales: broad sweeps, meanders, then smaller kinks.
+  const warpBroad = createWarp(seed, 'boundary-sweep', 2600, 210, 2);
+  const warpMid = createWarp(seed, 'boundary-detail', 1100, 80, 2);
+  const warpFine = createWarp(seed, 'boundary-detail-fine', 420, 28, 2);
+  const detail = (x, y) => {
+    const p = warpBroad(x, y, [0, 0]);
+    warpMid(p[0], p[1], p);
+    return warpFine(p[0], p[1], p);
+  };
   const widthNoise = createNoise(seed, 'greenway-width');
   const shapeNoise = createNoise(seed, 'blob-shape');
   const meanderNoise = createNoise(seed, 'stream-meander');
@@ -258,7 +324,7 @@ export function createWorld(seed) {
         if (!loop) {
           for (const jk of [c.keys[0], c.keys[c.keys.length - 1]]) {
             if (!junctions.has(jk)) {
-              const [x, y] = detail(...pointPos(jk), [0, 0]);
+              const [x, y] = detail(...pointPos(jk));
               junctions.set(jk, { key: jk, x, y });
             }
           }
@@ -324,12 +390,15 @@ export function createWorld(seed) {
       for (let s = 0; s < SMOOTHING; s++) pts = chaikin(pts, loop);
       if (loop) pts.push(pts[0]);
       pts = resample(pts, SMOOTH_SPACING);
-      pts = pts.map(([x, y]) => detail(x, y, [0, 0]));
+      pts = pts.map(([x, y]) => detail(x, y));
+      const shaped = straightRuns(pts, rngFor(seed, 'greenway-runs', hashString(key)));
+      pts = resample(shaped.points, FINE_SPACING);
       const first = canon[0];
       const lods = new Map();
       g = {
         key,
         points: pts,
+        runs: shaped.runs,
         first,
         stream: toUnit(hash(seed, 'stream', ...pts[0].map(Math.round), pts.length)) < 0.5,
         // Points running from `start` (orientation only matters for open stretches).
@@ -353,8 +422,12 @@ export function createWorld(seed) {
     return g;
   }
 
-  const greenwayWidth = (x, y) =>
-    GREENWAY_MIN + (GREENWAY_MAX - GREENWAY_MIN) * Math.min(1, Math.max(0, widthNoise.fbm(x / 1500, y / 1500, 2) * 0.9 + 0.5));
+  // Width varies slowly along a greenway, with small swells and pinches on top.
+  const greenwayWidth = (x, y) => {
+    const broad = Math.min(1, Math.max(0, widthNoise.fbm(x / 1500, y / 1500, 2) * 0.9 + 0.5));
+    const fine = widthNoise.fbm(x / 230 + 91.7, y / 230, 2) * 0.22;
+    return Math.max(GREENWAY_MIN, (GREENWAY_MIN + (GREENWAY_MAX - GREENWAY_MIN) * broad) * (1 + fine));
+  };
 
   function greenwayStrip(line) {
     const normals = polylineNormals(line);
@@ -377,11 +450,11 @@ export function createWorld(seed) {
     });
   }
 
-  function radialShape(cx, cy, r, amp, ox, oy, n = 56) {
+  function radialShape(cx, cy, r, amp, ox, oy, n = 128) {
     const pts = [];
     for (let k = 0; k < n; k++) {
       const a = (k / n) * Math.PI * 2;
-      const rr = r * (1 + amp * shapeNoise.fbm(Math.cos(a) * 1.4 + ox, Math.sin(a) * 1.4 + oy, 3));
+      const rr = r * (1 + amp * shapeNoise.fbm(Math.cos(a) * 1.4 + ox, Math.sin(a) * 1.4 + oy, 5, 2, 0.55));
       pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]);
     }
     return pts;
@@ -420,7 +493,7 @@ export function createWorld(seed) {
           const lr = r * rng.range(0.24, 0.36);
           const lx = j.x + Math.cos(a) * off;
           const ly = j.y + Math.sin(a) * off;
-          lake = { x: lx, y: ly, r: lr, shape: radialShape(lx, ly, lr, 0.3, rng.range(-50, 50), rng.range(-50, 50), 40) };
+          lake = { x: lx, y: ly, r: lr, shape: radialShape(lx, ly, lr, 0.3, rng.range(-50, 50), rng.range(-50, 50), 96) };
         }
         p = { key: j.key, x: j.x, y: j.y, r, area: polygonArea(shape), shape, lake, districts: j.labels };
       }
@@ -473,7 +546,7 @@ export function createWorld(seed) {
     const b = base(core);
     const dParks = b.junctions.map(parkAt).filter(Boolean);
     const rng = rngFor(seed, 'core-shape', ...keyInts(core));
-    const coreShape = radialShape(core.x, core.y, b.coreRadius, 0.12, rng.range(-50, 50), rng.range(-50, 50), 48);
+    const coreShape = radialShape(core.x, core.y, b.coreRadius, 0.12, rng.range(-50, 50), rng.range(-50, 50), 96);
     const bbox = { ...b.bbox };
     for (const p of dParks) bboxOf(p.shape, 0, bbox);
     const net = boulevards.network(b);
@@ -497,7 +570,7 @@ export function createWorld(seed) {
   function lod(d, segLen) {
     let g = d.lods.get(segLen);
     if (g) return g;
-    const step = Math.max(1, Math.round(segLen / SMOOTH_SPACING));
+    const step = Math.max(1, Math.round(segLen / FINE_SPACING));
     const edgeLines = [];
     const strips = [];
     const streams = [];
@@ -558,7 +631,7 @@ export function createWorld(seed) {
       for (const l of boulevards.network(b).lines) {
         const bb = l.bbox;
         if (x < bb.x0 - best || x > bb.x1 + best || y < bb.y0 - best || y > bb.y1 + best) continue;
-        best = Math.min(best, distToLine(x, y, l.points));
+        best = distToPieces(x, y, l.points, l.pieces, best);
       }
     }
     return best;

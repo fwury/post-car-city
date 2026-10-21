@@ -16,6 +16,8 @@ export const PARCEL = 400; // metres between parcels
 const CHUNK = 15; // parcels per chunk side (6 km)
 const MARGIN = 11; // parcels of margin around a chunk's window
 const JITTER = 0.35;
+const VALLEY_WIDTH = 0.12; // in noise units; valleys are a few hundred metres wide
+const VALLEY_SPEED = 0.55; // how much cheaper spreading is along a valley floor
 
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 
@@ -69,6 +71,7 @@ class Heap {
 
 export function createGrowth(seed, cores) {
   const terrain = createNoise(seed, 'growth-terrain');
+  const valleys = createNoise(seed, 'growth-valleys');
   const chunks = new LruCache(3000);
 
   function parcelPos(i, j) {
@@ -79,8 +82,15 @@ export function createGrowth(seed, cores) {
   }
 
   // Cost per metre of spreading through a point.
+  // Several octaves, so fronts get lobes at the scale of a district and
+  // smaller bays and headlands within it.
+  // Winding valleys (where a second field crosses zero) are faster still, so
+  // districts reach out along them in long fingers.
   function friction(x, y) {
-    return 0.7 + 0.75 * Math.min(1, Math.max(0, terrain.fbm(x / 3200, y / 3200, 2) * 0.8 + 0.5));
+    const t = terrain.fbm(x / 3400, y / 3400, 4, 2.1, 0.6) * 1.05 + 0.5;
+    const v = Math.abs(valleys.fbm(x / 2600, y / 2600, 3, 2, 0.5));
+    const valley = Math.max(0, 1 - v / VALLEY_WIDTH);
+    return (0.5 + 1.15 * Math.min(1, Math.max(0, t))) * (1 - VALLEY_SPEED * valley);
   }
 
   // Parcel positions and costs, cached per chunk so overlapping windows share them.
