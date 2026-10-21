@@ -1,0 +1,103 @@
+// App start and wiring.
+
+import { seedFromText } from './core/hash.js';
+import { createWorld } from './world/districts.js';
+import { Camera } from './render/camera.js';
+import { TileManager } from './render/tiles.js';
+import { Renderer, createNoiseTileBuilder, createDistrictTileBuilder } from './render/renderer.js';
+import { createTilePool } from './render/workerPool.js';
+import { attachInput } from './ui/input.js';
+import { readUrlState, createUrlSync, setupControls, loadLayers, MAP_LAYERS } from './ui/controls.js';
+import { createHud } from './ui/hud.js';
+
+const TILE_BUDGET_MS = 6;
+
+const canvas = document.getElementById('map');
+const initial = readUrlState();
+
+const state = {
+  seedText: initial.seed,
+  seed: seedFromText(initial.seed),
+  layers: loadLayers(),
+};
+let world = createWorld(state.seed);
+const getWorld = () => world;
+
+let dirty = true;
+const markDirty = () => { dirty = true; };
+
+const pool = createTilePool(Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)));
+const camera = new Camera();
+const noiseTiles = new TileManager({ build: createNoiseTileBuilder(() => state.seed) });
+const districtTiles = new TileManager({
+  build: createDistrictTileBuilder({ pool, getWorld, getLayers: () => state.layers }),
+  concurrency: pool ? 8 : 1,
+  maxEntries: 96,
+  onReady: markDirty,
+  onEvict: (data) => data.canvas.close?.(),
+});
+const renderer = new Renderer(canvas, camera, { noiseTiles, districtTiles }, state, getWorld);
+const input = attachInput(canvas, camera);
+const hud = createHud(document.getElementById('hud'));
+const urlSync = createUrlSync(() => ({ seed: state.seedText, x: camera.x, y: camera.y, zoom: camera.zoom }));
+
+renderer.resize();
+camera.set(initial.x, initial.y, initial.zoom);
+
+const motion = window.matchMedia('(prefers-reduced-motion: reduce)');
+camera.reducedMotion = motion.matches;
+motion.addEventListener('change', () => { camera.reducedMotion = motion.matches; });
+
+setupControls({
+  state,
+  camera,
+  onSeed(text) {
+    state.seedText = text;
+    state.seed = seedFromText(text);
+    world = createWorld(state.seed);
+    noiseTiles.clear();
+    districtTiles.clear();
+    dirty = true;
+    urlSync.now();
+  },
+  onLayers(name) {
+    if (MAP_LAYERS.includes(name)) districtTiles.clear();
+    dirty = true;
+  },
+});
+
+window.addEventListener('resize', () => {
+  renderer.resize();
+  dirty = true;
+});
+
+let last = performance.now();
+let seenVersion = -1;
+
+function frame(now) {
+  const dt = Math.min(0.1, (now - last) / 1000);
+  last = now;
+  input.update(dt);
+  camera.update(dt);
+  if (camera.version !== seenVersion) {
+    seenVersion = camera.version;
+    dirty = true;
+    urlSync.schedule();
+  }
+  if (dirty) {
+    dirty = false;
+    renderer.draw();
+    districtTiles.pump(TILE_BUDGET_MS);
+    if (state.layers.noise && noiseTiles.pump(TILE_BUDGET_MS) > 0) dirty = true;
+    if (noiseTiles.queue.size > 0 && state.layers.noise) dirty = true;
+  }
+  hud.tick(now);
+  hud.update(now, { camera, input, tiles: districtTiles, renderer, world, visible: state.layers.hud });
+  requestAnimationFrame(frame);
+}
+
+
+// Handle for debugging from the console.
+window.city = { camera, renderer, districtTiles, getWorld, state };
+
+requestAnimationFrame(frame);

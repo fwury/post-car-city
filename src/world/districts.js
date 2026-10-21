@@ -1,0 +1,565 @@
+// Districts, generated in the order a city grows:
+//   1. routes.js  boulevards, the old citywide roads
+//   2. cores.js   district cores at route crossings and along routes
+//   3. growth.js  districts spread out from their cores over land parcels
+//   4. here       boundaries where districts meet become primary greenways,
+//                 and district parks sit where three districts meet
+//
+// Boundaries are traced between parcels of different districts, then
+// smoothed. Each stretch of boundary between two junctions is computed once,
+// in a fixed direction, and shared by both districts, so the two sides always
+// match exactly.
+
+import { hash, toUnit } from '../core/hash.js';
+import { rngFor } from '../core/rng.js';
+import { createNoise, createWarp } from '../core/noise.js';
+import { LruCache } from './cache.js';
+import { STREET_TYPES } from './streetTypes.js';
+import { createRoutes } from './routes.js';
+import { createCores, keyInts } from './cores.js';
+import { createGrowth, PARCEL } from './growth.js';
+import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf } from '../util/geom.js';
+
+export const CORE_RADIUS = 380; // about 0.45 km²
+export const GREENWAY_MIN = 50;
+export const GREENWAY_MAX = 160;
+export const PARK_AREA_HA = [40, 70];
+export const BOULEVARD_WIDTH = STREET_TYPES.boulevard.width;
+const DISTRICT_REACH = 7000; // no district extends further than this from its core
+const DISTRICT_SEARCH = 5500; // cores this far outside a view can still reach into it
+const SMOOTHING = 4; // Chaikin passes on boundaries
+const SIMPLIFY = 120; // metres of staircase removed before smoothing
+const SMOOTH_SPACING = 30; // typical metres between smoothed boundary points
+const PARK_SUPPRESS_RADIUS = 1300;
+
+// Parcel-grid point keys. A boundary point is either the midpoint between two
+// parcels ('h' horizontal or 'v' vertical neighbours) or the centre of a quad
+// of four parcels where three or more districts meet ('q').
+const hKey = (i, j) => `h${i},${j}`;
+const vKey = (i, j) => `v${i},${j}`;
+const qKey = (i, j) => `q${i},${j}`;
+
+// Douglas-Peucker simplification, keeping both ends. Removes the parcel-grid
+// staircase before smoothing.
+function simplify(pts, tol) {
+  if (pts.length < 3) return pts;
+  const keep = new Uint8Array(pts.length);
+  keep[0] = keep[pts.length - 1] = 1;
+  const stack = [[0, pts.length - 1]];
+  while (stack.length) {
+    const [a, b] = stack.pop();
+    const [ax, ay] = pts[a];
+    const [bx, by] = pts[b];
+    const len = Math.hypot(bx - ax, by - ay);
+    let best = -1;
+    let bd = tol;
+    for (let i = a + 1; i < b; i++) {
+      const [px, py] = pts[i];
+      const d = len > 0 ? Math.abs((bx - ax) * (ay - py) - (ax - px) * (by - ay)) / len : Math.hypot(px - ax, py - ay);
+      if (d > bd) {
+        bd = d;
+        best = i;
+      }
+    }
+    if (best > 0) {
+      keep[best] = 1;
+      stack.push([a, best], [best, b]);
+    }
+  }
+  return pts.filter((_, i) => keep[i]);
+}
+
+function chaikin(pts, closed) {
+  const out = closed ? [] : [pts[0]];
+  const n = pts.length;
+  const segs = closed ? n : n - 1;
+  for (let i = 0; i < segs; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
+    out.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
+  }
+  if (!closed) out.push(pts[n - 1]);
+  return out;
+}
+
+// Even spacing along a polyline, keeping both ends.
+function resample(pts, step) {
+  const out = [pts[0]];
+  let carry = 0;
+  for (let i = 0; i < pts.length - 1; i++) {
+    const [ax, ay] = pts[i];
+    const [bx, by] = pts[i + 1];
+    const len = Math.hypot(bx - ax, by - ay);
+    let t = step - carry;
+    while (t < len) {
+      out.push([ax + ((bx - ax) * t) / len, ay + ((by - ay) * t) / len]);
+      t += step;
+    }
+    carry = len - (t - step);
+  }
+  const last = pts[pts.length - 1];
+  const prev = out[out.length - 1];
+  if (Math.hypot(last[0] - prev[0], last[1] - prev[1]) < step * 0.4 && out.length > 1) out.pop();
+  out.push(last);
+  return out;
+}
+
+export function createWorld(seed) {
+  const routes = createRoutes(seed);
+  const cores = createCores(seed, routes);
+  const growth = createGrowth(seed, routes, cores);
+  const detail = createWarp(seed, 'boundary-detail', 1300, 70, 2);
+  const widthNoise = createNoise(seed, 'greenway-width');
+  const shapeNoise = createNoise(seed, 'blob-shape');
+  const meanderNoise = createNoise(seed, 'stream-meander');
+
+  const bases = new LruCache(12000);
+  const districts = new LruCache(12000);
+  const chains = new LruCache(60000);
+  const parks = new LruCache(40000);
+  const junctionChoice = new LruCache(40000);
+
+  const label = growth.label;
+  const pos = growth.parcelPos;
+
+  function pointPos(key) {
+    const kind = key[0];
+    const [i, j] = key.slice(1).split(',').map(Number);
+    if (kind === 'h') {
+      const a = pos(i, j);
+      const b = pos(i + 1, j);
+      return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    }
+    if (kind === 'v') {
+      const a = pos(i, j);
+      const b = pos(i, j + 1);
+      return [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    }
+    const a = pos(i, j);
+    const b = pos(i + 1, j);
+    const c = pos(i + 1, j + 1);
+    const d = pos(i, j + 1);
+    return [(a[0] + b[0] + c[0] + d[0]) / 4, (a[1] + b[1] + c[1] + d[1]) / 4];
+  }
+
+  // Boundary pieces inside the quad whose top-left parcel is (i, j).
+  // Each piece runs between two point keys and separates two labels; `corner`
+  // gives, for each label, a corner position on that label's side.
+  function quadPieces(i, j) {
+    const C = [[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]];
+    const L = C.map(([a, b]) => label(a, b));
+    const E = [hKey(i, j), vKey(i + 1, j), hKey(i, j + 1), vKey(i, j)];
+    const cut = [0, 1, 2, 3].filter((e) => L[e] !== L[(e + 1) % 4]);
+    if (cut.length === 0) return [];
+    const piece = (a, b, e) => ({ a, b, la: L[e], lb: L[(e + 1) % 4], ca: C[e], cb: C[(e + 1) % 4] });
+    if (cut.length === 2) return [piece(E[cut[0]], E[cut[1]], cut[0])];
+    const Q = qKey(i, j);
+    if (cut.length === 4) {
+      const d0 = L[0] === L[2];
+      const d1 = L[1] === L[3];
+      let win = -1;
+      if (d0 && d1) win = L[0] < L[1] ? 0 : 1;
+      else if (d0) win = 0;
+      else if (d1) win = 1;
+      // The winning diagonal joins through the quad; the other two corners are cut off.
+      if (win === 0) return [piece(E[0], E[1], 0), piece(E[2], E[3], 2)];
+      if (win === 1) return [piece(E[3], E[0], 0), piece(E[1], E[2], 2)];
+    }
+    return cut.map((e) => piece(E[e], Q, e));
+  }
+
+  // Geometry and topology of a district, without parks.
+  function base(core) {
+    let b = bases.get(core.key);
+    if (b) return b;
+    const D = core.key;
+    // Flood the district's parcels from the core.
+    const si = Math.floor(core.x / PARCEL);
+    const sj = Math.floor(core.y / PARCEL);
+    const seen = new Set();
+    const stack = [[si, sj]];
+    const quads = new Set();
+    let parcels = 0;
+    while (stack.length) {
+      const [i, j] = stack.pop();
+      const k = `${i},${j}`;
+      if (seen.has(k)) continue;
+      seen.add(k);
+      if (label(i, j) !== D) continue;
+      if (Math.abs(i - si) * PARCEL > DISTRICT_REACH || Math.abs(j - sj) * PARCEL > DISTRICT_REACH) continue;
+      parcels++;
+      for (let dj = -1; dj <= 0; dj++) for (let di = -1; di <= 0; di++) quads.add(`${i + di},${j + dj}`);
+      for (let dj = -1; dj <= 1; dj++) for (let di = -1; di <= 1; di++) if (di || dj) stack.push([i + di, j + dj]);
+    }
+
+    // Pieces with D on one side, oriented so D is on the left.
+    const next = new Map();
+    for (const q of quads) {
+      const [i, j] = q.split(',').map(Number);
+      for (const p of quadPieces(i, j)) {
+        if (p.la !== D && p.lb !== D) continue;
+        const other = p.la === D ? p.lb : p.la;
+        const corner = pos(...(p.la === D ? p.ca : p.cb));
+        const A = pointPos(p.a);
+        const B = pointPos(p.b);
+        const left = (B[0] - A[0]) * (corner[1] - A[1]) - (B[1] - A[1]) * (corner[0] - A[0]) < 0;
+        const [s, e] = left ? [p.a, p.b] : [p.b, p.a];
+        next.set(s, { end: e, other });
+      }
+    }
+
+    // Follow pieces into rings, and split rings into chains at junctions.
+    const rings = [];
+    const used = new Set();
+    for (const start of next.keys()) {
+      if (used.has(start)) continue;
+      const keys = [];
+      const others = [];
+      let k = start;
+      while (!used.has(k) && next.has(k)) {
+        used.add(k);
+        keys.push(k);
+        others.push(next.get(k).other);
+        k = next.get(k).end;
+      }
+      if (keys.length > 2) rings.push({ keys, others });
+    }
+
+    const dChains = [];
+    const junctions = new Map();
+    const ringPts = [];
+    for (const r of rings) {
+      const n = r.keys.length;
+      // Start at a change of neighbour, if there is one.
+      let s0 = r.others.findIndex((o, i) => o !== r.others[(i - 1 + n) % n]);
+      const loop = s0 < 0;
+      if (loop) s0 = 0;
+      const ringChains = [];
+      let cur = null;
+      for (let t = 0; t < n; t++) {
+        const i = (s0 + t) % n;
+        if (!cur || r.others[i] !== cur.other) {
+          if (cur) cur.keys.push(r.keys[i]);
+          cur = { other: r.others[i], keys: [r.keys[i]] };
+          ringChains.push(cur);
+        } else {
+          cur.keys.push(r.keys[i]);
+        }
+      }
+      cur.keys.push(r.keys[s0]);
+      const pts = [];
+      for (const c of ringChains) {
+        const g = sharedChain(D, c.other, c.keys, loop);
+        dChains.push({ key: g.key, neighbour: c.other, points: g.oriented(c.keys[0]), geo: g });
+        const op = g.oriented(c.keys[0]);
+        for (let i = 0; i < op.length - 1; i++) pts.push(op[i]);
+        if (!loop) {
+          for (const jk of [c.keys[0], c.keys[c.keys.length - 1]]) {
+            if (!junctions.has(jk)) {
+              const [x, y] = detail(...pointPos(jk), [0, 0]);
+              junctions.set(jk, { key: jk, x, y });
+            }
+          }
+        }
+      }
+      ringPts.push(pts);
+    }
+    // The outer ring is the largest; any others are islands or holes.
+    ringPts.sort((a, b) => Math.abs(signedArea(b)) - Math.abs(signedArea(a)));
+    const ring = ringPts[0] || [];
+
+    for (const j of junctions.values()) {
+      const [i, jj] = j.key.slice(1).split(',').map(Number);
+      j.i = i;
+      j.j = jj;
+      j.labels = [...new Set([[i, jj], [i + 1, jj], [i + 1, jj + 1], [i, jj + 1]].map(([a, c]) => label(a, c)))].sort();
+    }
+
+    let minD = Infinity;
+    for (const [x, y] of ring) minD = Math.min(minD, dist(core.x, core.y, x, y));
+    const coreRadius = Math.max(200, Math.min(CORE_RADIUS, (minD - GREENWAY_MAX / 2 - 60) / 1.15));
+    const bbox = bboxOf(ring, GREENWAY_MAX);
+    b = {
+      key: D,
+      core,
+      station: [core.x, core.y],
+      coreRadius,
+      parcels,
+      area: ring.length ? polygonArea(ring) : 0,
+      ring,
+      rings: ringPts,
+      chains: dChains,
+      junctions: [...junctions.values()],
+      neighbours: [...new Set(dChains.map((c) => c.neighbour))],
+      bbox,
+    };
+    bases.set(D, b);
+    return b;
+  }
+
+  // One boundary stretch between two districts, computed in a fixed direction
+  // and shared. `keys` is the stretch as seen from district D.
+  function sharedChain(D, E, keys, loop) {
+    let canon = keys;
+    if (loop) {
+      // Closed loop: start at the smallest key, go towards the smaller neighbour.
+      const ring = keys.slice(0, -1);
+      let m = 0;
+      for (let i = 1; i < ring.length; i++) if (ring[i] < ring[m]) m = i;
+      const fwd = ring.slice(m).concat(ring.slice(0, m));
+      const back = [fwd[0], ...fwd.slice(1).reverse()];
+      canon = (fwd[1] < back[1] ? fwd : back).concat([fwd[0]]);
+    } else if (keys[0] > keys[keys.length - 1]) {
+      canon = keys.slice().reverse();
+    }
+    const pair = D < E ? `${D}|${E}` : `${E}|${D}`;
+    const key = `${pair}|${canon[0]}|${canon[canon.length - 1]}|${canon.length}`;
+    let g = chains.get(key);
+    if (!g) {
+      let pts = simplify(canon.map(pointPos), SIMPLIFY);
+      if (loop) pts = pts.slice(0, -1);
+      if (pts.length < 3 && loop) pts = canon.slice(0, -1).map(pointPos);
+      for (let s = 0; s < SMOOTHING; s++) pts = chaikin(pts, loop);
+      if (loop) pts.push(pts[0]);
+      pts = resample(pts, SMOOTH_SPACING);
+      pts = pts.map(([x, y]) => detail(x, y, [0, 0]));
+      const first = canon[0];
+      const lods = new Map();
+      g = {
+        key,
+        points: pts,
+        first,
+        stream: toUnit(hash(seed, 'stream', ...pts[0].map(Math.round), pts.length)) < 0.5,
+        // Points running from `start` (orientation only matters for open stretches).
+        oriented(start) {
+          return start === first ? pts : pts.slice().reverse();
+        },
+        lod(step) {
+          let l = lods.get(step);
+          if (!l) {
+            const line = [];
+            for (let i = 0; i < pts.length - 1; i += step) line.push(pts[i]);
+            line.push(pts[pts.length - 1]);
+            l = { line, strip: greenwayStrip(line), stream: this.stream && line.length > 3 ? streamLine(line) : null };
+            lods.set(step, l);
+          }
+          return l;
+        },
+      };
+      chains.set(key, g);
+    }
+    return g;
+  }
+
+  const greenwayWidth = (x, y) =>
+    GREENWAY_MIN + (GREENWAY_MAX - GREENWAY_MIN) * Math.min(1, Math.max(0, widthNoise.fbm(x / 1500, y / 1500, 2) * 0.9 + 0.5));
+
+  function greenwayStrip(line) {
+    const normals = polylineNormals(line);
+    const left = [];
+    const right = [];
+    for (let i = 0; i < line.length; i++) {
+      const [x, y] = line[i];
+      const h = greenwayWidth(x, y) / 2;
+      left.push([x + normals[i][0] * h, y + normals[i][1] * h]);
+      right.push([x - normals[i][0] * h, y - normals[i][1] * h]);
+    }
+    return left.concat(right.reverse());
+  }
+
+  function streamLine(line) {
+    const normals = polylineNormals(line);
+    return line.map(([x, y], i) => {
+      const m = meanderNoise.fbm(x / 420, y / 420, 2) * greenwayWidth(x, y) * 0.32;
+      return [x + normals[i][0] * m, y + normals[i][1] * m];
+    });
+  }
+
+  function radialShape(cx, cy, r, amp, ox, oy, n = 56) {
+    const pts = [];
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2;
+      const rr = r * (1 + amp * shapeNoise.fbm(Math.cos(a) * 1.4 + ox, Math.sin(a) * 1.4 + oy, 3));
+      pts.push([cx + Math.cos(a) * rr, cy + Math.sin(a) * rr]);
+    }
+    return pts;
+  }
+
+  // ---- District parks at junctions ----
+
+  const junctionScore = (j) => toUnit(hash(seed, 'park-score', j.i, j.j));
+
+  function baseOf(key) {
+    const c = growth.coreOf(key);
+    return c ? base(c) : null;
+  }
+
+  // Park geometry for a junction if it has room, ignoring other parks.
+  function parkShape(j) {
+    let p = parks.get(j.key);
+    if (p !== undefined) return p;
+    p = null;
+    if (j.labels.length >= 3) {
+      const rng = rngFor(seed, 'park', j.i, j.j);
+      let r = Math.sqrt((rng.range(PARK_AREA_HA[0], PARK_AREA_HA[1]) * 1e4) / Math.PI);
+      for (const l of j.labels) {
+        const b = baseOf(l);
+        if (!b) continue;
+        r = Math.min(r, (dist(j.x, j.y, b.station[0], b.station[1]) - b.coreRadius * 1.15 - 150) / 1.25);
+      }
+      const road = routes.nearestAny(j.x, j.y);
+      if (road) r = Math.min(r, (road.d - BOULEVARD_WIDTH / 2 - 60) / 1.25);
+      if (r >= 180) {
+        const shape = radialShape(j.x, j.y, r, 0.22, rng.range(-50, 50), rng.range(-50, 50));
+        let lake = null;
+        if (rng.chance(0.75)) {
+          const a = rng.range(0, Math.PI * 2);
+          const off = r * rng.range(0, 0.2);
+          const lr = r * rng.range(0.24, 0.36);
+          const lx = j.x + Math.cos(a) * off;
+          const ly = j.y + Math.sin(a) * off;
+          lake = { x: lx, y: ly, r: lr, shape: radialShape(lx, ly, lr, 0.3, rng.range(-50, 50), rng.range(-50, 50), 40) };
+        }
+        p = { key: j.key, x: j.x, y: j.y, r, area: polygonArea(shape), shape, lake, districts: j.labels };
+      }
+    }
+    parks.set(j.key, p);
+    return p;
+  }
+
+  // Each district nominates its best junction that has room for a park.
+  function choiceOf(b) {
+    let c = junctionChoice.get(b.key);
+    if (c !== undefined) return c;
+    c = null;
+    let best = -1;
+    for (const j of b.junctions) {
+      const s = junctionScore(j);
+      if (s > best && parkShape(j)) {
+        best = s;
+        c = j.key;
+      }
+    }
+    junctionChoice.set(b.key, c);
+    return c;
+  }
+
+  const nominated = (j) => j.labels.some((l) => {
+    const b = baseOf(l);
+    return b && choiceOf(b) === j.key;
+  });
+
+  function parkAt(j) {
+    if (!nominated(j)) return null;
+    const s = junctionScore(j);
+    for (const l of j.labels) {
+      const b = baseOf(l);
+      if (!b) continue;
+      for (const w of b.junctions) {
+        if (w.key === j.key || dist(j.x, j.y, w.x, w.y) > PARK_SUPPRESS_RADIUS) continue;
+        if (junctionScore(w) > s && nominated(w)) return null;
+      }
+    }
+    return parkShape(j);
+  }
+
+  // ---- Full districts ----
+
+  function district(core) {
+    let d = districts.get(core.key);
+    if (d) return d;
+    const b = base(core);
+    const dParks = b.junctions.map(parkAt).filter(Boolean);
+    const rng = rngFor(seed, 'core-shape', ...keyInts(core));
+    const coreShape = radialShape(core.x, core.y, b.coreRadius, 0.12, rng.range(-50, 50), rng.range(-50, 50), 48);
+    const bbox = { ...b.bbox };
+    for (const p of dParks) bboxOf(p.shape, 0, bbox);
+    const links = core.routes.length * 2 + cores.spurs(core).length;
+    d = {
+      ...b,
+      origin: [Math.round(core.x / 1000) * 1000, Math.round(core.y / 1000) * 1000],
+      core: coreShape,
+      coreInfo: core,
+      coreArea: polygonArea(coreShape),
+      parks: dParks,
+      links,
+      bbox,
+      lods: new Map(),
+    };
+    districts.set(core.key, d);
+    return d;
+  }
+
+  // Geometry for a level of detail: chain points thinned to about segLen.
+  function lod(d, segLen) {
+    let g = d.lods.get(segLen);
+    if (g) return g;
+    const step = Math.max(1, Math.round(segLen / SMOOTH_SPACING));
+    const edgeLines = [];
+    const strips = [];
+    const streams = [];
+    for (const c of d.chains) {
+      const l = c.geo.lod(step);
+      edgeLines.push(l.line);
+      strips.push(l.strip);
+      if (l.stream) streams.push(l.stream);
+    }
+    const junctions = d.junctions.map((j) => ({ x: j.x, y: j.y, r: greenwayWidth(j.x, j.y) / 2 }));
+    g = { segLen, ring: d.ring, edgeLines, strips, junctions, streams };
+    d.lods.set(segLen, g);
+    return g;
+  }
+
+  function districtsInRect(x0, y0, x1, y1) {
+    const out = [];
+    const m = DISTRICT_SEARCH;
+    for (const c of cores.coresInRect(x0 - m, y0 - m, x1 + m, y1 + m)) {
+      const b = base(c);
+      if (b.bbox.x1 < x0 - 1000 || b.bbox.x0 > x1 + 1000 || b.bbox.y1 < y0 - 1000 || b.bbox.y0 > y1 + 1000) continue;
+      const d = district(c);
+      const bb = d.bbox;
+      if (bb.x1 < x0 || bb.x0 > x1 || bb.y1 < y0 || bb.y0 > y1) continue;
+      out.push(d);
+    }
+    return out;
+  }
+
+  // Boulevards touching a rectangle: route pieces plus spurs to fill cores.
+  function boulevardsInRect(x0, y0, x1, y1) {
+    const out = routes.piecesInRect(x0, y0, x1, y1).map((p) => ({ key: p.key, points: p.points }));
+    for (const c of cores.coresInRect(x0 - 6000, y0 - 6000, x1 + 6000, y1 + 6000)) {
+      for (const s of cores.spurs(c)) out.push(s);
+    }
+    return out;
+  }
+
+  // The district containing a point.
+  function districtAt(x, y) {
+    const i0 = Math.floor(x / PARCEL);
+    const j0 = Math.floor(y / PARCEL);
+    let best = null;
+    let bd = Infinity;
+    for (let j = j0 - 1; j <= j0 + 1; j++) {
+      for (let i = i0 - 1; i <= i0 + 1; i++) {
+        const [px, py] = pos(i, j);
+        const dd = (px - x) ** 2 + (py - y) ** 2;
+        if (dd < bd) {
+          bd = dd;
+          best = label(i, j);
+        }
+      }
+    }
+    const c = best && growth.coreOf(best);
+    if (!c) return null;
+    const d = district(c);
+    for (const r of d.rings) if (pointInPolygon(x, y, r)) return d;
+    return d;
+  }
+
+  return {
+    seed, routes, cores, growth,
+    district, base, lod, districtsInRect, boulevardsInRect, districtAt, greenwayWidth,
+    coresInRect: cores.coresInRect,
+  };
+}

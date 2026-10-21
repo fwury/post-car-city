@@ -1,0 +1,59 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Post-car city</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <canvas id="map" tabindex="0" aria-label="City map. Drag to pan, scroll or pinch to zoom, arrow keys to pan, plus and minus to zoom."></canvas>
+
+  <details class="panel" id="panel" open>
+    <summary>
+      <span class="title">Post-car city</span>
+      <span class="stage">Stage 2: districts</span>
+    </summary>
+
+    <form id="seed-form" class="seed">
+      <label for="seed">Seed</label>
+      <div class="seed-row">
+        <input id="seed" name="seed" autocomplete="off" spellcheck="false">
+        <button type="submit">Apply</button>
+      </div>
+      <button type="button" id="new-seed" class="secondary">New seed</button>
+    </form>
+
+    <fieldset class="layers">
+      <legend>Map</legend>
+      <label><input type="checkbox" data-layer="cores"><span class="swatch" style="--c: var(--core)"></span> District cores</label>
+      <label><input type="checkbox" data-layer="green"><span class="swatch" style="--c: var(--natural)"></span> Greenways and parks</label>
+      <label><input type="checkbox" data-layer="water"><span class="swatch" style="--c: var(--water)"></span> Lakes and streams</label>
+      <label><input type="checkbox" data-layer="streets"><span class="swatch" style="--c: var(--road)"></span> Boulevards</label>
+      <label><input type="checkbox" data-layer="transit"><span class="swatch round" style="--c: var(--rail)"></span> Rail stations</label>
+    </fieldset>
+
+    <details class="debug">
+      <summary>Debug layers</summary>
+      <fieldset class="layers">
+        <label><input type="checkbox" data-layer="outlines"> District outlines</label>
+        <label><input type="checkbox" data-layer="noise"> Noise preview</label>
+        <label><input type="checkbox" data-layer="grid"> World grid</label>
+        <label><input type="checkbox" data-layer="tiles"> Tile outlines</label>
+        <label><input type="checkbox" data-layer="hud"> Readout</label>
+      </fieldset>
+    </details>
+
+    <p class="help">Drag to pan, scroll or pinch to zoom, double-click to zoom in. Arrow keys or WASD pan (hold Shift for faster), + and − zoom.</p>
+  </details>
+
+  <div class="zoom" role="group" aria-label="Zoom">
+    <button type="button" id="zoom-in" aria-label="Zoom in">+</button>
+    <button type="button" id="zoom-out" aria-label="Zoom out">−</button>
+  </div>
+
+  <dl class="hud" id="hud" aria-live="off"></dl>
+
+  <script type="module" src="src/main.js"></script>
+</body>
+</html>
