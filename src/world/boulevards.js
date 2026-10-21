@@ -65,7 +65,7 @@ function hermite(p0, m0, p1, m1, out) {
 
 // Smooth curve through knots [{p, d}] where d is the unit direction of travel
 // at that knot. Tangent length follows the neighbouring chords.
-function spline(knots) {
+export function spline(knots) {
   const out = [];
   for (let i = 0; i < knots.length - 1; i++) {
     const a = knots[i];
@@ -128,7 +128,7 @@ function crossesAny(pts, lines, end, skip) {
   return false;
 }
 
-function lineBox(points) {
+export function lineBox(points) {
   let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
   for (const [x, y] of points) {
     if (x < x0) x0 = x;

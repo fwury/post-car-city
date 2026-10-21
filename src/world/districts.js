@@ -3,8 +3,9 @@
 //   2. growth.js      districts spread out from their cores over land parcels
 //   3. here           boundaries where districts meet become primary greenways
 //   4. boulevards.js  tram boulevards link the cores of neighbouring districts
-//   5. here           district parks sit where three districts meet, clear of
+//   5. parks.js       district parks sit where three districts meet, clear of
 //                     the boulevards
+//   6. neighbourhoods.js  neighbourhoods (the core among them) and main streets
 //
 // Boundaries are traced between parcels of different districts, then
 // smoothed. Each stretch of boundary between two junctions is computed once,
@@ -18,10 +19,11 @@ import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
 import { createBoulevards, distToPieces } from './boulevards.js';
 import { createParks } from './parks.js';
+import { createNeighbourhoods } from './neighbourhoods.js';
 export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
 import { createGrowth, PARCEL } from './growth.js';
-import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf } from '../util/geom.js';
+import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf, simplify, chaikin, resample } from '../util/geom.js';
 
 export const CORE_RADIUS = 380; // about 0.45 km²
 export const GREENWAY_MIN = 50;
@@ -43,72 +45,6 @@ const FILLET = 70; // longest rounding either side of a bend
 const hKey = (i, j) => `h${i},${j}`;
 const vKey = (i, j) => `v${i},${j}`;
 const qKey = (i, j) => `q${i},${j}`;
-
-// Douglas-Peucker simplification, keeping both ends. Removes the parcel-grid
-// staircase before smoothing.
-function simplify(pts, tol) {
-  if (pts.length < 3) return pts;
-  const keep = new Uint8Array(pts.length);
-  keep[0] = keep[pts.length - 1] = 1;
-  const stack = [[0, pts.length - 1]];
-  while (stack.length) {
-    const [a, b] = stack.pop();
-    const [ax, ay] = pts[a];
-    const [bx, by] = pts[b];
-    const len = Math.hypot(bx - ax, by - ay);
-    let best = -1;
-    let bd = tol;
-    for (let i = a + 1; i < b; i++) {
-      const [px, py] = pts[i];
-      const d = len > 0 ? Math.abs((bx - ax) * (ay - py) - (ax - px) * (by - ay)) / len : Math.hypot(px - ax, py - ay);
-      if (d > bd) {
-        bd = d;
-        best = i;
-      }
-    }
-    if (best > 0) {
-      keep[best] = 1;
-      stack.push([a, best], [best, b]);
-    }
-  }
-  return pts.filter((_, i) => keep[i]);
-}
-
-function chaikin(pts, closed) {
-  const out = closed ? [] : [pts[0]];
-  const n = pts.length;
-  const segs = closed ? n : n - 1;
-  for (let i = 0; i < segs; i++) {
-    const a = pts[i];
-    const b = pts[(i + 1) % n];
-    out.push([a[0] * 0.75 + b[0] * 0.25, a[1] * 0.75 + b[1] * 0.25]);
-    out.push([a[0] * 0.25 + b[0] * 0.75, a[1] * 0.25 + b[1] * 0.75]);
-  }
-  if (!closed) out.push(pts[n - 1]);
-  return out;
-}
-
-// Even spacing along a polyline, keeping both ends.
-function resample(pts, step) {
-  const out = [pts[0]];
-  let carry = 0;
-  for (let i = 0; i < pts.length - 1; i++) {
-    const [ax, ay] = pts[i];
-    const [bx, by] = pts[i + 1];
-    const len = Math.hypot(bx - ax, by - ay);
-    let t = step - carry;
-    while (t < len) {
-      out.push([ax + ((bx - ax) * t) / len, ay + ((by - ay) * t) / len]);
-      t += step;
-    }
-    carry = len - (t - step);
-  }
-  const last = pts[pts.length - 1];
-  const prev = out[out.length - 1];
-  if (Math.hypot(last[0] - prev[0], last[1] - prev[1]) < step * 0.4 && out.length > 1) out.pop();
-  out.push(last);
-  return out;
-}
 
 // Replace a smooth line by straight runs with rounded bends between them, the
 // way a linear park follows old field edges: mostly straight, with a bend
@@ -164,29 +100,14 @@ function straightRuns(pts, rng) {
   return { points: out, runs };
 }
 
-// A district core: an irregular polygon of five to eight straight edges, each
-// edge a street. Vertices stay within CORE_REACH core radii of the station.
+// Cores reach at most this many core radii from the station (parks keep clear).
 const CORE_REACH = 1.25;
-function coreShape(seed, core, r) {
-  const rng = rngFor(seed, 'core-shape', ...keyInts(core));
-  const n = rng.int(5, 8);
-  const turn = rng.range(0, Math.PI * 2);
-  const pts = [];
-  for (let k = 0; k < n; k++) {
-    const a = turn + ((k + rng.range(-0.32, 0.32)) / n) * Math.PI * 2;
-    // Mostly convex, now and then a vertex pulled in for a notch.
-    const rr = rng.chance(0.12) ? rng.range(0.62, 0.78) : rng.range(0.82, 1.22);
-    pts.push([Math.cos(a) * rr, Math.sin(a) * rr]);
-  }
-  // Scale to an area of about pi r^2, but keep every vertex within reach.
-  const s = Math.min(Math.sqrt((Math.PI * r * r) / polygonArea(pts)), CORE_REACH / Math.max(...pts.map((p) => Math.hypot(p[0], p[1]))));
-  return pts.map(([x, y]) => [core.x + x * r * s, core.y + y * r * s]);
-}
 
 export function createWorld(seed) {
   const cores = createCores(seed);
   const growth = createGrowth(seed, cores);
   const boulevards = createBoulevards(seed);
+  const hoods = createNeighbourhoods(seed, { boulevards });
   const parks = createParks(seed, {
     baseOf: (k) => baseOf(k), label: (i, j) => growth.label(i, j), parcel: PARCEL,
     greenwayWidth: (x, y) => greenwayWidth(x, y), boulevardDistance: (x, y) => boulevardDistance(x, y), network: (b) => boulevards.network(b),
@@ -366,14 +287,12 @@ export function createWorld(seed) {
     let minD = Infinity;
     for (const [x, y] of ring) minD = Math.min(minD, dist(core.x, core.y, x, y));
     const coreRadius = Math.max(200, Math.min(CORE_RADIUS, (minD - GREENWAY_MAX / 2 - 60) / CORE_REACH));
-    const corePolygon = coreShape(seed, core, coreRadius);
     const bbox = bboxOf(ring, GREENWAY_MAX);
     b = {
       key: D,
       core,
       station: [core.x, core.y],
       coreRadius,
-      corePolygon,
       coreReach: coreRadius * CORE_REACH,
       parcels,
       area: ring.length ? polygonArea(ring) : 0,
@@ -485,22 +404,23 @@ export function createWorld(seed) {
     if (d) return d;
     const b = base(core);
     const dParks = parks.parksOf(b);
-    const coreShape = b.corePolygon;
     const bbox = { ...b.bbox };
     for (const p of dParks) bboxOf(p.shape, 0, bbox);
     const net = boulevards.network(b);
     d = {
       ...b,
       origin: [Math.round(core.x / 1000) * 1000, Math.round(core.y / 1000) * 1000],
-      core: coreShape,
       coreInfo: core,
-      coreArea: polygonArea(coreShape),
       parks: dParks,
       links: net.links.length,
       network: net,
       bbox,
       lods: new Map(),
     };
+    // Stage 3. The core is the neighbourhood around the station.
+    d.stage3 = hoods.of(d);
+    d.core = d.stage3.hoods[0].polygon;
+    d.coreArea = d.stage3.hoods[0].area;
     districts.set(core.key, d);
     return d;
   }
@@ -602,6 +522,8 @@ export function createWorld(seed) {
   return {
     seed, cores, growth, boulevards,
     district, base, lod, districtsInRect, boulevardsInRect, boulevardDistance, districtAt, greenwayWidth,
+    // Stage 3: neighbourhoods and main streets of a district.
+    neighbourhoods: (d) => d.stage3,
     coresInRect: cores.coresInRect,
   };
 }

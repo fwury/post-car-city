@@ -9,6 +9,7 @@ import { createWorld, CORE_RADIUS, GREENWAY_MIN } from '../src/world/districts.j
 import { CORE_SPACING } from '../src/world/cores.js';
 import { PARK_SPACING, PARK_AREA_HA } from '../src/world/parks.js';
 import { pointInPolygon } from '../src/util/geom.js';
+import { distToLine } from '../src/world/boulevards.js';
 
 const SEED = seedFromText('1');
 const AREA = [0, 0, 14000, 14000];
@@ -59,7 +60,9 @@ test('districts are irregular, connected, about 6 to 9 km² on average, with a c
     assert.ok(d.area > 2e6 && d.area < 25e6, `${d.key} area ${(d.area / 1e6).toFixed(1)} km²`);
     assert.ok(d.coreRadius >= 200 && d.coreRadius <= CORE_RADIUS);
     assert.ok(pointInPolygon(d.station[0], d.station[1], d.ring), `${d.key} station outside its district`);
-    for (const p of d.core) assert.ok(pointInPolygon(p[0], p[1], d.ring), `${d.key} core crosses its boundary`);
+    // The core is a neighbourhood traced on a 50 m raster; its edge may sit a cell off the greenway line.
+    const ring = d.ring.concat([d.ring[0]]);
+    for (const p of d.core) assert.ok(pointInPolygon(p[0], p[1], d.ring) || distToLine(p[0], p[1], ring) < 60, `${d.key} core crosses its boundary`);
   }
   const mean = total / ds.length / 1e6;
   assert.ok(mean > 6 && mean < 10.5, `mean district ${mean.toFixed(1)} km²`);
@@ -85,7 +88,7 @@ test('district parks sit at junctions, clear of cores and boulevards, shared by 
       const d = world.district(world.growth.coreOf(l));
       assert.ok(d.parks.some((q) => q.key === p.key), `park ${p.key} missing from ${d.key}`);
       for (const pt of p.shape) {
-        assert.ok(!pointInPolygon(pt[0], pt[1], d.core), 'park overlaps a core');
+        assert.ok(Math.hypot(pt[0] - d.station[0], pt[1] - d.station[1]) > d.coreReach, 'park reaches into a core');
       }
     }
     for (const pt of p.shape) assert.ok(world.boulevardDistance(pt[0], pt[1]) > 17, 'park sits on a boulevard');
@@ -178,12 +181,4 @@ test('district parks are spread out, sized 40 to 70 ha, and flow into their gree
   const touching = inner().map((d) => d.parks.length);
   const crowded = touching.filter((n) => n >= 3).length;
   assert.ok(crowded <= touching.length * 0.12, `${crowded} of ${touching.length} districts touch three or more parks`);
-});
-
-test('district cores are irregular polygons with five to eight straight edges', () => {
-  for (const d of inner()) {
-    assert.ok(d.core.length >= 5 && d.core.length <= 8, `${d.key} core has ${d.core.length} edges`);
-    assert.ok(pointInPolygon(d.station[0], d.station[1], d.core));
-    assert.ok(d.coreArea > 0.15e6 && d.coreArea < 0.6e6, `${d.key} core is ${(d.coreArea / 1e6).toFixed(2)} km²`);
-  }
 });

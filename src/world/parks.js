@@ -13,7 +13,7 @@
 import { hash, toUnit } from '../core/hash.js';
 import { rngFor } from '../core/rng.js';
 import { LruCache } from './cache.js';
-import { pointInPolygon, polygonArea } from '../util/geom.js';
+import { polygonArea } from '../util/geom.js';
 import { distToLine } from './boulevards.js';
 
 export const PARK_AREA_HA = [40, 70];
@@ -110,8 +110,7 @@ export function createParks(seed, { baseOf, label, parcel, greenwayWidth, boulev
     const grid = new Map();
     const cores = [];
     for (const b of basesNear(j.x, j.y, reach)) {
-      const c = b.corePolygon;
-      cores.push({ c, ring: c.concat([c[0]]), x: b.station[0], y: b.station[1], r: b.coreReach });
+      cores.push({ x: b.station[0], y: b.station[1], r: b.coreReach });
       for (const l of network(b).lines) {
         const bb = l.bbox;
         if (bb.x1 < j.x - reach || bb.x0 > j.x + reach || bb.y1 < j.y - reach || bb.y0 > j.y + reach) continue;
@@ -140,11 +139,7 @@ export function createParks(seed, { baseOf, label, parcel, greenwayWidth, boulev
             for (let i = 0; i < cell.length; i += 2) best = Math.min(best, distToLine(x, y, cell, i, i + 1) - ROAD_CLEAR);
           }
         }
-        for (const k of cores) {
-          if (Math.hypot(x - k.x, y - k.y) - k.r - CORE_CLEAR > best) continue;
-          const d = pointInPolygon(x, y, k.c) ? -1 : distToLine(x, y, k.ring) - CORE_CLEAR;
-          if (d < best) best = d;
-        }
+        for (const k of cores) best = Math.min(best, Math.hypot(x - k.x, y - k.y) - k.r - CORE_CLEAR);
         return best;
       },
     };

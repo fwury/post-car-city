@@ -21,7 +21,8 @@ const VALLEY_SPEED = 0.55; // how much cheaper spreading is along a valley floor
 
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
 
-class Heap {
+// Binary min-heap of (key, value) pairs.
+export class Heap {
   constructor() {
     this.k = [];
     this.v = [];
