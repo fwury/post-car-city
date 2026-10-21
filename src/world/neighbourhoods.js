@@ -23,13 +23,14 @@ import { Heap } from './growth.js';
 import { createMainStreets } from './mainStreets.js';
 import { fill, distanceField } from '../util/raster.js';
 export { MAIN_STREET_REACH } from './mainStreets.js';
-import { polygonArea, signedArea, simplify, chaikin } from '../util/geom.js';
+import { polygonArea, signedArea, simplify, chaikin, pointInPolygon } from '../util/geom.js';
 
 export const NEIGHBOURHOOD_AREA = 0.75e6; // m², typical
 export const NEIGHBOURHOODS = [8, 12]; // per district, besides the core
 export const RING_MARGIN = 80; // land this close to a district's greenway is the greenway's
-export const EDGE_SPACING = 850; // metres between main street crossings of a greenway
-const EDGE_END = 420; // crossings keep this far from the ends of a greenway stretch
+export const SPINE_REACH = 450; // metres of its main street either side of a centre a neighbourhood grows from
+export const EDGE_SPACING = 650; // metres between main street crossings of a greenway
+const EDGE_END = 330; // crossings keep this far from the ends of a greenway stretch
 const EDGE_CLEAR = 380; // and this far from a boulevard crossing
 const CELL = 50;
 const SMOOTH_TOL = 32; // metres of raster staircase removed before smoothing
@@ -323,15 +324,156 @@ export function createNeighbourhoods(seed, { boulevards }) {
     const crossings = [];
     for (const c of d.chains) {
       const same = c.points === c.geo.points;
+      // Parks at the ends of the stretch belong to both districts, so both
+      // skip the same crossings: none inside a park.
+      const ends = c.geo.key.split('|').slice(2, 4);
+      const endParks = d.parks.filter((pk) => ends.includes(pk.key));
       for (const x of crossingsOf(c.geo)) {
         const tx = same ? x.t[0] : -x.t[0];
         const ty = same ? x.t[1] : -x.t[1];
-        crossings.push({ key: x.key, p: x.p, n: [ty, -tx], neighbour: c.neighbour });
+        const n = [ty, -tx];
+        const probe = [x.p, [x.p[0] + n[0] * 110, x.p[1] + n[1] * 110], [x.p[0] - n[0] * 110, x.p[1] - n[1] * 110]];
+        if (endParks.some((pk) => probe.some((q) => pointInPolygon(q[0], q[1], pk.shape)))) continue;
+        crossings.push({ key: x.key, p: x.p, n, neighbour: c.neighbour });
       }
     }
     for (const h of hoods) h.seed = h.centre;
     const streets = mainStreets(d, hoods, chains, { mask, label, W, H, x0, y0, N, fromEdge, cellOf }, crossings);
-    return { hoods, chains, crossings, lines: streets.lines };
+
+    // ---- Regrow around the main streets ----
+    // Each neighbourhood now grows out from its own main street (the stretch
+    // near its centre), so the main street nearest a point decides which
+    // neighbourhood it is in, and boundaries fall between main streets.
+    const owner = new Int16Array(N).fill(OUTSIDE);
+    const ownerDist = new Float64Array(N).fill(Infinity);
+    const claim = (x, y, k, r) => {
+      const n = cellOf(x, y);
+      if (n < 0 || mask[n] !== LAND || r >= ownerDist[n]) return;
+      owner[n] = k;
+      ownerDist[n] = r;
+    };
+    const stampAlong = (pts, k, centre, reach) => {
+      for (let i = 0; i < pts.length - 1; i++) {
+        const [ax, ay] = pts[i];
+        const [bx, by] = pts[i + 1];
+        const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / (CELL / 2)));
+        for (let t = 0; t <= steps; t++) {
+          const x = ax + ((bx - ax) * t) / steps;
+          const y = ay + ((by - ay) * t) / steps;
+          const r = Math.hypot(x - centre[0], y - centre[1]);
+          if (r <= reach) claim(x, y, k, r);
+        }
+      }
+    };
+    // Each also keeps the land right around where it first grew from.
+    for (const n of land) {
+      const k = label[n];
+      if (k < 0) continue;
+      const r = Math.hypot(cx(n) - hoods[k].seed[0], cy(n) - hoods[k].seed[1]);
+      if (r < 180) claim(cx(n), cy(n), k, r);
+    }
+    for (const h of hoods) {
+      claim(h.centre[0], h.centre[1], h.id, 0);
+      if (h.core) {
+        for (const l of d.network.lines) stampAlong(l.points, 0, S, Math.max(150, d.coreRadius * 0.7));
+      } else if (h.spine) {
+        stampAlong(h.spine, h.id, h.centre, SPINE_REACH);
+      }
+    }
+    const sources = hoods.map(() => []);
+    for (let n = 0; n < N; n++) if (owner[n] >= 0) sources[owner[n]].push(n);
+    const fixedCell = new Uint8Array(N);
+    for (let n = 0; n < N; n++) if (owner[n] >= 0) fixedCell[n] = 1;
+    function regrow(speed2) {
+      label.fill(OUTSIDE);
+      cost.fill(Infinity);
+      done.fill(0);
+      const heap = new Heap();
+      sources.forEach((cells, k) => {
+        for (const n of cells) {
+          cost[n] = 0;
+          label[n] = k;
+          heap.push(0, n);
+        }
+      });
+      while (heap.size) {
+        const n = heap.pop();
+        if (done[n]) continue;
+        done[n] = 1;
+        for (let q = 0; q < 8; q++) {
+          const m = n + OFF[q];
+          if (mask[m] !== LAND || done[m] || fixedCell[m]) continue;
+          const c = cost[n] + STEP[q] * (fr[n] + fr[m]) * speed2[label[n]];
+          if (c < cost[m]) {
+            cost[m] = c;
+            label[m] = label[n];
+            heap.push(c, m);
+          }
+        }
+      }
+    }
+    const speed2 = hoods.map(() => 1);
+    for (let it = 0; it < 3; it++) {
+      regrow(speed2);
+      if (it === 2) break;
+      const size = new Float64Array(total);
+      for (const n of land) if (label[n] >= 0) size[label[n]]++;
+      const share = (land.length - coreCells) / (total - 1);
+      for (let k = 0; k < total; k++) speed2[k] = Math.max(0.5, Math.min(2.2, speed2[k] * (size[k] / (k === 0 ? coreCells : share)) ** 0.4));
+    }
+    // Keep each neighbourhood to the one piece that holds its centre; stray
+    // pieces go to the neighbourhoods around them.
+    const keep = new Uint8Array(N);
+    for (const h of hoods) {
+      // Start from where it first grew (always its own now), else its centre.
+      let start = cellOf(h.seed[0], h.seed[1]);
+      if (start < 0 || label[start] !== h.id) start = cellOf(h.centre[0], h.centre[1]);
+      if (start < 0 || label[start] !== h.id) continue;
+      const stack = [start];
+      keep[start] = 1;
+      while (stack.length) {
+        const n = stack.pop();
+        // Four-way: pieces touching only at a corner are traced apart.
+        for (const m of [n - 1, n + 1, n - W, n + W]) {
+          if (!keep[m] && label[m] === h.id) {
+            keep[m] = 1;
+            stack.push(m);
+          }
+        }
+      }
+    }
+    let stray = [];
+    for (const n of land) if (label[n] >= 0 && !keep[n]) {
+      label[n] = OUTSIDE;
+      stray.push(n);
+    }
+    for (let pass = 0; pass < 400 && stray.length; pass++) {
+      const next = [];
+      const set = [];
+      for (const n of stray) {
+        const counts = new Map();
+        for (const m of [n - 1, n + 1, n - W, n + W]) if (label[m] >= 0) counts.set(label[m], (counts.get(label[m]) || 0) + 1);
+        if (!counts.size) {
+          next.push(n);
+          continue;
+        }
+        let best = -1;
+        let bc = 0;
+        for (const [l, c] of [...counts].sort((x, y) => x[0] - y[0])) if (c > bc) [best, bc] = [l, c];
+        set.push([n, best]);
+      }
+      for (const [n, l] of set) label[n] = l;
+      stray = next;
+    }
+    const again = trace(label, W, H, x0, y0, total);
+    for (const h of hoods) {
+      const rings = again.polygons[h.id] || [];
+      h.polygon = rings[0] || [];
+      h.holes = rings.slice(1);
+      h.area = h.polygon.length > 2 ? polygonArea(h.polygon) - h.holes.reduce((a, r) => a + (r.length > 2 ? polygonArea(r) : 0), 0) : 0;
+      delete h.spine;
+    }
+    return { hoods, chains: again.chains, crossings, lines: streets.lines };
   }
 
   // ---- Boundary tracing ----

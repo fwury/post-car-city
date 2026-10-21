@@ -37,9 +37,12 @@ const MAX_LENGTH = 5000;
 const LOOKAHEAD = 300; // a loose end reaches this far ahead for a street to meet
 const OVERSHOOT = 4;
 const STUB = 70; // straight metres from a greenway crossing before following the field
+const STUB_POS = 5; // positions along a crossing street taken up by its stub
 const NEIGHBOUR_EDGE = 300; // shared boundary that calls for a street between two neighbourhoods
 const EDGE_GAP = 170; // closest a street may run alongside a greenway (centreline)
 const PARALLEL = 0.8;
+const THROUGH = 2; // positions (about 40 m) a street must carry on past a junction to end another there
+const THROUGH_B = 3; // the same along a boulevard (12 m points)
 const GLANCING = 0.82; // |cos| above which a street meeting another is too shallow (about 35°)
 const JUNCTION_GAP = 110; // a new join keeps this far from other junctions // |cos| above which two streets count as running the same way
 
@@ -268,7 +271,7 @@ export function createMainStreets(seed) {
 
     // ---- Tracing ----
     // One direction from p. Returns points; the first is p.
-    function traceOne(p, dir, id, stub = 0, gap = STREET_GAP) {
+    function traceOne(p, dir, id, stub = 0, gap = STREET_GAP, reach = LOOKAHEAD, stopAtHit = false) {
       const pts = [p];
       let cur = p;
       let d0 = dir;
@@ -283,13 +286,30 @@ export function createMainStreets(seed) {
       while (travelled < MAX_LENGTH) {
         const v1 = follow(cur[0], cur[1], d0);
         const mid = [cur[0] + v1[0] * STEP * 0.5, cur[1] + v1[1] * STEP * 0.5];
-        const v2 = follow(mid[0], mid[1], v1);
-        const next = [cur[0] + v2[0] * STEP, cur[1] + v2[1] * STEP];
+        let v2 = follow(mid[0], mid[1], v1);
         // Stop where the field turns sharply (near its knots) or the street has turned enough.
-        const turn = Math.acos(Math.max(-1, Math.min(1, dot(v2, d0))));
-        if (travelled > stub && turn > MAX_TURN) break;
+        let turn = Math.acos(Math.max(-1, Math.min(1, dot(v2, d0))));
+        if (turn > MAX_TURN) {
+          // Near its start (just off a greenway crossing, say) a street swings
+          // round onto the field gradually; further on it stops.
+          if (travelled > stub + 160) break;
+          const side = d0[0] * v2[1] - d0[1] * v2[0] >= 0 ? 1 : -1;
+          const c = Math.cos(MAX_TURN * side);
+          const sn = Math.sin(MAX_TURN * side);
+          v2 = [d0[0] * c - d0[1] * sn, d0[0] * sn + d0[1] * c];
+          turn = MAX_TURN;
+        }
         turned += turn;
         if (turned > Math.PI * 0.5) break;
+        const next = [cur[0] + v2[0] * STEP, cur[1] + v2[1] * STEP];
+        if (stopAtHit && travelled > stub) {
+          // End at the first street that carries on past this one.
+          const h = hits([cur, next], id).find((x) => passesThrough(x.with, x.at));
+          if (h) {
+            pts.push([cur[0] + (next[0] - cur[0]) * h.pos + v2[0] * OVERSHOOT, cur[1] + (next[1] - cur[1]) * h.pos + v2[1] * OVERSHOOT]);
+            return pts;
+          }
+        }
         if (!isLand(next[0], next[1])) break;
         // Spacing is checked every other step; 40 m is fine-grained enough.
         if (travelled > 60 && (pts.length & 1) === 0 && crowded(next, v2, gap, id)) break;
@@ -302,18 +322,19 @@ export function createMainStreets(seed) {
       const last = pts[pts.length - 1];
       const prev = pts[Math.max(0, pts.length - 3)];
       const dirEnd = unit(sub(last, prev));
-      const hit = rayHit(last, dirEnd, LOOKAHEAD, id);
+      const hit = rayHit(last, dirEnd, reach, id);
       if (hit !== null) pts.push([last[0] + dirEnd[0] * (hit + OVERSHOOT), last[1] + dirEnd[1] * (hit + OVERSHOOT)]);
       return pts;
     }
-    function traceBoth(p, dir, id, gap = STREET_GAP) {
-      const a = traceOne(p, dir, id, 0, gap);
-      const b = traceOne(p, [-dir[0], -dir[1]], id, 0, gap);
+    function traceBoth(p, dir, id, gap = STREET_GAP, reach = LOOKAHEAD) {
+      const a = traceOne(p, dir, id, 0, gap, reach);
+      const b = traceOne(p, [-dir[0], -dir[1]], id, 0, gap, reach);
       return b.reverse().concat(a.slice(1));
     }
 
     // ---- Seeding ----
     const lines = []; // { id, points, protectStart, crossing }
+    const lineById = new Map();
     let nextId = 1;
     d.network.lines.forEach((l, k) => addLine(l.points, -1 - k));
     // Junctions so far, so new streets can keep their joins apart.
@@ -334,28 +355,64 @@ export function createMainStreets(seed) {
       addJunction(l.points[0]);
       addJunction(l.points[l.points.length - 1]);
     }
+    // Take a line out again (its segments no longer count for anything).
+    function removeLine(id) {
+      for (const [key, b] of buckets) {
+        const kept = b.filter((k) => segs[k][6] !== id);
+        if (kept.length !== b.length) buckets.set(key, kept);
+      }
+      for (const g of segs) if (g[6] === id) g[6] = 0;
+      const i = lines.findIndex((l) => l.id === id);
+      if (i >= 0) lines.splice(i, 1);
+      lineById.delete(id);
+      stubIds.delete(id);
+    }
     const place = (pts, extra = {}) => {
       if (pts.length < 3) return null;
       const id = nextId++;
       const l = { id, points: pts, ...extra };
-      for (const h of hits(pts, id)) {
+      for (const { pos: h } of hits(pts, id)) {
         const i = Math.min(pts.length - 2, Math.floor(h));
         const t = h - i;
         addJunction([pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t]);
       }
       lines.push(l);
+      lineById.set(id, l);
       addLine(pts, id);
       return l;
     };
 
-    // 1. Greenway crossings: straight across, then into the district. One
-    // that meets no street yet is joined up once the rest are laid.
     const pending = [];
-    for (const x of crossings) {
-      const id = nextId;
-      const pts = traceOne(x.p, x.n, id, STUB);
-      const l = place(pts.length >= 3 ? pts : pts.concat([[pts[pts.length - 1][0] + x.n[0], pts[pts.length - 1][1] + x.n[1]]]), { crossing: x.key, protectStart: true });
-      if (!meets(l.points, id)) pending.push(l);
+    const stubIds = new Set();
+    // 1. A main street through the centre of every neighbourhood, nearest
+    // the core first, heading for it where the field allows. Centres on a
+    // boulevard have theirs already. One that cannot be laid yet is tried
+    // again once more streets are down.
+    const spines = new Map(); // hood id -> line
+    const spineOrder = hoods.filter((h) => !h.core && !h.onBoulevard).sort((a, b) => len(sub(a.seed, S)) - len(sub(b.seed, S)) || a.id - b.id);
+    function laySpine(h) {
+      const p = h.seed;
+      const [fa, fb] = field(p[0], p[1]);
+      const toward = unit(sub(S, p));
+      const order = Math.abs(dot(fa, toward)) >= Math.abs(dot(fb, toward)) ? [fa, fb] : [fb, fa];
+      for (const v of order) {
+        if (crowded(p, v, STREET_GAP * 0.6, 0)) continue;
+        const a = traceOne(p, v, nextId);
+        const b = traceOne(p, [-v[0], -v[1]], nextId);
+        const res = anchored(b.slice().reverse().concat(a.slice(1)), nextId);
+        // The street must still run through the centre once cut.
+        if (!res || res.offset > b.length - 1 || res.offset + res.pts.length - 1 < b.length - 1) continue;
+        const l = place(res.pts, { hood: h.id, seedPos: b.length - 1 - res.offset });
+        spines.set(h.id, l);
+        return true;
+      }
+      return false;
+    }
+    const unlaid = spineOrder.filter((h) => !laySpine(h));
+
+    // Does a crossing street meet, past its stub, a street that carries on past it?
+    function meetsThrough(pts, own) {
+      return hits(pts, own).some((h) => h.pos > STUB_POS && passesThrough(h.with, h.at));
     }
     function meets(pts, own) {
       for (let i = 0; i < pts.length - 1; i++) {
@@ -399,94 +456,132 @@ export function createMainStreets(seed) {
             const g = segs[k];
             if (g[6] === own) continue;
             const h = segCross(ax, ay, bx, by, g[0], g[1], g[2], g[3]);
-            if (h) out.push(i + h[0]);
+            if (h) out.push({ pos: i + h[0], with: g[6], at: g[7] + h[1], seg: k });
           }
         }
       }
-      return out.sort((a, b) => a - b);
+      return out.sort((a, b) => a.pos - b.pos);
     }
-    // A new street must cross the network at least twice, so that once its
-    // loose ends are trimmed it still joins two streets.
-    // A street crossing only one, or none, may run on from a loose end to
-    // a street nearly straight ahead.
-    function anchored(pts, own) {
+    // Does line `id` carry on past position `at` both ways, so a street may end there?
+    function passesThrough(id, at) {
+      if (id < 0) return at >= THROUGH_B && at <= d.network.lines[-1 - id].points.length - 1 - THROUGH_B;
+      const l = lineById.get(id);
+      if (!l) return false;
+      const lo = l.protectStart ? STUB_POS : 0;
+      return at >= lo + THROUGH && at <= l.points.length - 1 - THROUGH;
+    }
+    // A new street must run between two junctions where the streets it meets
+    // carry on past it; it is cut to those two right away. It must not turn
+    // too far, nor leave a street only to come back to it close by. Returns
+    // the cut street and how many points were cut from its start, or null.
+    function anchored(pts, own, join = true) {
       if (pts.length < 3) return null;
-      // Two junctions, far enough apart that the street is not a loop back onto one street.
-      const joins = (q) => {
-        if (turning(q) > MAX_TOTAL_TURN) return false;
-        const h = hits(q, own);
-        if (h.length < 2) return false;
-        const a = q[Math.floor(h[0])];
-        const b = q[Math.min(q.length - 1, Math.ceil(h[h.length - 1]))];
-        return len(sub(a, b)) >= 200;
-      };
-      if (joins(pts)) return pts;
-      const tail = connector(pts[pts.length - 1], own, endDir(pts, false), 500);
-      if (tail.length) pts = pts.concat(tail);
-      if (!joins(pts)) {
-        const head = connector(pts[0], own, endDir(pts, true), 500);
-        if (head.length) pts = head.reverse().concat(pts);
-      }
-      return joins(pts) ? pts : null;
-    }
-
-    // `dir` is the way the street was heading; a join never turns back on it.
-    function connector(from, own, dir, limit = 2000, cone = 0.8, allow = null) {
-      let best = null;
-      for (const r of [400, 900, 2000, 3000].filter((x) => x <= Math.max(400, limit))) {
-        for (const k of segsNear(from[0], from[1], r)) {
-          const g = segs[k];
-          if (g[6] === own || (allow && !allow(g[6]))) continue;
-          const dx = g[2] - g[0];
-          const dy = g[3] - g[1];
-          const l2 = dx * dx + dy * dy;
-          const t0 = l2 > 0 ? Math.max(0, Math.min(1, ((from[0] - g[0]) * dx + (from[1] - g[1]) * dy) / l2)) : 0;
-          // The foot of the perpendicular, or the nearest spot clear of other junctions.
-          for (const t of [t0, 0, 0.5, 1]) {
-            const q = [g[0] + dx * t, g[1] + dy * t];
-            const v = sub(q, from);
-            const lv = len(v);
-            if (lv > 1e-6 && (v[0] * dir[0] + v[1] * dir[1]) / lv < cone) continue;
-            // Arrive at a fair angle, not glancing along the street.
-            if (lv > 1e-6 && Math.abs(v[0] * g[4] + v[1] * g[5]) / lv > GLANCING) continue;
-            if (nearJunction(q, JUNCTION_GAP)) continue;
-            const dd = len(sub(q, from)) + (t === t0 ? 0 : 1);
-            if (!best || dd < best.r) best = { r: dd, q };
+      let shift = 0; // points added before the original start
+      let h = hits(pts, own).filter((x) => passesThrough(x.with, x.at));
+      // A free end may run on into a street a little way ahead.
+      if (join && h.length < 2) {
+        const last = h.length ? h[h.length - 1].pos : -1;
+        if (last < pts.length - 2) {
+          const tail = connector(pts[pts.length - 1], own, endDir(pts, false), 600);
+          if (tail.length) pts = pts.concat(tail);
+        }
+        h = hits(pts, own).filter((x) => passesThrough(x.with, x.at));
+        if (h.length < 2 && (!h.length || h[0].pos > 1)) {
+          const head = connector(pts[0], own, endDir(pts, true), 600);
+          if (head.length) {
+            pts = head.reverse().concat(pts);
+            shift = head.length;
           }
         }
-        if (best) break;
+        h = hits(pts, own).filter((x) => passesThrough(x.with, x.at));
       }
-      if (!best || best.r < 1e-6 || best.r > limit) return [];
-      // A gentle curve carrying on from the street's heading into the target.
-      const q = best.q;
-      const r = len(sub(q, from));
-      const c = [from[0] + dir[0] * r * 0.45, from[1] + dir[1] * r * 0.45];
-      const n = Math.max(2, Math.ceil(r / STEP));
-      const out = [];
-      for (let i = 1; i <= n; i++) {
-        const t = i / n;
-        const a = (1 - t) * (1 - t);
-        const b = 2 * (1 - t) * t;
-        out.push([a * from[0] + b * c[0] + t * t * q[0], a * from[1] + b * c[1] + t * t * q[1]]);
-      }
-      const u = unit(sub(q, out.length > 1 ? out[out.length - 2] : from));
-      out.push([q[0] + u[0] * OVERSHOOT, q[1] + u[1] * OVERSHOOT]);
-      return out;
+      if (h.length < 2 || turning(pts) > MAX_TOTAL_TURN) return null;
+      const a = h[0];
+      const b = h[h.length - 1];
+      if (len(sub(pts[Math.floor(a.pos)], pts[Math.min(pts.length - 1, Math.ceil(b.pos))])) < 250) return null;
+      if (a.with === b.with && Math.abs(a.at - b.at) * STEP < 700) return null;
+      const at = (pos) => {
+        const i = Math.min(pts.length - 2, Math.floor(pos));
+        const t = pos - i;
+        return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t];
+      };
+      // Keep a hair past each junction so the crossing still registers.
+      // Its two end junctions keep clear of junctions already there.
+      if (nearJunction(at(a.pos), 70) || nearJunction(at(b.pos), 70)) return null;
+      const pa = Math.max(0, a.pos - 0.2);
+      const pb = Math.min(pts.length - 1, b.pos + 0.2);
+      const cut = [at(pa)];
+      for (let i = Math.floor(pa) + 1; i <= Math.ceil(pb) - 1; i++) cut.push(pts[i]);
+      cut.push(at(pb));
+      // Original point i is now point i + shift - floor(pa).
+      return cut.length >= 2 ? { pts: cut, offset: Math.floor(pa) - shift } : null;
     }
 
-    // 2. Neighbourhoods a street has not reached yet: one through the
-    // neighbourhood, heading for the core.
-    for (const h of hoods) {
-      const p = h.seed;
-      if (distToStreets(p, 260) < 260) continue;
-      const toward = h.core ? [1, 0] : unit(sub(S, p));
-      const v = follow(p[0], p[1], toward);
-      if (crowded(p, v, STREET_GAP * 0.8, 0)) continue;
-      const pts = anchored(traceBoth(p, v, nextId), nextId);
-      if (pts) place(pts);
+    // `dir` is the way the street was heading; a join never turns back on it,
+    // meets its target at a fair angle, keeps clear of other junctions and
+    // never runs alongside another street on the way. Nearest first.
+    function connector(from, own, dir, limit = 700, cone = 0.8, allow = null, junctionGap = JUNCTION_GAP, glancing = GLANCING) {
+      const cands = [];
+      const seen = new Set();
+      for (const k of segsNear(from[0], from[1], limit)) {
+        if (seen.has(k)) continue;
+        seen.add(k);
+        const g = segs[k];
+        if (g[6] === own || (allow && !allow(g[6]))) continue;
+        if (stubIds.has(g[6]) && g[7] < STUB_POS) continue; // not onto a greenway crossing's stub
+        const dx = g[2] - g[0];
+        const dy = g[3] - g[1];
+        const l2 = dx * dx + dy * dy;
+        const t0 = l2 > 0 ? Math.max(0, Math.min(1, ((from[0] - g[0]) * dx + (from[1] - g[1]) * dy) / l2)) : 0;
+        // The foot of the perpendicular, or if that is by a junction, the
+        // segment's middle or ends.
+        for (const t of [t0, 0.5, 0, 1]) {
+          const q = [g[0] + dx * t, g[1] + dy * t];
+          const vx = q[0] - from[0];
+          const vy = q[1] - from[1];
+          const lv = Math.hypot(vx, vy);
+          if (lv < 1e-6 || lv > limit) continue;
+          if ((vx * dir[0] + vy * dir[1]) / lv < cone) continue;
+          if (Math.abs(vx * g[4] + vy * g[5]) / lv > glancing) continue;
+          if (junctionGap > 0 && nearJunction(q, junctionGap)) continue;
+          cands.push({ r: lv + (t === t0 ? 0 : 1), q });
+          break;
+        }
+      }
+      cands.sort((a, b) => a.r - b.r);
+      for (const { q } of cands.slice(0, 5)) {
+        // A gentle curve carrying on from the street's heading into the target.
+        const r = len(sub(q, from));
+        const c = [from[0] + dir[0] * r * 0.45, from[1] + dir[1] * r * 0.45];
+        const n = Math.max(2, Math.ceil(r / STEP));
+        const out = [];
+        for (let i = 1; i <= n; i++) {
+          const t = i / n;
+          const a = (1 - t) * (1 - t);
+          const b = 2 * (1 - t) * t;
+          out.push([a * from[0] + b * c[0] + t * t * q[0], a * from[1] + b * c[1] + t * t * q[1]]);
+        }
+        // No tighter a bend than the streets themselves may make.
+        let clear = true;
+        const path = [from, ...out];
+        for (let i = 1; i < path.length - 1 && clear; i++) {
+          const a = unit(sub(path[i], path[i - 1]));
+          const b = unit(sub(path[i + 1], path[i]));
+          clear = Math.acos(Math.max(-1, Math.min(1, dot(a, b)))) <= MAX_TURN * 1.3 * (len(sub(path[i + 1], path[i])) / STEP);
+        }
+        for (let i = 2; i < out.length - 3 && clear; i += 2) {
+          const v = unit(sub(out[i + 1], out[i - 1]));
+          clear = !crowded(out[i], v, 160, own) && isLand(out[i][0], out[i][1]);
+        }
+        if (!clear) continue;
+        const u = unit(sub(q, out.length > 1 ? out[out.length - 2] : from));
+        out.push([q[0] + u[0] * OVERSHOOT, q[1] + u[1] * OVERSHOOT]);
+        return out;
+      }
+      return [];
     }
 
-    // 3. Neighbouring neighbourhoods with no street between them.
+    // 2. Neighbouring neighbourhoods with no street between them.
     const boundaries = chains.filter((c) => c.a >= 0 && c.b >= 0 && c.length >= NEIGHBOUR_EDGE).sort((a, b) => (a.key < b.key ? -1 : 1));
     for (const c of boundaries) {
       if (meets(c.points, 0)) continue;
@@ -494,14 +589,18 @@ export function createMainStreets(seed) {
       const t = unit(sub(c.points[Math.min(c.points.length - 1, Math.floor(c.points.length / 2) + 2)], c.points[Math.max(0, Math.floor(c.points.length / 2) - 2)]));
       const v = follow(m[0], m[1], [-t[1], t[0]]);
       if (!isLand(m[0], m[1]) || crowded(m, v, STREET_GAP * 0.8, 0)) continue;
-      const pts = anchored(traceBoth(m, v, nextId), nextId);
-      if (pts) place(pts);
+      const res = anchored(traceBoth(m, v, nextId), nextId);
+      if (res) place(res.pts);
     }
 
-    // 4. Land still too far from any street. A spot that cannot take a
+    for (const h of unlaid) laySpine(h);
+
+    // 3. Land still too far from any street. A spot that cannot take a
     // street is set aside and the next one tried.
     const tried = [];
-    for (let it = 0; it < 40; it++) {
+    let misses = 0;
+    let far = null;
+    for (let it = 0; it < 40 && misses < 8; it++) {
       const gap = farthest(tried);
       if (!gap || gap.d <= MAIN_STREET_REACH) break;
       tried.push(gap.p);
@@ -510,20 +609,26 @@ export function createMainStreets(seed) {
       const p0 = awayFromEdge(gap.p);
       const [fa, fb] = field(p0[0], p0[1]);
       const spots = [p0];
-      for (const v of [fa, fb]) for (const k of [160, -160]) spots.push([p0[0] + v[0] * k, p0[1] + v[1] * k]);
+      for (const k of [160, -160]) spots.push([p0[0] + fb[0] * k, p0[1] + fb[1] * k]);
       let done = false;
       for (const p of spots) {
         if (done || !isLand(p[0], p[1])) continue;
         const [a, b] = field(p[0], p[1]);
         for (const v of [a, b].filter((u) => !crowded(p, u, STREET_GAP * 0.8, 0))) {
-          const pts = anchored(traceBoth(p, v, nextId), nextId);
-          if (pts) {
-            place(pts);
+          // Gap streets may come a little closer to others and reach further
+          // for a T; only then may a free end run on to a street ahead.
+          const plain = traceBoth(p, v, nextId);
+          const loose = traceBoth(p, v, nextId, STREET_GAP * 0.7, LOOKAHEAD * 1.7);
+          const res = anchored(plain, nextId, false) || anchored(loose, nextId, false) || anchored(loose, nextId, true);
+          if (res) {
+            place(res.pts);
+            far = null;
             done = true;
             break;
           }
         }
       }
+      misses = done ? 0 : misses + 1;
     }
     // Step a point away from the district's greenways until it is EDGE_GAP + 40 m clear.
     function awayFromEdge(p) {
@@ -543,10 +648,13 @@ export function createMainStreets(seed) {
 
     // The land point farthest from every street, from a raster distance field.
     function farthest(tried) {
-      const src = new Uint8Array(grid.N);
-      for (const l of lines) stamp(50, src, grid.W, grid.H, grid.x0, grid.y0, l.points);
-      for (const l of d.network.lines) stamp(50, src, grid.W, grid.H, grid.x0, grid.y0, l.points);
-      const far = distanceField(50, src, grid.W, grid.H);
+      // Recomputed only after a street has been placed.
+      if (!far) {
+        const src = new Uint8Array(grid.N);
+        for (const l of lines) stamp(50, src, grid.W, grid.H, grid.x0, grid.y0, l.points);
+        for (const l of d.network.lines) stamp(50, src, grid.W, grid.H, grid.x0, grid.y0, l.points);
+        far = distanceField(50, src, grid.W, grid.H);
+      }
       let best = null;
       for (let n = 0; n < grid.N; n++) {
         if (grid.mask[n] !== LAND || grid.fromEdge[n] < 80) continue;
@@ -562,29 +670,94 @@ export function createMainStreets(seed) {
       return { p: [grid.x0 + (i + 0.5) * 50, grid.y0 + (j + 0.5) * 50], d: best.d };
     }
 
-    // 5. Crossing streets still meeting nothing join the nearest street.
-    for (const l of pending) {
-      if (meets(l.points, l.id)) continue;
-      // Widen the search only as far as needed to find a street ahead.
-      let extra = [];
-      for (const cone of [0.6, 0.3, -0.1]) {
-        extra = connector(l.points[l.points.length - 1], l.id, endDir(l.points, false), 2000, cone);
-        if (extra.length) break;
-      }
-      if (!extra.length) continue;
-      const from = l.points.length - 1;
-      l.points = l.points.concat(extra);
-      addLine(l.points.slice(from), l.id, from);
+    // 5. Greenway crossings, once the grid is down: straight across, then
+    // into the district until the first street that carries on past it.
+    for (const x of crossings) {
+      const id = nextId;
+      const pts = traceOne(x.p, x.n, id, STUB, STREET_GAP * 0.5, LOOKAHEAD, true);
+      const l = place(pts.length >= 3 ? pts : pts.concat([[pts[pts.length - 1][0] + x.n[0], pts[pts.length - 1][1] + x.n[1]]]), { crossing: x.key, protectStart: true });
+      stubIds.add(l.id);
+      if (!meetsThrough(l.points, id)) pending.push(l);
     }
+    // 6. Crossing streets still meeting nothing join the nearest street: by
+    // bending round into it, or failing that by running straight in, square
+    // to the greenway, to the first street met at a fair angle.
+    function rescue(l) {
+      for (const cone of [0.8, 0.5, 0.2, 0]) {
+        const extra = connector(l.points[l.points.length - 1], l.id, endDir(l.points, false), 700, cone);
+        if (extra.length) {
+          const from = l.points.length - 1;
+          l.points = l.points.concat(extra);
+          addLine(l.points.slice(from), l.id, from);
+          return true;
+        }
+      }
+      // Across a narrow district: carry straight on to another crossing close
+      // ahead, as one street, in place of that crossing's own street.
+      const end = l.points[l.points.length - 1];
+      const dirEnd = endDir(l.points, false);
+      for (const y of crossings) {
+        if (y.key === l.crossing) continue;
+        const v = sub(y.p, end);
+        const r = len(v);
+        if (r > 500 || (r > 1e-6 && dot(v, dirEnd) / r < 0.5) || dot(y.n, dirEnd) > -0.3) continue;
+        const other = lines.find((o) => o.crossing === y.key);
+        const n = Math.max(2, Math.ceil(r / STEP));
+        const c = [end[0] + dirEnd[0] * r * 0.45, end[1] + dirEnd[1] * r * 0.45];
+        const tail = [];
+        for (let i = 1; i <= n; i++) {
+          const t = i / n;
+          tail.push([(1 - t) * (1 - t) * end[0] + 2 * (1 - t) * t * c[0] + t * t * y.p[0], (1 - t) * (1 - t) * end[1] + 2 * (1 - t) * t * c[1] + t * t * y.p[1]]);
+        }
+        tail[tail.length - 1] = y.p;
+        if (other) removeLine(other.id);
+        const from = l.points.length - 1;
+        l.points = l.points.concat(tail);
+        l.crossingEnd = y.key;
+        addLine(l.points.slice(from), l.id, from);
+        return true;
+      }
+      const x = crossings.find((c) => c.key === l.crossing);
+      const pts = [x.p];
+      let cur = x.p;
+      for (let r = STEP; r <= 1500; r += STEP) {
+        const next = [x.p[0] + x.n[0] * r, x.p[1] + x.n[1] * r];
+        if (r > STUB) {
+          const h = hits([cur, next], l.id).find((c) => passesThrough(c.with, c.at) && Math.abs(segs[c.seg][4] * x.n[0] + segs[c.seg][5] * x.n[1]) < GLANCING);
+          if (h) {
+            pts.push([cur[0] + (next[0] - cur[0]) * h.pos + x.n[0] * OVERSHOOT, cur[1] + (next[1] - cur[1]) * h.pos + x.n[1] * OVERSHOOT]);
+            removeLine(l.id);
+            const nl = place(pts, { crossing: l.crossing, protectStart: true });
+            stubIds.add(nl.id);
+            return true;
+          }
+        }
+        if (r > STUB + 40 && !isLand(next[0], next[1])) break;
+        pts.push(next);
+        cur = next;
+      }
+      // Really the last resort: a wider, longer join, allowed near other junctions.
+      let extra = connector(l.points[l.points.length - 1], l.id, endDir(l.points, false), 1000, -0.3, null, 40);
+      if (extra.length) {
+        const from = l.points.length - 1;
+        l.points = l.points.concat(extra);
+        addLine(l.points.slice(from), l.id, from);
+        return true;
+      }
+      return false;
+    }
+    for (const l of pending) if (lineById.has(l.id) && !l.crossingEnd && !meetsThrough(l.points, l.id)) rescue(l);
 
     // ---- Junctions and trimming ----
     // All crossings between lines (main streets and boulevards).
-    function resolve() {
+    // `last`: the final pass, where a crossing street that could not be
+    // joined up properly is cut back to its last junction of any kind.
+    function resolve(last = false) {
     const all = lines.map((l) => ({ ...l, cuts: [] }));
     const byId = new Map(all.map((l) => [l.id, l]));
     for (let ka = 0; ka < segs.length; ka++) {
       const g = segs[ka];
-      if (g[6] < 0) continue; // walk from main street segments
+      if (g[6] <= 0) continue; // walk from main street segments (0: taken out)
       const line = byId.get(g[6]);
       const segIndex = g[7];
       for (const key of bucketKeys(g[0], g[1], g[2], g[3], 0)) {
@@ -611,19 +784,36 @@ export function createMainStreets(seed) {
       let changed = false;
       for (const l of all) {
         if (!l.alive) continue;
+        // A street may end only where the street it meets carries on past
+        // it both ways, so no two streets end at one corner.
         const live = l.cuts.filter((c) => {
           // A crossing street's junction must lie beyond its stub across the greenway.
           if (l.protectStart && c.pos * STEP < STUB + STEP) return false;
-          if (c.with < 0) return true; // boulevards always stand
+          const p = c.otherPos;
+          if (c.with < 0) {
+            const n = d.network.lines[-1 - c.with].points.length;
+            return p >= THROUGH_B && p <= n - 1 - THROUGH_B;
+          }
           const o = byId.get(c.with);
           if (!o || !o.alive) return false;
-          const p = c.otherPos;
-          return p >= o.lo - 1e-9 && p <= o.hi + 1e-9;
+          const lo = o.protectStart ? Math.max(o.lo, STUB_POS) : o.lo;
+          return p >= lo + THROUGH - 1e-9 && p <= o.hi - THROUGH + 1e-9;
         });
         let lo;
         let hi;
+        if (l.crossingEnd) {
+          // Runs from one greenway crossing to another: both ends stand.
+          if (l.lo !== 0 || l.hi !== l.points.length - 1) changed = true;
+          l.lo = 0;
+          l.hi = l.points.length - 1;
+          continue;
+        }
         if (!live.length) {
-          if (l.protectStart) {
+          const any = last ? l.cuts.filter((c) => c.pos > STUB_POS && (c.with < 0 || (byId.get(c.with) && byId.get(c.with).alive && c.otherPos >= byId.get(c.with).lo - 1e-9 && c.otherPos <= byId.get(c.with).hi + 1e-9))) : [];
+          if (l.protectStart && any.length) {
+            lo = 0;
+            hi = any[any.length - 1].pos;
+          } else if (l.protectStart) {
             lo = 0;
             hi = l.points.length - 1;
             l.lonely = true;
@@ -652,24 +842,22 @@ export function createMainStreets(seed) {
     return all;
     }
     let all = resolve();
-    // A crossing street whose only junction was trimmed away runs on to the
-    // nearest boulevard (which always stands), and everything is settled again.
-    const lonely = all.filter((l) => l.alive && l.lonely);
-    if (lonely.length) {
+    // A crossing street whose junctions were all trimmed away is rescued
+    // the same way, and everything is settled again.
+    function settle() {
+    for (let round = 0; round < 3; round++) {
+      const lonely = all.filter((l) => l.alive && l.lonely);
+      if (!lonely.length) break;
+      let any = false;
       for (const a of lonely) {
-        const l = lines.find((x) => x.id === a.id);
-        let extra = [];
-        for (const cone of [0.3, -0.1, -0.6]) {
-          extra = connector(l.points[l.points.length - 1], l.id, endDir(l.points, false), 3000, cone, (id) => id < 0);
-          if (extra.length) break;
-        }
-        if (!extra.length) continue;
-        const from = l.points.length - 1;
-        l.points = l.points.concat(extra);
-        addLine(l.points.slice(from), l.id, from);
+        const l = lineById.get(a.id);
+        if (l && !l.crossingEnd && rescue(l)) any = true;
       }
+      if (!any) break;
       all = resolve();
     }
+    }
+    settle();
     const pointAt = (pts, pos) => {
       const i = Math.min(pts.length - 2, Math.floor(pos));
       const t = pos - i;
@@ -685,8 +873,10 @@ export function createMainStreets(seed) {
       if (pts.length >= 2 && len(sub(pts[0], pts[pts.length - 1])) > 1) {
         out.push({
           key: `${d.key}:m${l.id}`,
+          id: l.id,
           kind: l.crossing ? 'crossing' : 'street',
           crossing: l.crossing || null,
+          crossingEnd: l.crossingEnd || null,
           points: pts,
           bbox: lineBox(pts),
           pieces: piecesOf(pts),
@@ -704,15 +894,20 @@ export function createMainStreets(seed) {
       for (const h of slow) {
         const p = h.seed;
         const v = follow(p[0], p[1], unit(sub(S, p)));
-        const pts = anchored(traceBoth(p, v, nextId, STREET_GAP * 0.6), nextId);
-        if (pts) place(pts);
+        const res = anchored(traceBoth(p, v, nextId, STREET_GAP * 0.6), nextId);
+        if (res) place(res.pts);
       }
       all = resolve();
+      settle();
+      out = extract(all);
+    }
+    if (all.some((l) => l.alive && l.lonely)) {
+      all = resolve(true);
       out = extract(all);
     }
 
-    // Street distance from the station on a raster of the streets.
-    function slowRoutes(out) {
+    // Street distance from the station, on a raster of the streets.
+    function streetDistance(out) {
       const W = grid.W;
       const on = new Uint8Array(grid.N);
       for (const l of out) stamp(50, on, W, grid.H, grid.x0, grid.y0, l.points);
@@ -740,6 +935,11 @@ export function createMainStreets(seed) {
           }
         }
       }
+      return { dist, on };
+    }
+    function slowRoutes(out) {
+      const W = grid.W;
+      const { dist, on } = streetDistance(out);
       const res = [];
       for (const h of hoods) {
         if (h.core) continue;
@@ -765,17 +965,43 @@ export function createMainStreets(seed) {
     }
 
     // ---- Neighbourhood centres on their streets ----
+    // A neighbourhood whose own street survived keeps its centre there; any
+    // other takes the nearest point on a street. Each records the street
+    // through its centre (its spine), from which it is regrown.
+    const outById = new Map();
+    for (const l of out) outById.set(l.id, l);
     const streetsAll = out.map((l) => l.points).concat(d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => l.points));
+    const reach = streetDistance(out);
     for (const h of hoods) {
-      if (h.core) continue;
+      if (h.core) {
+        h.spine = null;
+        continue;
+      }
+      const a = all.find((l) => l.alive && l.hood === h.id);
+      if (a && a.seedPos >= a.lo && a.seedPos <= a.hi && outById.has(a.id)) {
+        h.centre = h.seed;
+        h.spine = outById.get(a.id).points;
+        continue;
+      }
+      // The nearest point close by on a street that leads to the station,
+      // or failing that simply the nearest street point.
       let best = null;
+      let any = null;
       for (const pts of streetsAll) {
         for (const q of pts) {
           const r = len(sub(q, h.seed));
-          if (!best || r < best.r) best = { r, q };
+          if (!any || r < any.r) any = { r, q, pts };
+          if (r > 450 || (best && r >= best.r)) continue;
+          const n = grid.cellOf(q[0], q[1]);
+          if (n < 0 || !Number.isFinite(reach.dist[n])) continue;
+          best = { r, q, pts };
         }
       }
-      if (best) h.centre = best.q;
+      best = best || any;
+      if (best) {
+        h.centre = best.q;
+        h.spine = best.pts;
+      }
     }
 
     return { lines: out };
