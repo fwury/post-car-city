@@ -7,6 +7,7 @@
 // shared feature drawn by both neighbours looks the same as drawn once.
 
 import { BOULEVARD_WIDTH, GREENWAY_MAX } from '../world/districts.js';
+import { ROUNDABOUT_RADIUS } from '../world/boulevards.js';
 import { palette } from './styles.js';
 
 export const LOD_STEPS = [
@@ -106,7 +107,8 @@ export function drawDistricts(ctx, view, world, layers) {
   }
 
   if (layers.streets) {
-    const lines = world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s).map((b) => ({ b, path: boulevardPath(b) }));
+    const net = world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s);
+    const lines = net.lines.map((b) => ({ b, path: boulevardPath(b) }));
     const w = Math.max(BOULEVARD_WIDTH, px(zoom < 0.03 ? 1.1 : 1.6));
     const passes = zoom >= 0.05 ? [[palette.roadCasing, w + px(1.5)], [palette.road, w]] : [[palette.road, w]];
     for (const [colour, width] of passes) {
@@ -115,6 +117,17 @@ export function drawDistricts(ctx, view, world, layers) {
       for (const { b, path } of lines) {
         ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
         ctx.stroke(path);
+      }
+    }
+    // Roundabout islands.
+    const island = net.roundabouts.length ? ROUNDABOUT_RADIUS - w / 2 - (zoom >= 0.05 ? px(0.75) : 0) : 0;
+    if (island > px(1)) {
+      ctx.fillStyle = palette.green;
+      ctx.setTransform(s, 0, 0, s, 0, 0);
+      for (const r of net.roundabouts) {
+        ctx.beginPath();
+        ctx.arc(r.x - x0, r.y - y0, island, 0, Math.PI * 2);
+        ctx.fill();
       }
     }
   }

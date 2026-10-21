@@ -1,24 +1,19 @@
-// District cores, placed after the routes, the way towns grew at crossroads.
-//
-// Candidates, best first:
-//   1. route crossings
-//   2. points along a route, every 1.5 km
-//   3. a sparse jittered fill, for the rare gaps between routes (these get
-//      short spur boulevards to the nearest routes)
-// A candidate becomes a core if no better candidate lies within CORE_SPACING.
-// A second round fills gaps the first round left. Every step looks only at
-// nearby candidates, so the result never depends on where generation started.
+// District cores, placed first. Each cell of a jittered grid offers one
+// candidate with a random priority and its own spacing radius (so district
+// sizes vary). A candidate becomes a core if no better candidate is closer
+// than the two radii allow; a second round fills the gaps the first round
+// left. Every step looks only at nearby candidates, so the result never
+// depends on where generation started.
 
 import { hash, toUnit } from '../core/hash.js';
 import { LruCache } from './cache.js';
-import { FAMILIES, ROUTE_SPACING } from './routes.js';
 
-export const CORE_SPACING = 2000; // metres, minimum distance between cores
+export const CORE_SPACING = 1650; // metres, minimum distance between cores
+export const CORE_SPACING_MAX = 2350; // the widest a candidate's spacing can be
 export const CORE_CHUNK = 6000; // cores are indexed in square chunks this size
-const LINE_STEP = 1500;
-const FILL_CELL = 1800;
+const CELL = 700; // candidate grid
 
-export function createCores(seed, routes) {
+export function createCores(seed) {
   const candChunks = new LruCache(4000);
   const coreChunks = new LruCache(4000);
   const status = new LruCache(200000);
@@ -33,50 +28,15 @@ export function createCores(seed, routes) {
     const y0 = cy * CORE_CHUNK;
     const x1 = x0 + CORE_CHUNK;
     const y1 = y0 + CORE_CHUNK;
-    const inside = (x, y) => x >= x0 && x < x1 && y >= y0 && y < y1;
-
-    const rs = [];
-    for (let k = 0; k < FAMILIES; k++) rs.push(routes.ranges(k, x0, y0, x1, y1));
-    for (let i = 0; i < FAMILIES; i++) {
-      for (let j = i + 1; j < FAMILIES; j++) {
-        for (let a = rs[i].n0; a <= rs[i].n1; a++) {
-          if (!routes.exists(i, a)) continue;
-          for (let b = rs[j].n0; b <= rs[j].n1; b++) {
-            if (!routes.exists(j, b)) continue;
-            const [x, y] = routes.crossing(i, a, j, b);
-            if (!inside(x, y)) continue;
-            list.push({
-              key: `x${i}.${a}.${j}.${b}`, x, y, type: 'crossing',
-              routes: [[i, a], [j, b]],
-              pri: 2 + toUnit(hash(seed, 'core-pri-x', i, a, j, b)),
-            });
-          }
-        }
-      }
-    }
-    for (let k = 0; k < FAMILIES; k++) {
-      const r = rs[k];
-      for (let n = r.n0; n <= r.n1; n++) {
-        if (!routes.exists(k, n)) continue;
-        for (let m = Math.floor(r.t0 / LINE_STEP); m <= Math.ceil(r.t1 / LINE_STEP); m++) {
-          const [x, y] = routes.pointOn(k, n, m * LINE_STEP);
-          if (!inside(x, y)) continue;
-          list.push({
-            key: `l${k}.${n}.${m}`, x, y, type: 'route',
-            routes: [[k, n]],
-            pri: 1 + toUnit(hash(seed, 'core-pri-l', k, n, m)),
-          });
-        }
-      }
-    }
-    const f0x = Math.floor(x0 / FILL_CELL);
-    const f0y = Math.floor(y0 / FILL_CELL);
-    for (let fy = f0y; fy * FILL_CELL < y1; fy++) {
-      for (let fx = f0x; fx * FILL_CELL < x1; fx++) {
-        const x = (fx + 0.2 + 0.6 * toUnit(hash(seed, 'core-fill-x', fx, fy))) * FILL_CELL;
-        const y = (fy + 0.2 + 0.6 * toUnit(hash(seed, 'core-fill-y', fx, fy))) * FILL_CELL;
-        if (!inside(x, y)) continue;
-        list.push({ key: `f${fx}.${fy}`, x, y, type: 'fill', routes: [], pri: toUnit(hash(seed, 'core-pri-f', fx, fy)) });
+    for (let fy = Math.floor(y0 / CELL); fy * CELL < y1; fy++) {
+      for (let fx = Math.floor(x0 / CELL); fx * CELL < x1; fx++) {
+        const x = (fx + 0.1 + 0.8 * toUnit(hash(seed, 'core-x', fx, fy))) * CELL;
+        const y = (fy + 0.1 + 0.8 * toUnit(hash(seed, 'core-y', fx, fy))) * CELL;
+        if (x < x0 || x >= x1 || y < y0 || y >= y1) continue;
+        // Size variety: a skewed spread of spacings, mostly near the minimum.
+        const u = toUnit(hash(seed, 'core-size', fx, fy));
+        const spacing = CORE_SPACING + (CORE_SPACING_MAX - CORE_SPACING) * u * u;
+        list.push({ key: `f${fx}.${fy}`, x, y, spacing, pri: toUnit(hash(seed, 'core-pri', fx, fy)) });
       }
     }
     candChunks.set(key, list);
@@ -101,24 +61,27 @@ export function createCores(seed, routes) {
   }
 
   const better = (a, b) => a.pri > b.pri || (a.pri === b.pri && a.key > b.key);
+  // Two candidates conflict when closer than the larger of their spacings.
+  const conflict = (a, b) => (a.x - b.x) ** 2 + (a.y - b.y) ** 2 < Math.max(a.spacing, b.spacing) ** 2;
+  const rivals = (c) => candidatesNear(c.x, c.y, CORE_SPACING_MAX).filter((o) => o !== c && conflict(o, c));
 
-  // Round one: the best candidate within CORE_SPACING.
+  // Round one: the best candidate among those it conflicts with.
   function round1(c) {
     const k = `1:${c.key}`;
     let v = status.get(k);
     if (v === undefined) {
-      v = !candidatesNear(c.x, c.y, CORE_SPACING).some((o) => o !== c && better(o, c));
+      v = !rivals(c).some((o) => better(o, c));
       status.set(k, v);
     }
     return v;
   }
 
-  // Round two: away from every round-one core, and best among such candidates.
+  // Round two: clear of every round-one core, and best among such candidates.
   function eligible2(c) {
     const k = `e:${c.key}`;
     let v = status.get(k);
     if (v === undefined) {
-      v = !round1(c) && !candidatesNear(c.x, c.y, CORE_SPACING).some((o) => o !== c && round1(o));
+      v = !round1(c) && !rivals(c).some(round1);
       status.set(k, v);
     }
     return v;
@@ -127,7 +90,7 @@ export function createCores(seed, routes) {
   function isCore(c) {
     if (round1(c)) return true;
     if (!eligible2(c)) return false;
-    return !candidatesNear(c.x, c.y, CORE_SPACING).some((o) => o !== c && better(o, c) && eligible2(o));
+    return !rivals(c).some((o) => better(o, c) && eligible2(o));
   }
 
   // Selected cores in a chunk, each with a head start for district growth.
@@ -137,7 +100,7 @@ export function createCores(seed, routes) {
     if (list) return list;
     list = candidatesIn(cx, cy)
       .filter(isCore)
-      .map((c) => ({ ...c, headStart: 700 * toUnit(hash(seed, 'core-head', ...keyInts(c))) }));
+      .map((c) => ({ ...c, headStart: 900 * toUnit(hash(seed, 'core-head', ...keyInts(c))) - (c.spacing - CORE_SPACING) * 0.5 }));
     coreChunks.set(key, list);
     return list;
   }
@@ -152,39 +115,7 @@ export function createCores(seed, routes) {
     return out;
   }
 
-  const byKey = new LruCache(100000);
-
-  // Look a core up by key (its position identifies its chunk).
-  function core(key, x, y) {
-    let c = byKey.get(key);
-    if (!c) {
-      c = coresIn(Math.floor(x / CORE_CHUNK), Math.floor(y / CORE_CHUNK)).find((o) => o.key === key);
-      if (c) byKey.set(key, c);
-    }
-    return c;
-  }
-
-  // Short boulevards from a fill core to the nearest routes of two families.
-  function spurs(c) {
-    if (c.type !== 'fill') return [];
-    if (c.spurs) return c.spurs;
-    const options = [];
-    for (let k = 0; k < FAMILIES; k++) {
-      const r = routes.nearest(k, c.x, c.y);
-      if (r && r.d < ROUTE_SPACING * 1.5) options.push({ k, n: r.n, d: r.d });
-    }
-    options.sort((a, b) => a.d - b.d);
-    c.spurs = options.slice(0, 2).map(({ k, n }) => {
-      const [ex, ey] = routes.project(k, n, c.x, c.y);
-      const pts = [];
-      const steps = Math.max(2, Math.ceil(Math.hypot(ex - c.x, ey - c.y) / 50));
-      for (let i = 0; i <= steps; i++) pts.push([c.x + ((ex - c.x) * i) / steps, c.y + ((ey - c.y) * i) / steps]);
-      return { key: `${c.key}>${k}.${n}`, points: pts };
-    });
-    return c.spurs;
-  }
-
-  return { candidatesIn, coresIn, coresInRect, core, spurs };
+  return { candidatesIn, coresIn, coresInRect };
 }
 
 // Integers identifying a core, for hashing.

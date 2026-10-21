@@ -1,9 +1,10 @@
-// Districts, generated in the order a city grows:
-//   1. routes.js  boulevards, the old citywide roads
-//   2. cores.js   district cores at route crossings and along routes
-//   3. growth.js  districts spread out from their cores over land parcels
-//   4. here       boundaries where districts meet become primary greenways,
-//                 and district parks sit where three districts meet
+// Districts, generated in this order:
+//   1. cores.js       district cores, spread like a loose Poisson field
+//   2. growth.js      districts spread out from their cores over land parcels
+//   3. here           boundaries where districts meet become primary greenways
+//   4. boulevards.js  tram boulevards link the cores of neighbouring districts
+//   5. here           district parks sit where three districts meet, clear of
+//                     the boulevards
 //
 // Boundaries are traced between parcels of different districts, then
 // smoothed. Each stretch of boundary between two junctions is computed once,
@@ -15,7 +16,7 @@ import { rngFor } from '../core/rng.js';
 import { createNoise, createWarp } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
-import { createRoutes } from './routes.js';
+import { createBoulevards, distToLine } from './boulevards.js';
 import { createCores, keyInts } from './cores.js';
 import { createGrowth, PARCEL } from './growth.js';
 import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf } from '../util/geom.js';
@@ -106,9 +107,9 @@ function resample(pts, step) {
 }
 
 export function createWorld(seed) {
-  const routes = createRoutes(seed);
-  const cores = createCores(seed, routes);
-  const growth = createGrowth(seed, routes, cores);
+  const cores = createCores(seed);
+  const growth = createGrowth(seed, cores);
+  const boulevards = createBoulevards(seed);
   const detail = createWarp(seed, 'boundary-detail', 1300, 70, 2);
   const widthNoise = createNoise(seed, 'greenway-width');
   const shapeNoise = createNoise(seed, 'blob-shape');
@@ -408,8 +409,8 @@ export function createWorld(seed) {
         if (!b) continue;
         r = Math.min(r, (dist(j.x, j.y, b.station[0], b.station[1]) - b.coreRadius * 1.15 - 150) / 1.25);
       }
-      const road = routes.nearestAny(j.x, j.y);
-      if (road) r = Math.min(r, (road.d - BOULEVARD_WIDTH / 2 - 60) / 1.25);
+      const road = boulevardDistance(j.x, j.y);
+      r = Math.min(r, (road - BOULEVARD_WIDTH / 2 - 60) / 1.25);
       if (r >= 180) {
         const shape = radialShape(j.x, j.y, r, 0.22, rng.range(-50, 50), rng.range(-50, 50));
         let lake = null;
@@ -475,7 +476,7 @@ export function createWorld(seed) {
     const coreShape = radialShape(core.x, core.y, b.coreRadius, 0.12, rng.range(-50, 50), rng.range(-50, 50), 48);
     const bbox = { ...b.bbox };
     for (const p of dParks) bboxOf(p.shape, 0, bbox);
-    const links = core.routes.length * 2 + cores.spurs(core).length;
+    const net = boulevards.network(b);
     d = {
       ...b,
       origin: [Math.round(core.x / 1000) * 1000, Math.round(core.y / 1000) * 1000],
@@ -483,7 +484,8 @@ export function createWorld(seed) {
       coreInfo: core,
       coreArea: polygonArea(coreShape),
       parks: dParks,
-      links,
+      links: net.links.length,
+      network: net,
       bbox,
       lods: new Map(),
     };
@@ -525,13 +527,41 @@ export function createWorld(seed) {
     return out;
   }
 
-  // Boulevards touching a rectangle: route pieces plus spurs to fill cores.
+  // Boulevard lines and roundabouts touching a rectangle. Each district
+  // draws its own half of every link.
   function boulevardsInRect(x0, y0, x1, y1) {
-    const out = routes.piecesInRect(x0, y0, x1, y1).map((p) => ({ key: p.key, points: p.points }));
-    for (const c of cores.coresInRect(x0 - 6000, y0 - 6000, x1 + 6000, y1 + 6000)) {
-      for (const s of cores.spurs(c)) out.push(s);
+    const lines = [];
+    const roundabouts = [];
+    for (const d of districtsInRect(x0, y0, x1, y1)) {
+      for (const l of d.network.lines) {
+        const b = l.bbox;
+        if (b.x1 < x0 - BOULEVARD_WIDTH || b.x0 > x1 + BOULEVARD_WIDTH || b.y1 < y0 - BOULEVARD_WIDTH || b.y0 > y1 + BOULEVARD_WIDTH) continue;
+        lines.push(l);
+      }
+      if (d.network.roundabout) roundabouts.push(d.network.roundabout);
     }
-    return out;
+    return { lines, roundabouts };
+  }
+
+  // Distance from a point to the nearest boulevard, looking at every district
+  // with land within `reach` metres.
+  function boulevardDistance(x, y, reach = 800) {
+    const keys = new Set();
+    const n = Math.ceil(reach / PARCEL);
+    const i0 = Math.floor(x / PARCEL);
+    const j0 = Math.floor(y / PARCEL);
+    for (let j = j0 - n; j <= j0 + n; j++) for (let i = i0 - n; i <= i0 + n; i++) keys.add(label(i, j));
+    let best = Infinity;
+    for (const k of [...keys].sort()) {
+      const b = baseOf(k);
+      if (!b) continue;
+      for (const l of boulevards.network(b).lines) {
+        const bb = l.bbox;
+        if (x < bb.x0 - best || x > bb.x1 + best || y < bb.y0 - best || y > bb.y1 + best) continue;
+        best = Math.min(best, distToLine(x, y, l.points));
+      }
+    }
+    return best;
   }
 
   // The district containing a point.
@@ -558,8 +588,8 @@ export function createWorld(seed) {
   }
 
   return {
-    seed, routes, cores, growth,
-    district, base, lod, districtsInRect, boulevardsInRect, districtAt, greenwayWidth,
+    seed, cores, growth, boulevards,
+    district, base, lod, districtsInRect, boulevardsInRect, boulevardDistance, districtAt, greenwayWidth,
     coresInRect: cores.coresInRect,
   };
 }
