@@ -122,7 +122,6 @@ export function createWorld(seed) {
     return warpFine(p[0], p[1], p);
   };
   const widthNoise = createNoise(seed, 'greenway-width');
-  const meanderNoise = createNoise(seed, 'stream-meander');
 
   const bases = new LruCache(12000);
   const districts = new LruCache(12000);
@@ -342,7 +341,6 @@ export function createWorld(seed) {
         points: pts,
         runs: shaped.runs,
         first,
-        stream: toUnit(hash(seed, 'stream', ...pts[0].map(Math.round), pts.length)) < 0.5,
         // Points running from `start` (orientation only matters for open stretches).
         oriented(start) {
           return start === first ? pts : pts.slice().reverse();
@@ -353,7 +351,7 @@ export function createWorld(seed) {
             const line = [];
             for (let i = 0; i < pts.length - 1; i += step) line.push(pts[i]);
             line.push(pts[pts.length - 1]);
-            l = { line, strip: greenwayStrip(line), stream: this.stream && line.length > 3 ? streamLine(line) : null };
+            l = { line, strip: greenwayStrip(line) };
             lods.set(step, l);
           }
           return l;
@@ -382,14 +380,6 @@ export function createWorld(seed) {
       right.push([x - normals[i][0] * h, y - normals[i][1] * h]);
     }
     return left.concat(right.reverse());
-  }
-
-  function streamLine(line) {
-    const normals = polylineNormals(line);
-    return line.map(([x, y], i) => {
-      const m = meanderNoise.fbm(x / 420, y / 420, 2) * greenwayWidth(x, y) * 0.32;
-      return [x + normals[i][0] * m, y + normals[i][1] * m];
-    });
   }
 
   function baseOf(key) {
@@ -432,15 +422,13 @@ export function createWorld(seed) {
     const step = Math.max(1, Math.round(segLen / FINE_SPACING));
     const edgeLines = [];
     const strips = [];
-    const streams = [];
     for (const c of d.chains) {
       const l = c.geo.lod(step);
       edgeLines.push(l.line);
       strips.push(l.strip);
-      if (l.stream) streams.push(l.stream);
     }
     const junctions = d.junctions.map((j) => ({ x: j.x, y: j.y, r: greenwayWidth(j.x, j.y) / 2 }));
-    g = { segLen, ring: d.ring, edgeLines, strips, junctions, streams };
+    g = { segLen, ring: d.ring, edgeLines, strips, junctions };
     d.lods.set(segLen, g);
     return g;
   }

@@ -1,4 +1,4 @@
-// Draws districts: cores, boulevards, greenways, streams and district parks.
+// Draws districts: cores, neighbourhoods, boulevards and main streets, greenways and district parks.
 // Shared by the main thread (close zoom, drawn straight to screen) and the
 // tile workers (far zoom, drawn into cached tiles).
 //
@@ -47,7 +47,6 @@ function pathsFor(world, d, segLen) {
     core: new Path2D(),
     greenFill: [],
     greenLines: new Path2D(),
-    streams: new Path2D(),
     parks: new Path2D(),
     ring: new Path2D(),
   };
@@ -65,7 +64,6 @@ function pathsFor(world, d, segLen) {
     p.greenFill.push(path);
   }
   for (const line of g.edgeLines) addPoly(p.greenLines, line, ox, oy, false);
-  for (const s of g.streams) addPoly(p.streams, s, ox, oy, false);
   for (const pk of d.parks) {
     addPoly(p.parks, pk.shape, ox, oy, true);
   }
@@ -216,15 +214,6 @@ export function drawDistricts(ctx, view, world, layers) {
         place(d);
         ctx.stroke(p.greenLines);
       }
-    }
-  }
-
-  if (layers.water && zoom >= 0.03) {
-    ctx.strokeStyle = palette.water;
-    ctx.lineWidth = Math.max(6, px(1));
-    for (const { d, p } of items) {
-      place(d);
-      ctx.stroke(p.streams);
     }
   }
 

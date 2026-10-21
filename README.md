@@ -2,11 +2,11 @@
 
 An infinite, seeded map of a city built to the Post-Car City plan. Stages 1 to 3 are in place.
 
-- **Districts.** District cores come first, spread like a loose Poisson field with varied spacing. Districts grow outward from each core over 400 m land parcels, and where districts meet the boundary becomes a primary greenway. Boundaries carry detail at several scales: broad sweeps and meanders from layered warps, then straight runs of 110 to 340 m with rounded bends, and small swells and pinches in width.
+- **Districts.** District cores come first, spread like a loose Poisson field with varied spacing. Districts grow outward from each core over 400 m land parcels, and where districts meet the boundary becomes a primary greenway. Boundaries carry detail at several scales: broad sweeps and meanders from layered warps, then straight runs of 110 to 340 m with rounded bends, and small swells and pinches in width. Greenways carry no streams.
 - **Boulevards.** Tram boulevards link the cores of neighbouring districts. Each link crosses the shared greenway near its middle at right angles; inside a district the links join through the station, end at T junctions, or now and then meet at a large roundabout.
 - **District parks** of 40 to 70 ha sit where three districts meet, spread out evenly. Each flows out along its greenways and keeps a straight edge where it meets a boulevard.
 - **Neighbourhoods.** Each district has a core neighbourhood around its station and 8 to 12 more of about 0.75 km², grown over a noisy field so their shapes are irregular. Where a boulevard runs through, centres sit on it and it serves as their main street.
-- **Main streets** (31 m, tram) link neighbouring centres so each has a street running through it, run straight into the core (4 to 6 tram streets reach each core, boulevards included), and cross the greenways to meet the neighbourhoods of the next district at shared crossing points. Nearly all land is within 450 m of a main street or boulevard, and no main street dead-ends.
+- **Main streets** (31 m, tram) form an organic grid. A smooth direction field follows the boulevards and greenway edges, leans towards each core and drifts slowly elsewhere; streets are traced along it and across it, so they bend gently and meet mostly at right angles, in crossings and T junctions. Streets running the same way keep at least 420 m apart, loose ends are trimmed back to their last junction so none dead-ends, and streets carry on across the greenways into the next district at shared crossing points. Every neighbourhood centre sits on a street, and about 97% of land is within 450 m of a main street or boulevard.
 
 Far-zoom tiles render in Web Workers.
 

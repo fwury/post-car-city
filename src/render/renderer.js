@@ -79,7 +79,7 @@ export function createNoiseTileBuilder(getSeed, res = 96) {
 export function createDistrictTileBuilder({ pool, getWorld, getLayers, res = 512 }) {
   const layersFor = () => {
     const L = getLayers();
-    return { cores: L.cores, streets: L.streets, green: L.green, water: L.water, outlines: L.outlines, neighbourhoods: L.neighbourhoods };
+    return { cores: L.cores, streets: L.streets, green: L.green, outlines: L.outlines, neighbourhoods: L.neighbourhoods };
   };
   const local = (tile) => {
     const canvas = makeCanvas(res, res);

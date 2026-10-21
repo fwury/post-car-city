@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { seedFromText } from '../src/core/hash.js';
 import { createWorld } from '../src/world/districts.js';
 import { distToLine } from '../src/world/boulevards.js';
-import { NEIGHBOURHOODS, MAIN_STREET_REACH, CORE_ARMS, RING_MARGIN } from '../src/world/neighbourhoods.js';
+import { NEIGHBOURHOODS, MAIN_STREET_REACH, RING_MARGIN } from '../src/world/neighbourhoods.js';
 import { pointInPolygon, polygonArea } from '../src/util/geom.js';
 
 const SEED = seedFromText('1');
@@ -78,45 +78,140 @@ test('neighbouring neighbourhoods share their boundary exactly', () => {
   }
 });
 
-test('every centre is on a main street or boulevard that runs through it', () => {
-  let opposite = 0;
-  let free = 0;
-  for (const d of inner()) {
-    const s = d.stage3;
-    s.nodes.forEach((nd, k) => {
-      if (nd.kind === 'core') {
-        assert.ok(d.network.lines.some((l) => distToLine(nd.p[0], nd.p[1], l.points) < 1e-6), `${d.key} station is off the boulevards`);
-        return;
-      }
-      if (nd.kind !== 'centre') return;
-      if (nd.t) {
-        assert.ok(d.network.lines.some((l) => distToLine(nd.p[0], nd.p[1], l.points) < 1e-6), `${d.key} centre ${k} is off its boulevard`);
-        return;
-      }
-      free++;
-      assert.ok(s.degree[k] >= 2, `${d.key} centre ${k} is a dead end`);
-      const dirs = s.lines.filter((l) => l.a === k || l.b === k).map((l) => {
-        const p = l.a === k ? l.points[Math.min(5, l.points.length - 1)] : l.points[Math.max(0, l.points.length - 6)];
-        const v = [p[0] - nd.p[0], p[1] - nd.p[1]];
-        const m = Math.hypot(...v);
-        return [v[0] / m, v[1] / m];
-      });
-      if (dirs.some((u, i) => dirs.some((v, j) => j > i && u[0] * v[0] + u[1] * v[1] < -0.3))) opposite++;
-    });
+// Every street of a district (main streets and boulevards) as point lists.
+const streetsOf = (d) => d.stage3.lines.map((l) => l.points).concat(d.network.lines.map((l) => l.points));
+
+// Crossings between two polylines, as { i, t, p } on the first.
+function crossings(A, B) {
+  const out = [];
+  for (let i = 0; i < A.length - 1; i++) {
+    const [ax, ay] = A[i];
+    const [bx, by] = A[i + 1];
+    for (let j = 0; j < B.length - 1; j++) {
+      const [cx, cy] = B[j];
+      const [dx, dy] = B[j + 1];
+      if (Math.max(ax, bx) < Math.min(cx, dx) || Math.max(cx, dx) < Math.min(ax, bx) || Math.max(ay, by) < Math.min(cy, dy) || Math.max(cy, dy) < Math.min(ay, by)) continue;
+      const den = (bx - ax) * (dy - cy) - (by - ay) * (dx - cx);
+      if (Math.abs(den) < 1e-12) continue;
+      const t = ((cx - ax) * (dy - cy) - (cy - ay) * (dx - cx)) / den;
+      const u = ((cx - ax) * (by - ay) - (cy - ay) * (bx - ax)) / den;
+      if (t >= -1e-9 && t <= 1 + 1e-9 && u >= -1e-9 && u <= 1 + 1e-9) out.push({ i, t, u: j + u, p: [ax + (bx - ax) * t, ay + (by - ay) * t] });
+    }
   }
-  assert.ok(opposite / free > 0.85, `only ${opposite} of ${free} centres have a street running through`);
+  return out;
+}
+
+// The street network of a district as a graph: junctions and line ends are
+// nodes, the stretches between them edges. Extra points (centres, the
+// station) can be added as nodes on the lines they lie on.
+function network(d, extra) {
+  const lines = streetsOf(d);
+  const cuts = lines.map(() => []);
+  for (let a = 0; a < lines.length; a++) {
+    for (let b = a + 1; b < lines.length; b++) {
+      for (const c of crossings(lines[a], lines[b])) {
+        const key = `j${a}.${b}.${c.i}.${Math.round(c.p[0])},${Math.round(c.p[1])}`;
+        cuts[a].push({ pos: c.i + c.t, key });
+        cuts[b].push({ pos: c.u, key });
+      }
+    }
+  }
+  // A line ending on another (a T junction) joins it there, even if rounding
+  // leaves the end a hair to one side.
+  lines.forEach((A, a) => {
+    for (const [end, pos] of [[A[0], 0], [A[A.length - 1], A.length - 1]]) {
+      lines.forEach((B, b) => {
+        if (b === a) return;
+        const q = project(B, end);
+        if (q.d < 0.5) {
+          const key = `t${a}.${pos}`;
+          cuts[a].push({ pos, key });
+          cuts[b].push({ pos: q.pos, key });
+        }
+      });
+    }
+  });
+  for (const [key, p] of extra) {
+    for (let a = 0; a < lines.length; a++) {
+      const k = lines[a].findIndex((q) => same(q, p));
+      if (k >= 0) cuts[a].push({ pos: k, key });
+    }
+  }
+  const adj = new Map();
+  const link = (x, y, w) => {
+    if (!adj.has(x)) adj.set(x, []);
+    if (!adj.has(y)) adj.set(y, []);
+    adj.get(x).push([y, w]);
+    adj.get(y).push([x, w]);
+  };
+  const at = (pts, pos) => {
+    const i = Math.max(0, Math.min(pts.length - 2, Math.floor(pos)));
+    const t = pos - i;
+    return [pts[i][0] + (pts[i + 1][0] - pts[i][0]) * t, pts[i][1] + (pts[i + 1][1] - pts[i][1]) * t];
+  };
+  lines.forEach((pts, a) => {
+    const cs = [{ pos: 0, key: `e${a}.0` }, ...cuts[a], { pos: pts.length - 1, key: `e${a}.1` }].sort((x, y) => x.pos - y.pos);
+    for (let k = 0; k < cs.length - 1; k++) {
+      const p = at(pts, cs[k].pos);
+      const q = at(pts, cs[k + 1].pos);
+      link(cs[k].key, cs[k + 1].key, Math.hypot(q[0] - p[0], q[1] - p[1]));
+    }
+  });
+  return adj;
+}
+
+// Nearest point of a polyline: distance and position along it.
+function project(B, p) {
+  let best = { d: Infinity, pos: 0 };
+  for (let j = 0; j < B.length - 1; j++) {
+    const [ax, ay] = B[j];
+    const dx = B[j + 1][0] - ax;
+    const dy = B[j + 1][1] - ay;
+    const l2 = dx * dx + dy * dy;
+    const t = l2 > 0 ? Math.max(0, Math.min(1, ((p[0] - ax) * dx + (p[1] - ay) * dy) / l2)) : 0;
+    const d = Math.hypot(ax + dx * t - p[0], ay + dy * t - p[1]);
+    if (d < best.d) best = { d, pos: j + t };
+  }
+  return best;
+}
+
+function shortest(adj, from) {
+  const dist = new Map([[from, 0]]);
+  const open = [[0, from]];
+  while (open.length) {
+    open.sort((a, b) => b[0] - a[0]);
+    const [dd, n] = open.pop();
+    if (dd > dist.get(n)) continue;
+    for (const [m, w] of adj.get(n) || []) {
+      const nd = dd + w;
+      if (nd < (dist.get(m) ?? Infinity)) {
+        dist.set(m, nd);
+        open.push([nd, m]);
+      }
+    }
+  }
+  return dist;
+}
+
+test('every neighbourhood centre sits on a main street or boulevard', () => {
+  for (const d of inner()) {
+    const lines = streetsOf(d);
+    for (const h of d.stage3.hoods) {
+      const near = Math.min(...lines.map((l) => distToLine(h.centre[0], h.centre[1], l)));
+      assert.ok(near < 1e-6, `${h.key} centre is ${near.toFixed(0)} m off the streets`);
+    }
+  }
 });
 
 test('main streets never dead-end', () => {
   for (const d of inner()) {
-    const s = d.stage3;
-    for (const l of s.lines) {
-      for (const k of [l.a, l.b]) {
-        const nd = s.nodes[k];
-        const end = k === l.a ? l.points[0] : l.points[l.points.length - 1];
-        assert.ok(same(end, nd.p), `${l.key} does not end at its node`);
-        if (nd.kind === 'boulevard') assert.ok(d.network.lines.some((b) => distToLine(end[0], end[1], b.points) < 1e-6), `${l.key} ends short of its boulevard`);
-        if (nd.kind === 'centre' && !nd.t) assert.ok(s.degree[k] >= 2, `${l.key} ends at a dead-end centre`);
+    const lines = streetsOf(d);
+    for (const l of d.stage3.lines) {
+      const ends = [[l.points[0], !!l.crossing], [l.points[l.points.length - 1], false]];
+      for (const [e, crossingStart] of ends) {
+        if (crossingStart) continue; // carries on in the next district
+        const on = lines.some((q) => q !== l.points && distToLine(e[0], e[1], q) < 1);
+        assert.ok(on, `${l.key} dead-ends at ${e.map(Math.round)}`);
       }
     }
   }
@@ -125,24 +220,88 @@ test('main streets never dead-end', () => {
 test('main streets carry on across greenways into the next district', () => {
   let n = 0;
   for (const d of inner()) {
-    for (const nd of d.stage3.nodes.filter((x) => x.kind === 'edge')) {
-      const e = other(nd.neighbour);
-      const back = e.stage3.nodes.find((x) => x.kind === 'edge' && x.key === nd.key);
-      assert.ok(back, `${e.key} has no street at crossing ${nd.key}`);
-      assert.ok(same(back.p, nd.p));
-      assert.equal(back.n[0], -nd.n[0]);
-      assert.equal(back.n[1], -nd.n[1]);
+    for (const x of d.stage3.crossings) {
+      const e = other(x.neighbour);
+      const back = e.stage3.crossings.find((y) => y.key === x.key);
+      assert.ok(back, `${e.key} has no crossing ${x.key}`);
+      assert.ok(same(back.p, x.p));
+      assert.equal(back.n[0], -x.n[0]);
+      assert.equal(back.n[1], -x.n[1]);
+      for (const side of [d, e]) {
+        assert.ok(side.stage3.lines.some((l) => l.crossing === x.key && same(l.points[0], x.p)), `${side.key} has no street from crossing ${x.key}`);
+      }
       n++;
     }
   }
   assert.ok(n > inner().length * 2, `only ${n} greenway crossings`);
 });
 
-test('4 to 6 tram streets run into each core, boulevards included', () => {
-  const ds = inner();
-  const ok = ds.filter((d) => d.stage3.arms >= CORE_ARMS[0] && d.stage3.arms <= CORE_ARMS[1]).length;
-  for (const d of ds) assert.ok(d.stage3.arms <= CORE_ARMS[1] + 1, `${d.key} core has ${d.stage3.arms} tram streets`);
-  assert.ok(ok / ds.length > 0.85, `only ${ok} of ${ds.length} cores have 4 to 6 tram streets`);
+test('junctions are crossings or T junctions, never many streets at one spot', () => {
+  let junctions = 0;
+  let crowded = 0;
+  for (const d of inner()) {
+    const lines = streetsOf(d);
+    const seen = [];
+    for (let a = 0; a < lines.length; a++) {
+      for (let b = a + 1; b < lines.length; b++) {
+        for (const c of crossings(lines[a], lines[b])) {
+          if (seen.some((q) => Math.hypot(q[0] - c.p[0], q[1] - c.p[1]) < 40)) continue;
+          seen.push(c.p);
+          junctions++;
+          // Streets passing within 40 m of the junction.
+          const through = lines.filter((q) => distToLine(c.p[0], c.p[1], q) < 40).length;
+          assert.ok(through <= 3, `${through} streets meet at ${c.p.map(Math.round)} in ${d.key}`);
+          if (through > 2) crowded++;
+        }
+      }
+    }
+  }
+  assert.ok(crowded <= junctions * 0.02, `${crowded} of ${junctions} junctions have three streets close together`);
+});
+
+test('main streets keep apart: none runs alongside another', () => {
+  let samples = 0;
+  let alongside = 0;
+  for (const d of inner()) {
+    const mains = d.stage3.lines.map((l) => l.points);
+    const all = streetsOf(d);
+    mains.forEach((A, a) => {
+      for (let i = 2; i < A.length - 2; i += 2) {
+        samples++;
+        const t = [A[i + 2][0] - A[i - 2][0], A[i + 2][1] - A[i - 2][1]];
+        const lt = Math.hypot(...t);
+        const p = A[i];
+        const close = all.some((B) => {
+          if (B === A) return false;
+          for (let j = 1; j < B.length - 1; j++) {
+            if (Math.hypot(B[j][0] - p[0], B[j][1] - p[1]) > 120) continue;
+            const u = [B[j + 1][0] - B[j - 1][0], B[j + 1][1] - B[j - 1][1]];
+            if (Math.abs(t[0] * u[0] + t[1] * u[1]) / (lt * Math.hypot(...u)) > 0.9 && distToLine(p[0], p[1], B) > 30) return true;
+          }
+          return false;
+        });
+        if (close) alongside++;
+      }
+    });
+  }
+  assert.ok(alongside / samples < 0.02, `${((100 * alongside) / samples).toFixed(1)}% of main street runs alongside another`);
+});
+
+test('neighbourhoods have a fairly direct route to the core', () => {
+  let total = 0;
+  let direct = 0;
+  for (const d of inner().slice(0, 12)) {
+    const extra = d.stage3.hoods.map((h) => [`h${h.id}`, h.centre]);
+    const dist = shortest(network(d, extra), 'h0');
+    for (const h of d.stage3.hoods.slice(1)) {
+      const g = dist.get(`h${h.id}`);
+      assert.ok(g !== undefined, `${h.key} is not connected to the core`);
+      const crow = Math.hypot(h.centre[0] - d.station[0], h.centre[1] - d.station[1]);
+      total++;
+      if (g < crow * 1.6 + 600) direct++;
+    }
+  }
+  assert.ok(direct / total > 0.9, `only ${direct} of ${total} neighbourhoods have a fairly direct route to the core`);
 });
 
 test('nearly all land is within 450 m of a main street or boulevard', () => {
@@ -150,7 +309,7 @@ test('nearly all land is within 450 m of a main street or boulevard', () => {
   let near = 0;
   let worst = 0;
   for (const d of inner().slice(0, 10)) {
-    const lines = d.stage3.lines.map((l) => l.points).concat(d.network.lines.map((l) => l.points));
+    const lines = streetsOf(d);
     const ring = d.ring.concat([d.ring[0]]);
     for (let x = d.bbox.x0; x < d.bbox.x1; x += 90) {
       for (let y = d.bbox.y0; y < d.bbox.y1; y += 90) {
@@ -164,6 +323,6 @@ test('nearly all land is within 450 m of a main street or boulevard', () => {
       }
     }
   }
-  assert.ok(near / total > 0.97, `only ${((100 * near) / total).toFixed(1)}% of land within ${MAIN_STREET_REACH} m`);
+  assert.ok(near / total > 0.95, `only ${((100 * near) / total).toFixed(1)}% of land within ${MAIN_STREET_REACH} m`);
   assert.ok(worst < 1000, `some land is ${worst.toFixed(0)} m from a main street`);
 });

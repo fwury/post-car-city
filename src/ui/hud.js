@@ -33,7 +33,7 @@ export function createHud(el) {
       const rows = [
         ['Cursor', cursor ? `${fmt(cursor[0])} m, ${fmt(cursor[1])} m` : 'off map'],
         ['District', d ? `${km2(d.area)}, core ${ha(d.coreArea)}, ${d.stage3.hoods.length - 1} neighbourhoods, ${d.neighbours.length} neighbouring districts` : 'none'],
-        ['Links', d ? `${d.links} boulevard links, ${d.stage3.lines.length} main streets, ${d.stage3.arms} tram streets into the core` : 'none'],
+        ['Links', d ? `${d.links} boulevard links, ${d.stage3.lines.length} main streets` : 'none'],
         ['Parks', d ? (d.parks.length ? `${d.parks.length} district park${d.parks.length === 1 ? '' : 's'} (${d.parks.map((p) => ha(p.area)).join(', ')})` : 'none') : 'none'],
         ['Zoom', `${z.toPrecision(3)} px/m, 1 px = ${1 / z < 10 ? `${(1 / z).toPrecision(2)} m` : formatDistance(1 / z)}`],
         ['Drawing', z < VECTOR_MIN_ZOOM
