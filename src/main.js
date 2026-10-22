@@ -9,6 +9,7 @@ import { createTilePool } from './render/workerPool.js';
 import { attachInput } from './ui/input.js';
 import { readUrlState, createUrlSync, setupControls, loadLayers, MAP_LAYERS } from './ui/controls.js';
 import { createHud } from './ui/hud.js';
+import { BLOCK_MIN_ZOOM, PLOT_MIN_ZOOM } from './render/blockLayer.js';
 
 const TILE_BUDGET_MS = 6;
 
@@ -121,6 +122,12 @@ function frame(now) {
     if (noiseTiles.queue.size > 0 && state.layers.noise) dirty = true;
   }
   hud.tick(now);
+  const stageEl = document.querySelector('.panel .stage');
+  if (stageEl) {
+    const z = camera.zoom;
+    const text = z < BLOCK_MIN_ZOOM ? 'Stage 4: zoom in to see blocks' : z < PLOT_MIN_ZOOM ? 'Stage 4: zoom in further to see plots' : 'Stage 4: blocks and plots';
+    if (stageEl.textContent !== text) stageEl.textContent = text;
+  }
   hud.update(now, { camera, input, tiles: districtTiles, renderer, world, visible: state.layers.hud });
   requestAnimationFrame(frame);
 }
