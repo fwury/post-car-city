@@ -22,6 +22,7 @@ import { createParks } from './parks.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
 export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
+import { createBlocks } from './blocks.js';
 import { createGrowth, PARCEL } from './growth.js';
 import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf, simplify, chaikin, resample } from '../util/geom.js';
 
@@ -535,8 +536,12 @@ export function createWorld(seed) {
     return d;
   }
 
+  // Stage 4: local streets and blocks, worked out only when wanted.
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y) });
+
   return {
     seed, cores, growth, boulevards,
+    blocks: (d) => blocks.of(d),
     district, base, lod, districtsInRect, boulevardsInRect, boulevardDistance, districtAt, greenwayWidth,
     // Stage 3: neighbourhoods and main streets of a district.
     neighbourhoods: (d) => d.stage3,

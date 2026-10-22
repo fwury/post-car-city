@@ -68,3 +68,61 @@ export function stamp(cell, src, W, H, x0, y0, pts) {
     }
   }
 }
+
+// Outlines of the cells where mask is set, as closed loops of cell corners
+// running clockwise on screen with the set cells on the right. Where two
+// pieces touch only at a corner they are traced apart.
+export function contours(cell, mask, W, H, x0, y0) {
+  const CW = W + 1;
+  const set = (i, j) => i >= 0 && j >= 0 && i < W && j < H && mask[j * W + i];
+  const out = new Map(); // corner -> edges leaving it
+  const from = [];
+  const to = [];
+  const add = (a, b) => {
+    const e = from.length;
+    from.push(a);
+    to.push(b);
+    let l = out.get(a);
+    if (!l) out.set(a, (l = []));
+    l.push(e);
+  };
+  for (let j = 0; j < H; j++) {
+    for (let i = 0; i < W; i++) {
+      if (!mask[j * W + i]) continue;
+      const c00 = j * CW + i;
+      if (!set(i, j - 1)) add(c00, c00 + 1);
+      if (!set(i + 1, j)) add(c00 + 1, c00 + 1 + CW);
+      if (!set(i, j + 1)) add(c00 + 1 + CW, c00 + CW);
+      if (!set(i - 1, j)) add(c00 + CW, c00);
+    }
+  }
+  const xy = (c) => [x0 + (c % CW) * cell, y0 + Math.floor(c / CW) * cell];
+  const used = new Uint8Array(from.length);
+  const loops = [];
+  for (let e0 = 0; e0 < from.length; e0++) {
+    if (used[e0]) continue;
+    const loop = [];
+    let e = e0;
+    while (e !== undefined && !used[e]) {
+      used[e] = 1;
+      loop.push(xy(from[e]));
+      const cands = (out.get(to[e]) || []).filter((f) => !used[f]);
+      if (cands.length <= 1) {
+        e = cands[0];
+        continue;
+      }
+      // At a pinch, turn right, keeping each piece to itself.
+      const [ax, ay] = xy(from[e]);
+      const [bx, by] = xy(to[e]);
+      const din = [bx - ax, by - ay];
+      let best = -Infinity;
+      for (const f of cands) {
+        const [cx, cy] = xy(to[f]);
+        const cr = din[0] * (cy - by) - din[1] * (cx - bx);
+        if (cr > best) [best, e] = [cr, f];
+      }
+    }
+    if (loop.length > 3) loops.push(loop);
+  }
+  return loops;
+}

@@ -27,6 +27,33 @@ let dirty = true;
 const markDirty = () => { dirty = true; };
 
 const pool = createTilePool(Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)));
+// Stage 4 blocks, worked out in their own workers as districts come into
+// view at close zoom (or here, if workers are missing).
+const BLOCK_CACHE = 48;
+const blockPool = createTilePool(2);
+const blockCache = new Map();
+function blocksFor(d) {
+  const k = d.key;
+  if (blockCache.has(k)) return blockCache.get(k);
+  while (blockCache.size >= BLOCK_CACHE) blockCache.delete(blockCache.keys().next().value);
+  if (!blockPool || blockPool.broken) {
+    const b = world.blocks(d);
+    blockCache.set(k, b);
+    return b;
+  }
+  blockCache.set(k, null);
+  const seedAt = state.seed;
+  blockPool.run({ kind: 'blocks', seed: state.seed, key: k, at: d.station }).then(
+    (b) => {
+      if (state.seed !== seedAt) return;
+      blockCache.set(k, b);
+      dirty = true;
+    },
+    () => blockCache.delete(k),
+  );
+  return null;
+}
+
 const camera = new Camera();
 const noiseTiles = new TileManager({ build: createNoiseTileBuilder(() => state.seed) });
 const districtTiles = new TileManager({
@@ -37,6 +64,7 @@ const districtTiles = new TileManager({
   onEvict: (data) => data.canvas.close?.(),
 });
 const renderer = new Renderer(canvas, camera, { noiseTiles, districtTiles }, state, getWorld);
+renderer.blocksFor = blocksFor;
 const input = attachInput(canvas, camera);
 const hud = createHud(document.getElementById('hud'));
 const urlSync = createUrlSync(() => ({ seed: state.seedText, x: camera.x, y: camera.y, zoom: camera.zoom }));
@@ -55,6 +83,7 @@ setupControls({
     state.seedText = text;
     state.seed = seedFromText(text);
     world = createWorld(state.seed);
+    blockCache.clear();
     noiseTiles.clear();
     districtTiles.clear();
     dirty = true;

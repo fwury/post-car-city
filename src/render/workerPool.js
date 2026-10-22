@@ -1,4 +1,4 @@
-// A small pool of tile workers. Returns null where module workers or
+// A small pool of workers (district tiles, and stage 4 blocks). Returns null where module workers or
 // OffscreenCanvas are missing, so the caller can render on the main thread.
 
 export function createTilePool(size) {
@@ -35,7 +35,7 @@ export function createTilePool(size) {
         idle.push(w);
         if (job) {
           if (e.data.error) job.reject(new Error(e.data.error));
-          else job.resolve(e.data.bitmap);
+          else job.resolve(e.data.result !== undefined ? e.data.result : e.data.bitmap);
         }
         dispatch();
       };

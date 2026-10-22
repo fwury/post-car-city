@@ -20,6 +20,17 @@ export const palette = {
   hoodLine: 'rgba(120, 104, 84, 0.45)',
   hoodCentre: '#b9a88f',
   stationRing: '#ffffff',
+  // Stage 4: blocks and local streets
+  building: '#e3ddd3',
+  podium: '#dcd5ca',
+  buildingEdge: 'rgba(150, 136, 118, 0.55)',
+  courtyard: '#e6eedb',
+  garden: '#e9efdc',
+  plaza: '#ebe7e0',
+  school: '#efe7d6',
+  localStreet: '#ffffff',
+  localCasing: '#dcd9d3',
+  pedestrianStreet: '#efece6',
   ink: '#1f2a30',
   inkSoft: '#5c6a72',
 

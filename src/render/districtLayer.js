@@ -15,6 +15,7 @@ const TRAM_WIDTH = 7;
 export const MAIN_STREET_MIN_ZOOM = 0.02;
 const TRAM_MIN_ZOOM = 0.2;
 import { palette } from './styles.js';
+import { drawBlocks } from './blockLayer.js';
 
 export const LOD_STEPS = [
   [0.4, 25],
@@ -151,6 +152,8 @@ export function drawDistricts(ctx, view, world, layers) {
       ctx.fill(p.core);
     }
   }
+
+  if (layers.blocks) drawBlocks(ctx, view, world, items, place);
 
   if (layers.streets) {
     const net = world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s);

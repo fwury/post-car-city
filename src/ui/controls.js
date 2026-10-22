@@ -1,10 +1,10 @@
 // Seed input, layer toggles, zoom buttons and URL sync (seed, x, y, zoom).
 
 const DEFAULT_VIEW = { seed: '1', x: 0, y: 0, zoom: 0.03 };
-const LAYERS_KEY = 'post-car-city:layers:v3';
-export const MAP_LAYERS = ['cores', 'streets', 'green', 'outlines', 'neighbourhoods'];
+const LAYERS_KEY = 'post-car-city:layers:v4';
+export const MAP_LAYERS = ['cores', 'streets', 'green', 'outlines', 'neighbourhoods', 'blocks'];
 export const DEFAULT_LAYERS = {
-  cores: true, streets: true, green: true, transit: true, neighbourhoods: true,
+  cores: true, streets: true, green: true, transit: true, neighbourhoods: true, blocks: true,
   outlines: false, noise: false, grid: false, tiles: false, hud: true,
 };
 

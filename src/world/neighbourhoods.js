@@ -564,7 +564,9 @@ export function createNeighbourhoods(seed, { boulevards }) {
       const net = h.campus ? h.density / (1 - CAMPUS_SHARE) : h.density;
       h.character = h.core ? 'core' : h.campus ? 'campus' : net > 24000 ? 'perimeter blocks' : net > 15000 ? 'mixed' : 'rowhouses';
     }
-    return { hoods, chains: again.chains, crossings, lines: streets.lines };
+    // The rasters later stages read: residents per m² and neighbourhood per cell.
+    const raster = { x0, y0, W, H, cell: CELL, dens, label };
+    return { hoods, chains: again.chains, crossings, lines: streets.lines, raster };
   }
 
   // ---- Boundary tracing ----
