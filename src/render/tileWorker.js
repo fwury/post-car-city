@@ -16,11 +16,14 @@ self.onmessage = (e) => {
       const d = world.districtsInRect(x - 1, y - 1, x + 1, y + 1).find((q) => q.key === e.data.key);
       const b = world.blocks(d);
       const result = {
-        blocks: b.blocks.map(({ pts, use, hood, front, inner, plots }) => ({
-          pts, use, hood, front, inner,
+        blocks: b.blocks.map(({ pts, centreline, use, hood, front, inner, court, plots }) => ({
+          pts, centreline, use, hood, front, inner, court,
           plots: plots && plots.map(({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c }) => ({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c })),
         })),
         streets: b.streets,
+        hoodLines: b.hoodLines,
+        planned: b.planned,
+        housed: b.programme.housed,
       };
       self.postMessage({ id, result });
       return;

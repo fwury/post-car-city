@@ -197,3 +197,72 @@ test('plots fill their blocks, front their streets, and are sound shapes', () =>
   assert.ok(median(widths.rowhouse) > 5 && median(widths.rowhouse) < 8, `houses ${median(widths.rowhouse).toFixed(1)} m wide`);
   assert.ok(median(widths.perimeter) > 11 && median(widths.perimeter) < 24, `perimeter plots ${median(widths.perimeter).toFixed(1)} m wide`);
 });
+
+test('perimeter blocks are several buildings, with a gap on every street', () => {
+  let n = 0;
+  let miss = 0;
+  for (const d of districts.slice(0, 2)) {
+    for (const b of blocksOf(d).blocks) {
+      if (b.use !== 'perimeter' || !b.inner || !b.plots) continue;
+      const gaps = b.plots.filter((p) => p.kind === 'passage');
+      assert.ok(gaps.length >= 2, `${d.key}: a perimeter block with ${gaps.length} gaps`);
+      for (const g of gaps) assert.ok(g.front >= 4, `${d.key}: a gap ${g.front.toFixed(1)} m wide`);
+      // Each street the block fronts for 40 m or more has a gap.
+      const run = new Map();
+      for (let i = 0; i < b.pts.length; i++) {
+        const q = b.pts[(i + 1) % b.pts.length];
+        const l = Math.hypot(q[0] - b.pts[i][0], q[1] - b.pts[i][1]);
+        run.set(b.fronts[i], (run.get(b.fronts[i]) || 0) + l);
+      }
+      const faced = new Set(gaps.map((g) => g.faces));
+      for (const [f, l] of run) {
+        if (l < 40 || f === 'park' || f === 'greenway') continue;
+        n++;
+        if (!faced.has(f)) miss++;
+      }
+    }
+  }
+  assert.ok(miss <= n * 0.01, `${miss} of ${n} street frontages of 40 m or more have no gap`);
+});
+
+test('plots in a rectangular block are cut square', () => {
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+  const rectness = (N) => {
+    let best = Infinity;
+    for (let i = 0; i < N.length; i++) {
+      const e = sub(N[(i + 1) % N.length], N[i]);
+      const l = Math.hypot(...e);
+      if (l < 1) continue;
+      const u = [e[0] / l, e[1] / l];
+      let [a, b, c, e2] = [Infinity, -Infinity, Infinity, -Infinity];
+      for (const p of N) {
+        const x = p[0] * u[0] + p[1] * u[1];
+        const y = -p[0] * u[1] + p[1] * u[0];
+        [a, b, c, e2] = [Math.min(a, x), Math.max(b, x), Math.min(c, y), Math.max(e2, y)];
+      }
+      best = Math.min(best, (b - a) * (e2 - c));
+    }
+    return Math.abs(polygonArea(N)) / best;
+  };
+  let n = 0;
+  let bad = 0;
+  for (const d of districts.slice(0, 2)) {
+    for (const b of blocksOf(d).blocks) {
+      if (!b.plots || b.plots.length < 2 || rectness(b.pts) < 0.9) continue;
+      for (const p of b.plots) {
+        if (p.corner || p.kind === 'passage') continue;
+        n++;
+        for (let i = 0; i < p.pts.length; i++) {
+          const a = sub(p.pts[i], p.pts[(i - 1 + p.pts.length) % p.pts.length]);
+          const c = sub(p.pts[(i + 1) % p.pts.length], p.pts[i]);
+          const t = (Math.abs(Math.atan2(a[0] * c[1] - a[1] * c[0], a[0] * c[0] + a[1] * c[1])) * 180) / Math.PI;
+          if (t > 30 && t < 150 && Math.abs(90 - t) > 12) {
+            bad++;
+            break;
+          }
+        }
+      }
+    }
+  }
+  assert.ok(bad <= n * 0.01, `${bad} of ${n} plots in rectangular blocks cut aslant`);
+});

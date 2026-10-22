@@ -5,6 +5,7 @@
 import { insetUniform } from '../util/offset.js';
 import { palette } from './styles.js';
 import { USES } from '../world/uses.js';
+import { STREET_TYPES } from '../world/streetTypes.js';
 
 export const BLOCK_MIN_ZOOM = 0.25;
 export const PLOT_MIN_ZOOM = 0.7;
@@ -12,6 +13,10 @@ export const USE_MIN_ZOOM = 1.6; // shop-floor dots from here in
 const PERIMETER_DEPTH = 14; // metres of building along a perimeter block's streets
 const ROWHOUSE_DEPTH = 10;
 const CAMPUS_DEPTH = 18;
+// A local street's pavement each side: its clearway and furnishing zones.
+const PAVEMENT = STREET_TYPES.localStreet.side.reduce((a, [, w]) => a + w, 0);
+const COURT_SPOKE = 3; // metres: a path across a courtyard
+const COURT_HUB = 6; // metres: radius of the small square in the middle
 
 const cache = new WeakMap();
 
@@ -28,7 +33,7 @@ function pathsFor(d, b) {
   const P = () => new Path2D();
   p = {
     built: P(), podium: P(), open: P(), garden: P(), green: P(), square: P(), school: P(), edge: P(),
-    plotLines: P(), passages: P(),
+    plotLines: P(), passages: P(), courtPath: P(), courtGreen: P(), spokes: P(), hubs: P(),
     dedicated: new Map(), dots: new Map(),
   };
   const dedicatedPath = (cat) => {
@@ -70,7 +75,21 @@ function pathsFor(d, b) {
       case 'campus': {
         add(p.built, k.pts);
         const inner = k.inner || insetUniform(k.pts, k.use === 'campus' ? CAMPUS_DEPTH : PERIMETER_DEPTH);
-        add(k.use === 'campus' ? p.green : p.open, inner);
+        if (k.court && k.court.green) {
+          // A public courtyard: a path round it, green in the middle, paths
+          // across from the gaps to a small square.
+          add(p.courtPath, inner);
+          add(p.courtGreen, k.court.green);
+          for (const [a, c] of k.court.spokes) {
+            p.spokes.moveTo(a[0] - ox, a[1] - oy);
+            p.spokes.lineTo(c[0] - ox, c[1] - oy);
+          }
+          if (k.court.hub) {
+            const [hx, hy] = [k.court.hub[0] - ox, k.court.hub[1] - oy];
+            p.hubs.moveTo(hx + COURT_HUB, hy);
+            p.hubs.arc(hx, hy, COURT_HUB, 0, Math.PI * 2);
+          }
+        } else add(k.use === 'campus' ? p.green : p.open, inner);
         break;
       }
       case 'rowhouse': {
@@ -113,6 +132,22 @@ function pathsFor(d, b) {
   return p;
 }
 
+// Neighbourhood boundaries down the middle of streets, once a district's
+// blocks are in.
+const hoodLineCache = new WeakMap();
+export function hoodLinePath(d, b) {
+  let p = hoodLineCache.get(b);
+  if (p) return p;
+  const [ox, oy] = d.origin;
+  p = new Path2D();
+  for (const line of b.hoodLines || []) {
+    p.moveTo(line[0][0] - ox, line[0][1] - oy);
+    for (let i = 1; i < line.length; i++) p.lineTo(line[i][0] - ox, line[i][1] - oy);
+  }
+  hoodLineCache.set(b, p);
+  return p;
+}
+
 // Called inside drawDistricts, after the neighbourhood tints and before the
 // main streets, for districts in view.
 export function drawBlocks(ctx, view, world, items, place) {
@@ -127,14 +162,28 @@ export function drawBlocks(ctx, view, world, items, place) {
   }
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  // Each street at its width, building line to building line: casing first.
-  for (const pass of ['casing', 'fill']) {
+  // Each street at its width, building line to building line: casing first,
+  // then (close in) the pavements, with the roadway down the middle.
+  const passes = zoom >= PLOT_MIN_ZOOM ? ['casing', 'pavement', 'fill'] : ['casing', 'fill'];
+  for (const pass of passes) {
     for (const { d, p } of list) {
       place(d);
       for (const st of p.streets.values()) {
         if (pass === 'casing' && st.kind === 'pedestrian') continue;
-        ctx.strokeStyle = pass === 'casing' ? palette.localCasing : st.kind === 'pedestrian' ? palette.pedestrianStreet : palette.localStreet;
-        ctx.lineWidth = st.width + (pass === 'casing' ? px(1.2) : 0);
+        if (pass === 'casing') {
+          ctx.strokeStyle = palette.localCasing;
+          ctx.lineWidth = st.width + px(1.2);
+        } else if (pass === 'pavement') {
+          if (st.kind === 'pedestrian') continue;
+          ctx.strokeStyle = palette.pavement;
+          ctx.lineWidth = st.width;
+        } else if (st.kind === 'pedestrian') {
+          ctx.strokeStyle = palette.pedestrianStreet;
+          ctx.lineWidth = st.width;
+        } else {
+          ctx.strokeStyle = palette.localStreet;
+          ctx.lineWidth = passes.length === 3 ? Math.max(st.width - 2 * PAVEMENT, st.width * 0.4) : st.width;
+        }
         ctx.stroke(st.path);
       }
     }
@@ -144,6 +193,9 @@ export function drawBlocks(ctx, view, world, items, place) {
     ['built', palette.building],
     ['podium', palette.podium],
     ['open', palette.courtyard],
+    ['courtPath', palette.pedestrianStreet],
+    ['courtGreen', palette.courtyard],
+    ['hubs', palette.pedestrianStreet],
     ['green', palette.green],
     ['square', palette.plaza],
     ['school', palette.school],
@@ -161,12 +213,16 @@ export function drawBlocks(ctx, view, world, items, place) {
       ctx.fill(path);
     }
   }
+  // Gaps between buildings and the paths across courtyards.
+  ctx.fillStyle = palette.pedestrianStreet;
+  ctx.strokeStyle = palette.pedestrianStreet;
+  ctx.lineWidth = COURT_SPOKE;
+  for (const { d, p } of list) {
+    place(d);
+    ctx.fill(p.passages);
+    ctx.stroke(p.spokes);
+  }
   if (zoom >= PLOT_MIN_ZOOM) {
-    ctx.fillStyle = palette.pedestrianStreet;
-    for (const { d, p } of list) {
-      place(d);
-      ctx.fill(p.passages);
-    }
     ctx.strokeStyle = palette.plotLine;
     ctx.lineWidth = px(0.6);
     for (const { d, p } of list) {

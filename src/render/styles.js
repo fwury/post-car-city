@@ -12,6 +12,8 @@ export const palette = {
   waterEdge: '#86bfe8',
   road: '#a7adb3',
   roadCasing: '#8c939a',
+  tunnel: '#dfe3e5', // a street under a greenway
+  tunnelCasing: '#8c939a',
   pedestrian: '#e2e4e6',
   tram: '#d65a4e',
   bike: '#3e8a52',
@@ -31,6 +33,7 @@ export const palette = {
   school: '#f1e3c8',
   localStreet: '#ffffff',
   localCasing: '#dcd9d3',
+  pavement: '#f2f0ec',
   pedestrianStreet: '#e9dfcc',
   // Dedicated buildings, by what they are for.
   dedicated: {

@@ -14,8 +14,9 @@ const MAIN_STREET_WIDTH = STREET_TYPES.mainStreet.width;
 const TRAM_WIDTH = 7;
 export const MAIN_STREET_MIN_ZOOM = 0.02;
 const TRAM_MIN_ZOOM = 0.2;
+const TUNNEL_MIN_ZOOM = 0.05;
 import { palette } from './styles.js';
-import { drawBlocks } from './blockLayer.js';
+import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
 
 export const LOD_STEPS = [
   [0.4, 25],
@@ -155,11 +156,11 @@ export function drawDistricts(ctx, view, world, layers) {
 
   if (layers.blocks) drawBlocks(ctx, view, world, items, place);
 
+  const net = layers.streets ? world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s) : null;
+  const lines = net ? net.lines.map((b) => ({ b, path: boulevardPath(b) })) : [];
+  const w = Math.max(BOULEVARD_WIDTH, px(zoom < 0.03 ? 1.1 : 1.6));
+  const mw = Math.max(MAIN_STREET_WIDTH, px(zoom < 0.03 ? 0.7 : 1.1));
   if (layers.streets) {
-    const net = world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s);
-    const lines = net.lines.map((b) => ({ b, path: boulevardPath(b) }));
-    const w = Math.max(BOULEVARD_WIDTH, px(zoom < 0.03 ? 1.1 : 1.6));
-    const mw = Math.max(MAIN_STREET_WIDTH, px(zoom < 0.03 ? 0.7 : 1.1));
     const casing = zoom >= 0.05;
     const passes = casing ? [[palette.roadCasing, px(1.5)], [palette.road, 0]] : [[palette.road, 0]];
     for (const [colour, extra] of passes) {
@@ -228,13 +229,50 @@ export function drawDistricts(ctx, view, world, layers) {
     }
   }
 
+  // Boulevards and main streets carry on under the greenways: drawn again
+  // inside each greenway strip as tunnels, pale with dashed edges, so a
+  // street reads as one street from district to district.
+  if (layers.streets && layers.green && zoom >= TUNNEL_MIN_ZOOM) {
+    const strokeAll = (extra) => {
+      ctx.lineWidth = mw + extra;
+      for (const { d, h } of hoods) {
+        place(d);
+        ctx.stroke(h.streets);
+      }
+      ctx.lineWidth = w + extra;
+      for (const { b, path } of lines) {
+        ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
+        ctx.stroke(path);
+      }
+    };
+    for (const { d, p } of items) {
+      for (const strip of p.greenFill) {
+        ctx.save();
+        place(d);
+        ctx.clip(strip);
+        ctx.strokeStyle = palette.tunnelCasing;
+        ctx.setLineDash([px(4), px(3)]);
+        ctx.lineCap = 'butt';
+        strokeAll(px(1.5));
+        ctx.setLineDash([]);
+        ctx.strokeStyle = palette.tunnel;
+        strokeAll(-px(1));
+        ctx.lineCap = 'round';
+        ctx.restore();
+      }
+    }
+  }
+
   if (layers.neighbourhoods) {
     ctx.strokeStyle = palette.hoodLine;
     ctx.lineWidth = px(1.2);
     ctx.setLineDash([px(5), px(4)]);
+    // Close in, where a district's blocks are in, boundaries run down streets.
+    const byBlock = layers.blocks && zoom >= BLOCK_MIN_ZOOM;
     for (const { d, h } of hoods) {
       place(d);
-      ctx.stroke(h.lines);
+      const b = byBlock ? (view.blocks ? view.blocks(d) : world.blocks(d)) : null;
+      ctx.stroke(b && b.hoodLines ? hoodLinePath(d, b) : h.lines);
     }
     ctx.setLineDash([]);
     if (zoom >= 0.05) {

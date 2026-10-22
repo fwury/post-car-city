@@ -34,7 +34,7 @@ const ELEMENTARY_PER_HOOD = 2;
 const SCHOOL_BLOCK = [0.3e4, 1.3e4]; // m², net: a block an elementary school takes
 const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
 const REC_BLOCK = [0.5e4, 1.6e4];
-const PARKETTE_GAP = 240; // metres between parkettes in rowhouse areas (about four within 400 m)
+const PARKETTE_GAP = 225; // metres between parkettes in rowhouse areas (about four within 400 m)
 const SUBDISTRICT_HOODS = 3; // neighbourhoods to a subdistrict centre
 const QUIET_UNITS = 0.3; // share of off-main perimeter plots with a shop floor
 const CORNER_UNITS = 0.7; // ... of off-main perimeter corner plots
@@ -43,11 +43,11 @@ const CORNER_SHOPS = 0.45; // ... of rowhouse end plots
 // Buildings by plot class: usual storeys, their range, the depth of the
 // building from the street where the plot runs deeper (rowhouse gardens).
 const HEIGHTS = {
-  main: { base: 6, storeys: [4, 8] },
-  unit: { base: 5, storeys: [3, 7] },
-  unitShop: { base: 5, storeys: [3, 7] },
-  corner: { base: 5, storeys: [3, 7] },
-  podium: { base: 14, storeys: [5, 30] }, // a podium with a tower over it
+  main: { base: 6, storeys: [4, 9] },
+  unit: { base: 5, storeys: [3, 8] },
+  unitShop: { base: 5, storeys: [3, 8] },
+  corner: { base: 5, storeys: [3, 8] },
+  podium: { base: 14, storeys: [4, 30] }, // a podium with a tower over it
   house: { base: 3, storeys: [2, 4], depth: 10, house: true },
   rowCorner: { base: 3, storeys: [2, 4], depth: 12, house: true },
   cornerShop: { base: 3, storeys: [2, 4], depth: 12, house: true },
@@ -116,7 +116,7 @@ function join(A, B) {
   return signedArea(out) > 0 ? out : null;
 }
 
-export function assignProgramme(seed, d, blocks) {
+export function assignProgramme(seed, d, blocks, planned = null) {
   const rng = rngFor(seed, 'programme', ...keyInts(d.coreInfo));
   const hoods = d.stage3.hoods;
   const S = d.station;
@@ -424,7 +424,10 @@ export function assignProgramme(seed, d, blocks) {
   // ---- Homes ----
   // Storeys by building, then raised or lowered (within each kind's range)
   // until each neighbourhood houses about the people it was planned for.
+  // Each building rounds up or down by its own share, so heights vary from
+  // one to the next and the average can sit between whole storeys.
   const live = plots.filter((p) => p.cls !== 'merged' && !p.dedicated && HEIGHTS[p.cls]);
+  for (const p of live) p.dither = toUnit(hash(seed, 'storeys', Math.floor(p.c[0] * 4), Math.floor(p.c[1] * 4)));
   const people = (p) => {
     const H = HEIGHTS[p.cls];
     const footprint = H.depth ? Math.min(polygonArea(p.pts), p.front * H.depth || polygonArea(p.pts)) : polygonArea(p.pts);
@@ -437,20 +440,21 @@ export function assignProgramme(seed, d, blocks) {
   for (const h of hoods) {
     const mine = live.filter((p) => p.hood === h.id);
     let f = 1;
-    for (let round = 0; round < 6; round++) {
+    for (let round = 0; round < 10; round++) {
       let total = 0;
       for (const p of mine) {
         const H = HEIGHTS[p.cls];
-        p.storeys = Math.max(H.storeys[0], Math.min(H.storeys[1], Math.round(H.base * (H.house ? 1 : f))));
+        p.storeys = Math.max(H.storeys[0], Math.min(H.storeys[1], H.house ? H.base : Math.floor(H.base * f + p.dither)));
         total += people(p);
       }
       built.set(h.id, total);
       if (!total) break;
-      const want = h.population / total;
+      const want = (planned ? planned[h.id] : h.population) / total;
       if (Math.abs(want - 1) < 0.03) break;
       f *= want;
     }
   }
 
+  for (const p of live) delete p.dither;
   return { subdistricts: subs.map((h) => h.id), parkettes: parkettes.length, housed: Object.fromEntries(built) };
 }

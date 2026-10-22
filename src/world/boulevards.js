@@ -8,8 +8,8 @@
 //
 //   - a trunk: the two links that leave in the most opposite directions,
 //     joined through the station, so the core is always on the network
-//   - sometimes instead a large roundabout near the core, where three links
-//     meet, one of them running through the station
+//   - (roundabouts are kept for roads outside the city, so inside a
+//     district ROUNDABOUT_SHARE is 0 and the trunk is always used)
 //   - every other link ends at a T junction on what is already built,
 //     meeting it at right angles, with a bias towards the core
 //
@@ -25,7 +25,7 @@ import { keyInts } from './cores.js';
 export const MIN_SHARED_EDGE = 450; // metres of shared greenway needed for a link
 export const MIN_RADIUS = 50; // metres, tightest bend allowed on a boulevard
 export const ROUNDABOUT_RADIUS = 90; // centreline radius of a large roundabout
-const ROUNDABOUT_SHARE = 0.3; // share of districts (with three or more links) that get one
+const ROUNDABOUT_SHARE = 0; // share of districts that get one: none inside the city
 const SAMPLE = 12; // metres between points on a boulevard
 const END_MARGIN = 260; // crossing points stay this far from the ends of a stretch
 const T_SPACING = 170; // metres between junctions on the same boulevard

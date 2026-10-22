@@ -24,6 +24,7 @@
 // secondary school, side by side.
 
 import { rngFor } from '../core/rng.js';
+import { hash, toUnit } from '../core/hash.js';
 import { keyInts } from './cores.js';
 import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
@@ -60,6 +61,8 @@ const STEP = 10; // metres between points of a new street
 const CAMPUS_SHARE = 0.45; // of a campus neighbourhood's land, the campus itself
 const FORCED_MIN = 60; // metres: narrowest side of a park or school split off a site
 const SQUARE_MIN = 62; // metres, centreline: narrowest a square's block may be
+const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
+const SQUARE_FORMS = { corner: 0.3, against: 0.35 }; // shares of squares by form; the rest stand on their own
 const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school takes
 const PEDESTRIAN_REACH = 220; // metres from its square a pedestrian street runs
 const FALLBACK_REACH = 250; // metres from a centre a square may stand if none was found by it
@@ -177,6 +180,29 @@ function clean(node) {
   return { ...node, pts: P, tags: T };
 }
 
+// Join polylines that meet end to start into longer ones.
+function joinRuns(runs) {
+  const key = (p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`;
+  const starts = new Map();
+  for (const r of runs) starts.set(key(r[0]), r);
+  const used = new Set();
+  const out = [];
+  // Begin with runs nothing leads into, then any loops left.
+  const ends = new Set(runs.map((r) => key(r[r.length - 1])));
+  const order = runs.filter((r) => !ends.has(key(r[0]))).concat(runs);
+  for (const r of order) {
+    if (used.has(r)) continue;
+    used.add(r);
+    const line = r.slice();
+    for (let next = starts.get(key(line[line.length - 1])); next && !used.has(next); next = starts.get(key(line[line.length - 1]))) {
+      used.add(next);
+      line.push(...next.slice(1));
+    }
+    out.push(line);
+  }
+  return out;
+}
+
 export function createBlocks(seed, { greenwayWidth }) {
   const cache = new LruCache(64);
 
@@ -218,8 +244,19 @@ export function createBlocks(seed, { greenwayWidth }) {
     const loops = [];
     for (const raw of contours(EDGE_CELL, keep, W, H, x0, y0)) {
       if (raw.length < 12) continue;
-      let pts = simplify(raw.concat([raw[0]]), EDGE_CELL * 0.6).slice(0, -1);
-      for (let k = 0; k < 2; k++) pts = chaikin(pts, true);
+      // Smooth out the raster's stairs first (a few passes of neighbour
+      // averaging round the loop), so the street keeps an even line.
+      let pts = raw;
+      for (let k = 0; k < 6; k++) {
+        const n = pts.length;
+        pts = pts.map((p, i) => {
+          const a = pts[(i - 1 + n) % n];
+          const b = pts[(i + 1) % n];
+          return [(a[0] + 2 * p[0] + b[0]) / 4, (a[1] + 2 * p[1] + b[1]) / 4];
+        });
+      }
+      pts = simplify(pts.concat([pts[0]]), EDGE_CELL * 0.25).slice(0, -1);
+      pts = chaikin(pts, true);
       if (Math.abs(signedArea(pts)) < 2e4) continue;
       loops.push(orientPositive(pts));
     }
@@ -244,6 +281,132 @@ export function createBlocks(seed, { greenwayWidth }) {
       const n = cellOf(p[0], p[1]);
       return n >= 0 ? R.dens[n] * 1e6 : 0;
     };
+
+    function hoodsByBlock(blocks) {
+      const faces = blocks.filter((b) => b.centreline && b.hood != null);
+      // Faces by grid cell, to find the block across a street.
+      const G = 80;
+      const grid = new Map();
+      faces.forEach((b, i) => {
+        let [bx0, by0, bx1, by1] = [Infinity, Infinity, -Infinity, -Infinity];
+        for (const [x, y] of b.centreline) [bx0, by0, bx1, by1] = [Math.min(bx0, x), Math.min(by0, y), Math.max(bx1, x), Math.max(by1, y)];
+        b.box = [bx0, by0, bx1, by1];
+        for (let gx = Math.floor(bx0 / G); gx <= Math.floor(bx1 / G); gx++) {
+          for (let gy = Math.floor(by0 / G); gy <= Math.floor(by1 / G); gy++) {
+            const k = `${gx},${gy}`;
+            if (!grid.has(k)) grid.set(k, []);
+            grid.get(k).push(i);
+          }
+        }
+      });
+      const faceAt = (x, y) => {
+        for (const i of grid.get(`${Math.floor(x / G)},${Math.floor(y / G)}`) || []) if (pointInPolygon(x, y, faces[i].centreline)) return faces[i];
+        return null;
+      };
+      // Each block's edge in short pieces, with the block across each.
+      const PIECE = 6;
+      for (const b of faces) {
+        const P = b.centreline;
+        b.across = [];
+        for (let i = 0; i < P.length; i++) {
+          const a = P[i];
+          const c = P[(i + 1) % P.length];
+          const L = len(sub(c, a));
+          if (L < 0.01) continue;
+          const nrm = [-(c[1] - a[1]) / L, (c[0] - a[0]) / L];
+          const k = Math.ceil(L / PIECE);
+          for (let j = 0; j < k; j++) {
+            const t0 = j / k;
+            const t1 = (j + 1) / k;
+            const m = [a[0] + ((c[0] - a[0]) * (t0 + t1)) / 2, a[1] + ((c[1] - a[1]) * (t0 + t1)) / 2];
+            let o = [m[0] + nrm[0] * 1.5, m[1] + nrm[1] * 1.5];
+            if (pointInPolygon(o[0], o[1], P)) o = [m[0] - nrm[0] * 1.5, m[1] - nrm[1] * 1.5];
+            b.across.push({
+              p: [a[0] + (c[0] - a[0]) * t0, a[1] + (c[1] - a[1]) * t0],
+              q: [a[0] + (c[0] - a[0]) * t1, a[1] + (c[1] - a[1]) * t1],
+              l: L / k,
+              o: faceAt(o[0], o[1]),
+            });
+          }
+        }
+      }
+      // Smooth the boundaries: an ordinary block mostly surrounded by
+      // another neighbourhood joins it, so boundaries do not step round
+      // single blocks. (Squares, parks and schools stay with their own.)
+      const movable = new Set(['perimeter', 'rowhouse', 'podium', 'green']);
+      for (let round = 0; round < 4; round++) {
+        let moved = 0;
+        for (const b of faces) {
+          if (!movable.has(b.use)) continue;
+          const by = new Map();
+          let total = 0;
+          for (const e of b.across) {
+            if (!e.o) continue;
+            total += e.l;
+            by.set(e.o.hood, (by.get(e.o.hood) || 0) + e.l);
+          }
+          let best = b.hood;
+          let bl = by.get(b.hood) || 0;
+          for (const [h, l] of [...by].sort((x, y) => x[0] - y[0])) if (l > bl) [best, bl] = [h, l];
+          if (best !== b.hood && bl > total * 0.6) {
+            b.hood = best;
+            moved++;
+          }
+        }
+        if (!moved) break;
+      }
+      // People per block, from stage 3's density, sampled on a fine grid.
+      const SAMPLE = 12.5;
+      const byBlock = new Map();
+      for (const b of faces) {
+        const P = b.centreline;
+        const [bx0, by0, bx1, by1] = b.box;
+        let sum = 0;
+        for (let x = Math.ceil(bx0 / SAMPLE) * SAMPLE; x < bx1; x += SAMPLE) {
+          for (let y = Math.ceil(by0 / SAMPLE) * SAMPLE; y < by1; y += SAMPLE) {
+            if (!pointInPolygon(x, y, P)) continue;
+            const n = cellOf(x, y);
+            if (n >= 0) sum += R.dens[n];
+          }
+        }
+        byBlock.set(b.hood, (byBlock.get(b.hood) || 0) + sum * SAMPLE * SAMPLE);
+      }
+      // Stage 3's people by its own boundaries, to carry over its plan
+      // (campus neighbourhoods house fewer for their land).
+      const byLabel = new Map();
+      for (let n = 0; n < R.label.length; n++) if (R.label[n] >= 0 && R.dens[n] > 0) byLabel.set(hoods[R.label[n]].id, (byLabel.get(hoods[R.label[n]].id) || 0) + R.dens[n] * R.cell * R.cell);
+      const planned = {};
+      let total = 0;
+      for (const h of hoods) {
+        const raw = byLabel.get(h.id) || 0;
+        planned[h.id] = raw > 0 ? ((byBlock.get(h.id) || 0) * h.population) / raw : 0;
+        total += planned[h.id];
+      }
+      // Land at the district's edges is outside every block: its people are
+      // shared out, so the district as a whole houses what stage 3 planned.
+      const want = hoods.reduce((a, h) => a + h.population, 0);
+      for (const h of hoods) planned[h.id] = total > 0 ? Math.round((planned[h.id] * want) / total) : h.population;
+      // Boundaries: the stretches of a block's edge (its street's centreline)
+      // with another neighbourhood's block across, each drawn from one side.
+      const hoodLines = [];
+      for (const b of faces) {
+        let run = null;
+        for (const e of b.across) {
+          if (!e.o || e.o.hood === b.hood || b.hood > e.o.hood) {
+            run = null;
+            continue;
+          }
+          if (run && len(sub(run[run.length - 1], e.p)) < 0.01) run.push(e.q);
+          else {
+            run = [e.p, e.q];
+            hoodLines.push(run);
+          }
+        }
+        delete b.across;
+        delete b.box;
+      }
+      return { planned, hoodLines: joinRuns(hoodLines) };
+    }
 
     // ---- Superblocks ----
     let nextStreet = 1;
@@ -717,8 +880,9 @@ export function createBlocks(seed, { greenwayWidth }) {
         const zone = zoneOf(node, ax);
         const sq = squareFor(node, ax.area, ax.W);
         if (sq) {
-          squareOf.set(sq.id, node);
-          leaves.push({ ...node, ax, use: 'square', hood: sq.id });
+          const leaf = { ...node, ax, use: 'square', hood: sq.id };
+          squareOf.set(sq.id, leaf);
+          leaves.push(leaf);
           continue;
         }
         const pk = parkFor(node, ax.area);
@@ -828,19 +992,52 @@ export function createBlocks(seed, { greenwayWidth }) {
       }
     }
 
-    // A local street off each square becomes a pedestrian street.
-    for (const [, sqNode] of squareOf) {
-      let best = null;
+    // Squares take one of three forms. Some stand on their own, streets all
+    // round. Others go right up against the block across a local street:
+    // that stretch of street becomes part of the square, so the block's
+    // buildings face straight onto it. Others again fill the corner of two
+    // such streets, against blocks on two adjacent sides. A street a square
+    // takes in goes on beyond it as a pedestrian street; a square on its own
+    // gets one too, off its longest local side.
+    const pedestrianise = (t, c) => {
+      t.kind = 'pedestrian';
+      t.w = PEDESTRIAN;
+      t.square = c;
+    };
+    for (const [hid, sqNode] of squareOf) {
+      const P = sqNode.pts;
+      const n = P.length;
+      const c = axes(P).c;
+      // Local sides, by street, with their length and edges.
+      const sides = new Map();
       sqNode.tags.forEach((t, i) => {
         if (t.kind !== 'local') return;
-        const l = len(sub(sqNode.pts[(i + 1) % sqNode.pts.length], sqNode.pts[i]));
-        if (!best || l > best.l) best = { t, l };
+        if (!sides.has(t.id)) sides.set(t.id, { t, l: 0, edges: [] });
+        const sd = sides.get(t.id);
+        sd.l += len(sub(P[(i + 1) % n], P[i]));
+        sd.edges.push(i);
       });
-      // (The longest local side, by its whole street.)
-      if (best) {
-        best.t.kind = 'pedestrian';
-        best.t.w = PEDESTRIAN;
-        best.t.square = axes(sqNode.pts).c;
+      const list = [...sides.values()].filter((sd) => sd.l >= SQUARE_SIDE).sort((a, b) => b.l - a.l || a.t.id - b.t.id);
+      // Two sides are adjacent if one's last edge runs into the other's first.
+      const meet = (a, b) => a.edges.some((i) => b.edges.includes((i + 1) % n)) || b.edges.some((i) => a.edges.includes((i + 1) % n));
+      let pair = null;
+      for (let i = 0; i < list.length && !pair; i++) for (let j = i + 1; j < list.length && !pair; j++) if (meet(list[i], list[j])) pair = [list[i], list[j]];
+      const u = toUnit(hash(seed, 'square-form', hid, ...keyInts(d.coreInfo)));
+      const form = pair && u < SQUARE_FORMS.corner ? 'corner' : list.length && u < SQUARE_FORMS.corner + SQUARE_FORMS.against ? 'against' : 'island';
+      sqNode.infill = new Set();
+      if (form === 'corner') for (const sd of pair) sqNode.infill.add(sd.t.id);
+      if (form === 'against') sqNode.infill.add(list[0].t.id);
+      sqNode.form = form;
+      for (const sd of list) if (sqNode.infill.has(sd.t.id)) pedestrianise(sd.t, c);
+      if (form === 'island') {
+        // (The longest local side, by its whole street.)
+        let best = null;
+        sqNode.tags.forEach((t, i) => {
+          if (t.kind !== 'local') return;
+          const l = len(sub(P[(i + 1) % n], P[i]));
+          if (!best || l > best.l) best = { t, l };
+        });
+        if (best) pedestrianise(best.t, c);
       }
     }
 
@@ -859,7 +1056,12 @@ export function createBlocks(seed, { greenwayWidth }) {
     for (const lf of leaves) {
       const P = lf.pts;
       const n = P.length;
-      const dist = lf.tags.map((t, i) => half(t, [(P[i][0] + P[(i + 1) % n][0]) / 2, (P[i][1] + P[(i + 1) % n][1]) / 2]));
+      // A square reaches across a street it takes in, to the building line
+      // of the block on the far side.
+      const dist = lf.tags.map((t, i) => {
+        const h = half(t, [(P[i][0] + P[(i + 1) % n][0]) / 2, (P[i][1] + P[(i + 1) % n][1]) / 2]);
+        return lf.infill && lf.infill.has(t.id) ? -h : h;
+      });
       for (let i = 0; i < n; i++) {
         const t = lf.tags[i];
         if (t.kind !== 'local' && t.kind !== 'pedestrian') continue;
@@ -897,11 +1099,13 @@ export function createBlocks(seed, { greenwayWidth }) {
       const front = lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard');
       const use = lf.use ?? (area < REMNANT ? 'green' : lf.zone === 'rowhouse' && front ? 'perimeter' : lf.zone);
       const b = { pts: net, centreline: P, dist, use, area, stuck: !!lf.stuck, raw: polygonArea(P), hood: lf.hood ?? (hoodAt(lf.ax.c) || {}).id, front: lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard') };
+      if (lf.form) b.form = lf.form;
       if (!net) b.use = 'green';
       else {
         const pl = plotsOfBlock(net, fronts, b.use, axes(net).W, rng);
         b.plots = pl.plots;
         b.inner = pl.inner;
+        b.court = pl.court;
         b.fronts = fronts;
       }
       blocks.push(b);
@@ -923,12 +1127,18 @@ export function createBlocks(seed, { greenwayWidth }) {
       local.push({ id: tag.id, kind, width, segs: keep });
     }
 
+    // ---- Neighbourhoods, block by block ----
+    // Every block belongs to one neighbourhood, so boundaries run down the
+    // middle of streets. Each neighbourhood is then planned for the people
+    // its own blocks' land holds (stage 3's plan, shifted with the land).
+    const { planned, hoodLines } = hoodsByBlock(blocks);
+
     // What every plot is for.
-    const programme = assignProgramme(seed, d, blocks);
+    const programme = assignProgramme(seed, d, blocks, planned);
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
-    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme };
+    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines };
   }
 
   return { of };

@@ -11,9 +11,12 @@
 // Plot widths come from the kind of building and the street it faces: shops
 // and flats over them on a main street are narrower than a block of flats
 // on a quiet street; a terrace keeps one width along its run, as one builder
-// would have built it; podium plots in the core are wide. A long frontage of
-// a perimeter block gets a passage through to the courtyard. Plots that come
-// out too small or too thin are joined to the next.
+// would have built it; podium plots in the core are wide. A perimeter block
+// is not one solid ring: it is several buildings with gaps between them, at
+// least one on every street, open through to the courtyard, where a path runs
+// round along the backs of the buildings and paths cross the green to a
+// small square in the middle. Plots that come out too small or too thin are
+// joined to the next.
 
 import { insetUniform, selfCrosses } from '../util/offset.js';
 import { polygonArea } from '../util/geom.js';
@@ -25,8 +28,11 @@ export const PLOT_TYPES = {
   rowhouse: { depth: null, width: [5.2, 7.8], minArea: 90 },
   podium: { depth: 24, width: [30, 55], minArea: 600 },
 };
-const PASSAGE = 5; // metres: a walkway through to a courtyard
-const PASSAGE_RUN = 70; // a frontage at least this long gets one
+const GAP = [4.5, 6.5]; // metres: the gap between two buildings, open through to the courtyard
+const GAP_RUN = GAP[0]; // every frontage between corner buildings gets a gap
+const GAP_EVERY = 55; // and one more for about every this many metres
+const MAX_SPOKES = 6; // paths across a courtyard to the square in its middle
+const COURT_RING = 3.5; // metres: the path round a courtyard, along the backs of the buildings
 const BACK_STRIP = 2; // metres either side of the middle of a rowhouse block left as a shared strip
 const ROW_DEPTH = [16, 34]; // metres: a rowhouse plot's depth, from the street to the back strip
 const MIN_COURT = 0.12; // a courtyard smaller than this share of its block is not left open
@@ -144,20 +150,38 @@ function band(N, fronts, I, depth, widthOf, opts) {
       ws.push(w);
       filled += w;
     }
-    if (!ws.length) continue;
-    // A passage through to the courtyard, near the middle of a long run.
-    let passageAt = -1;
-    if (opts.passages && runLen >= PASSAGE_RUN && ws.length >= 3) {
-      passageAt = Math.floor(ws.length / 2);
-      ws.splice(passageAt, 0, PASSAGE);
+    if (!ws.length && runLen < GAP[0] * 2) continue;
+    // Gaps between the buildings, through to the courtyard: at least one on
+    // every frontage long enough, spread evenly between the buildings (a
+    // gap may sit next to a corner building). Each is GAP wide, unstretched.
+    const gaps = [];
+    if (opts.passages && runLen >= GAP_RUN) {
+      const want = Math.max(1, Math.round(runLen / GAP_EVERY));
+      for (let j = 1; j <= want; j++) {
+        const at = Math.round((j * ws.length) / (want + 1));
+        if (!gaps.some((g) => g.at === at)) gaps.push({ at, w: opts.gapWidth() });
+      }
+      // Keep the buildings from being squeezed: drop gaps until they fit,
+      // down to the one every frontage keeps (a building too narrow for it
+      // joins the corner building next to it).
+      const sumW = ws.reduce((a, b) => a + b, 0);
+      while (gaps.length > 1 && (runLen - gaps.reduce((a, g) => a + g.w, 0)) / (sumW || 1) < 0.7) gaps.pop();
+      if (!ws.length && gaps.length) gaps.length = 1;
     }
-    const stretch = runLen / ws.reduce((a, b) => a + b, 0);
+    const gapTotal = gaps.reduce((a, g) => a + g.w, 0);
+    const stretch = ws.length ? (runLen - gapTotal) / ws.reduce((a, b) => a + b, 0) : 1;
+    // The run as pieces in order: buildings and gaps.
+    const pieces = [];
+    for (let k = 0; k <= ws.length; k++) {
+      for (const g of gaps) if (g.at === k) pieces.push({ w: g.w, gap: true });
+      if (k < ws.length) pieces.push({ w: ws[k] * stretch, gap: false });
+    }
+    if (!pieces.length) continue;
     let s = s0;
-    cuts.push({ s: s0 });
-    for (let k = 0; k < ws.length; k++) {
-      s += ws[k] * (k === passageAt ? 1 : stretch);
-      if (k === passageAt) cuts[cuts.length - 1].passageNext = true;
-      if (k < ws.length - 1) cuts.push({ s });
+    cuts.push({ s: s0, passageNext: pieces[0].gap });
+    for (let k = 0; k < pieces.length; k++) {
+      s += pieces[k].w;
+      if (k < pieces.length - 1) cuts.push({ s, passageNext: pieces[k + 1].gap });
     }
     cuts.push({ s: s1 });
   }
@@ -168,7 +192,19 @@ function band(N, fronts, I, depth, widthOf, opts) {
     const t = unit(sub(N[(at.i + 1) % n], N[at.i]));
     const nrm = [-t[1], t[0]];
     const hit = rayToRing(at.p, nrm, depth * 2.5, I, cumI);
-    if (!hit || hit.d > depth * 1.8 || hit.d < depth * 0.4) continue;
+    if (hit && hit.d < depth * 0.4) continue;
+    if (!hit || hit.d > depth * 1.8) {
+      // The courtyard does not reach here (the inset lost this lobe of the
+      // block): the building still goes back its usual depth, or where the
+      // block is too narrow for that, back to back with the building on the
+      // other side, halfway across.
+      const far = rayToRing([at.p[0] + nrm[0] * 0.05, at.p[1] + nrm[1] * 0.05], nrm, depth * 2.5, N, cumN);
+      const back = far ? Math.min(depth, far.d / 2) : depth;
+      const q = [at.p[0] + nrm[0] * back, at.p[1] + nrm[1] * back];
+      if (back < 3 || !inside(N, q)) continue;
+      placed.push({ s: ((c.s % totalN) + totalN) % totalN, p: at.p, q, qs: null, passageNext: c.passageNext });
+      continue;
+    }
     placed.push({ s: ((c.s % totalN) + totalN) % totalN, p: at.p, q: hit.q, qs: hit.s, passageNext: c.passageNext });
   }
   placed.sort((a, b) => a.s - b.s);
@@ -178,6 +214,10 @@ function band(N, fronts, I, depth, widthOf, opts) {
     if (kept.length) {
       const prev = kept[kept.length - 1];
       if (c.s - prev.s < 0.5) continue;
+      if (c.qs === null || prev.qs === null) {
+        kept.push(c);
+        continue;
+      }
       const dq = (((c.qs - prev.qs) % cumI[I.length]) + cumI[I.length]) % cumI[I.length];
       if (dq > cumI[I.length] * 0.5) continue;
     }
@@ -187,44 +227,135 @@ function band(N, fronts, I, depth, widthOf, opts) {
   // Plots between consecutive cuts; small or thin ones join the next.
   const build = (a, b) => {
     const outer = [a.p, ...between(N, cumN, a.s, b.s), b.p];
-    const inner = [b.q, ...between(I, cumI, a.qs, b.qs).reverse(), a.q];
+    const inner = a.qs === null || b.qs === null ? [b.q, a.q] : [b.q, ...between(I, cumI, a.qs, b.qs).reverse(), a.q];
     return outer.concat(inner);
   };
   let list = kept;
   for (let round = 0; round < 8; round++) {
     const out = [];
-    const drop = new Set();
     for (let k = 0; k < list.length; k++) {
       const a = list[k];
       const b = list[(k + 1) % list.length];
       const pts = build(a, b);
       const area = polygonArea(pts);
       const front = ((b.s - a.s) % totalN + totalN) % totalN;
-      const passage = !!a.passageNext && front < PASSAGE * 1.5;
-      const ok = passage ? area > 10 : area >= opts.minArea && front >= opts.minFront && !selfCrosses(pts);
-      if (!ok) drop.add((k + 1) % list.length);
+      const passage = !!a.passageNext && front < GAP[1] * 1.5;
+      const ok = passage ? area > 10 && !selfCrosses(pts) : area >= opts.minArea && front >= opts.minFront && !selfCrosses(pts);
       // A corner plot has a corner of the block within its frontage.
       const corner = corners.some((c) => (((c.s - a.s) % totalN) + totalN) % totalN < front);
-      out.push({ pts, front, area, passage, corner, edge: pointAt(N, cumN, (a.s + front / 2) % totalN).i });
+      out.push({ pts, front, area, passage, corner, ok, edge: pointAt(N, cumN, (a.s + front / 2) % totalN).i, door: passage ? [(a.q[0] + b.q[0]) / 2, (a.q[1] + b.q[1]) / 2] : null });
     }
-    if (!drop.size || list.length - drop.size < 2) return out;
+    // A plot too small or thin joins a neighbouring building (not a gap) by
+    // dropping the cut between them; a bad gap is closed up.
+    const m = list.length;
+    const drop = new Set();
+    for (let k = 0; k < m; k++) {
+      if (out[k].ok) continue;
+      if (out[k].passage) {
+        drop.add(k);
+        continue;
+      }
+      const next = out[(k + 1) % m];
+      const prev = out[(k - 1 + m) % m];
+      if (!next.passage) drop.add((k + 1) % m);
+      else if (!prev.passage) drop.add(k);
+      else drop.add((k + 1) % m);
+    }
+    if (!drop.size) return out;
+    if (m - drop.size < 2) return null;
+    // A dropped cut that started a gap hands that on to nothing: the gap is
+    // gone. A dropped cut after a gap widens it into the building, so the
+    // gap's own start loses its mark instead.
+    for (const k of drop) {
+      const prevCut = list[(k - 1 + m) % m];
+      if (prevCut.passageNext && !drop.has((k - 1 + m) % m)) list[(k - 1 + m) % m] = { ...prevCut, passageNext: false };
+    }
     list = list.filter((_, k) => !drop.has(k));
   }
   return null;
 }
 
+// The public paths of a courtyard: a ring just inside the backs of the
+// buildings, joining every gap, and a path from each gap across the green to
+// a small square in the middle (when the middle can be reached straight).
+function courtyard(I, doors) {
+  const green = insetUniform(I, COURT_RING);
+  if (!green || polygonArea(green) < 60) return { green: null, spokes: [], hub: null };
+  let cx = 0;
+  let cy = 0;
+  let A = 0;
+  for (let i = 0; i < green.length; i++) {
+    const p = green[i];
+    const q = green[(i + 1) % green.length];
+    const c = p[0] * q[1] - q[0] * p[1];
+    A += c;
+    cx += (p[0] + q[0]) * c;
+    cy += (p[1] + q[1]) * c;
+  }
+  const hub = A ? [cx / (3 * A), cy / (3 * A)] : null;
+  if (!hub || !inside(green, hub)) return { green, spokes: [], hub: null };
+  const spokes = [];
+  for (const d of doors) {
+    let ok = true;
+    for (let t = 0.15; t < 1; t += 0.1) {
+      const q = [d[0] + (hub[0] - d[0]) * t, d[1] + (hub[1] - d[1]) * t];
+      if (!inside(I, q)) ok = false;
+    }
+    if (ok) spokes.push([d, hub]);
+  }
+  // At most a few paths across, spread round the courtyard.
+  if (spokes.length > MAX_SPOKES) {
+    spokes.sort((a, b) => Math.atan2(a[0][1] - hub[1], a[0][0] - hub[0]) - Math.atan2(b[0][1] - hub[1], b[0][0] - hub[0]));
+    const step = spokes.length / MAX_SPOKES;
+    const keep = [];
+    for (let k = 0; k < MAX_SPOKES; k++) keep.push(spokes[Math.floor(k * step)]);
+    spokes.length = 0;
+    spokes.push(...keep);
+  }
+  return spokes.length >= 2 ? { green, spokes, hub } : { green, spokes: [], hub: null };
+}
+
+function inside(P, q) {
+  let c = false;
+  for (let i = 0, j = P.length - 1; i < P.length; j = i++) {
+    const a = P[i];
+    const b = P[j];
+    if (a[1] > q[1] !== b[1] > q[1] && q[0] < ((b[0] - a[0]) * (q[1] - a[1])) / (b[1] - a[1]) + a[0]) c = !c;
+  }
+  return c;
+}
+
+// The direction of a polygon's long sides: the long side of its smallest
+// enclosing rectangle that lies along one of its edges. (The two points
+// farthest apart lie across a diagonal, which would cut a rectangle aslant.)
+function longAxis(N) {
+  let best = null;
+  for (let i = 0; i < N.length; i++) {
+    const e = sub(N[(i + 1) % N.length], N[i]);
+    if (len(e) < 1) continue;
+    const u = unit(e);
+    const v = [-u[1], u[0]];
+    let [u0, u1, v0, v1] = [Infinity, -Infinity, Infinity, -Infinity];
+    for (const p of N) {
+      const a = dot(p, u);
+      const b = dot(p, v);
+      u0 = Math.min(u0, a);
+      u1 = Math.max(u1, a);
+      v0 = Math.min(v0, b);
+      v1 = Math.max(v1, b);
+    }
+    const area = (u1 - u0) * (v1 - v0);
+    if (!best || area < best.area - 1e-6) best = { area, u: u1 - u0 >= v1 - v0 ? u : v };
+  }
+  return best ? best.u : [1, 0];
+}
+
 // Cut a block with no room for a courtyard straight across into plots; a
 // piece too small to build on joins its smaller neighbour.
 function slices(N, widthOf, front, minArea, wide) {
-  // Long axis from the two farthest-apart points' direction.
-  let a = 0;
-  let b = 0;
-  let best = 0;
-  for (let i = 0; i < N.length; i++) for (let j = i + 1; j < N.length; j++) {
-    const d = len(sub(N[i], N[j]));
-    if (d > best) [best, a, b] = [d, i, j];
-  }
-  const u = unit(sub(N[b], N[a]));
+  // Cut square to the block's long sides, not its diagonal.
+  const u = longAxis(N);
+  const a = 0;
   const proj = N.map((p) => dot(sub(p, N[a]), u));
   const lo = Math.min(...proj);
   const hi = Math.max(...proj);
@@ -315,14 +446,7 @@ function spine(N) {
     cx += p[0] / N.length;
     cy += p[1] / N.length;
   }
-  let a = 0;
-  let b = 0;
-  let best = 0;
-  for (let i = 0; i < N.length; i++) for (let j = i + 1; j < N.length; j++) {
-    const d = len(sub(N[i], N[j]));
-    if (d > best) [best, a, b] = [d, i, j];
-  }
-  const u = unit(sub(N[b], N[a]));
+  const u = longAxis(N);
   const v = [-u[1], u[0]];
   const c = [cx, cy];
   const proj = N.map((p) => dot(sub(p, c), u));
@@ -536,10 +660,14 @@ export function plotsOfBlock(N, fronts, use, W, rng) {
     if (I) {
       const plots = band(N, fronts, I, depth, widthOf, {
         passages: use !== 'rowhouse',
+        gapWidth: () => GAP[0] + (GAP[1] - GAP[0]) * rng.next(),
         minArea: type.minArea,
         minFront: use === 'rowhouse' ? type.width[0] * 0.8 : type.width[0] * 0.7,
       });
-      if (plots) return { plots: plots.map((p) => ({ ...p, kind: p.passage ? 'passage' : use, faces: fronts[p.edge] })), inner: I, depth };
+      if (plots) {
+        const court = use === 'rowhouse' ? null : courtyard(I, plots.filter((p) => p.passage).map((p) => p.door));
+        return { plots: plots.map(({ ok, door, ...p }) => ({ ...p, kind: p.passage ? 'passage' : use, faces: fronts[p.edge] })), inner: I, court, depth };
+      }
     }
     // No room for a courtyard: straight across.
     const front = fronts.find(onMain) || fronts[0];
