@@ -80,93 +80,115 @@ function tidy(pts, ds, tol = 0.05) {
 
 // Inset a clockwise polygon. `dist[i]` is the inset of the edge from pts[i]
 // to pts[i + 1]. Returns the inset polygon, or null if it collapses or
-// tangles. Edges that the inset swallows (short ones in tight corners) are
-// dropped.
+// tangles. Each edge becomes a line, moved in by its distance; corners are
+// where consecutive lines meet. An edge the inset swallows (a short one by a
+// corner, say) is dropped, and its neighbours meet directly instead.
 export function inset(pts0, dist0) {
-  let [pts, dist] = tidy(pts0, dist0);
-  for (let round = 0; round < 200; round++) {
-    const n = pts.length;
+  const [pts, dist] = tidy(pts0, dist0);
+  const n0 = pts.length;
+  if (n0 < 3) return null;
+  let lines = [];
+  for (let i = 0; i < n0; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % n0];
+    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (l < 1e-9) continue;
+    const t = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
+    const nrm = [-t[1], t[0]];
+    const d = dist[i];
+    lines.push({ t, a: [a[0] + nrm[0] * d, a[1] + nrm[1] * d], b: [b[0] + nrm[0] * d, b[1] + nrm[1] * d], d });
+  }
+  for (let round = 0; round < 400; round++) {
+    const n = lines.length;
     if (n < 3) return null;
-    const t = [];
-    const nrm = [];
-    for (let i = 0; i < n; i++) {
-      const a = pts[i];
-      const b = pts[(i + 1) % n];
-      const l = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
-      t.push([(b[0] - a[0]) / l, (b[1] - a[1]) / l]);
-      nrm.push([-(b[1] - a[1]) / l, (b[0] - a[0]) / l]);
-    }
-    // Offset line of edge i passes through pts[i] + nrm[i] * dist[i].
-    const base = (i) => [pts[i][0] + nrm[i][0] * dist[i], pts[i][1] + nrm[i][1] * dist[i]];
-    // Corner i joins edge i - 1 and edge i.
+    // Corner k joins line k - 1 and line k.
     const corner = [];
-    for (let i = 0; i < n; i++) {
-      const h = (i - 1 + n) % n;
-      const pa = [pts[i][0] + nrm[h][0] * dist[h], pts[i][1] + nrm[h][1] * dist[h]];
-      const pb = [pts[i][0] + nrm[i][0] * dist[i], pts[i][1] + nrm[i][1] * dist[i]];
-      // (Nearly straight on: the two offset points, averaged.)
-      const cr = t[h][0] * t[i][1] - t[h][1] * t[i][0];
-      const m = Math.abs(cr) < 0.05 ? null : lineMeet(base(h), t[h], base(i), t[i]);
+    for (let k = 0; k < n; k++) {
+      const h = lines[(k - 1 + n) % n];
+      const i = lines[k];
+      const cr = h.t[0] * i.t[1] - h.t[1] * i.t[0];
+      const m = Math.abs(cr) < 0.05 ? null : lineMeet(h.a, h.t, i.a, i.t);
       if (!m) {
-        corner.push([[(pa[0] + pb[0]) / 2, (pa[1] + pb[1]) / 2]]);
+        // Nearly straight on: halfway between where the one ends and the other starts.
+        corner.push([[(h.b[0] + i.a[0]) / 2, (h.b[1] + i.a[1]) / 2]]);
         continue;
       }
-      const reach = Math.hypot(m[0] - pts[i][0], m[1] - pts[i][1]);
-      const lim = MITRE * Math.max(dist[h], dist[i], 1e-9);
-      // A sharp corner of the block is cut off square to its bisector rather
-      // than left as a long thin point.
-      if (reach > lim && cr > 0) {
+      // A corner far out along a sharp point is cut off square to it.
+      const lim = MITRE * Math.max(h.d, i.d, 1e-9);
+      const reach = Math.min(Math.hypot(m[0] - h.b[0], m[1] - h.b[1]), Math.hypot(m[0] - i.a[0], m[1] - i.a[1])) + Math.max(h.d, i.d);
+      if (cr > 0 && reach > lim) {
         const c = Math.min((reach - lim) * 0.8, lim);
-        corner.push([[m[0] - t[h][0] * c, m[1] - t[h][1] * c], [m[0] + t[i][0] * c, m[1] + t[i][1] * c]]);
+        corner.push([[m[0] - h.t[0] * c, m[1] - h.t[1] * c], [m[0] + i.t[0] * c, m[1] + i.t[1] * c]]);
       } else {
         corner.push([m]);
       }
     }
-    // An edge whose inset runs backwards has been swallowed.
-    const gone = [];
-    for (let i = 0; i < n; i++) {
-      const a = corner[i][corner[i].length - 1];
-      const b = corner[(i + 1) % n][0];
-      if ((b[0] - a[0]) * t[i][0] + (b[1] - a[1]) * t[i][1] < 0) gone.push(i);
+    // A line whose stretch between its corners runs backwards is swallowed.
+    const gone = new Uint8Array(n);
+    let any = false;
+    for (let k = 0; k < n; k++) {
+      const s0 = corner[k][corner[k].length - 1];
+      const s1 = corner[(k + 1) % n][0];
+      if ((s1[0] - s0[0]) * lines[k].t[0] + (s1[1] - s0[1]) * lines[k].t[1] < 0) {
+        // (Never two side by side in one round.)
+        if (!gone[(k - 1 + n) % n]) {
+          gone[k] = 1;
+          any = true;
+        }
+      }
     }
-    if (!gone.length) {
+    if (gone[0] && gone[n - 1]) gone[n - 1] = 0;
+    if (!any) {
       const out = corner.flat();
-      if (out.length < 3 || selfCrosses(out)) {
-        if (globalThis.__off) globalThis.__off.push(out.length < 3 ? 'few' : 'crosses');
-        return null;
+      if (out.length < 3) return null;
+      if (!selfCrosses(out)) return out;
+      // Folded over where the shape narrows: keep its largest loop.
+      const loop = largestLoop(out);
+      return loop;
+    }
+    lines = lines.filter((_, k) => !gone[k]);
+  }
+  return null;
+}
+
+// A polygon that crosses itself, cut at its crossings into simple loops: the
+// largest one running clockwise, or null.
+function largestLoop(pts, depth = 0) {
+  const n = pts.length;
+  if (depth > 12 || n < 3) return null;
+  for (let i = 0; i < n; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    for (let j = i + 2; j < n; j++) {
+      if (i === 0 && j === n - 1) continue;
+      const c = pts[j];
+      const d = pts[(j + 1) % n];
+      if (!segsCross(a, b, c, d)) continue;
+      const r = [b[0] - a[0], b[1] - a[1]];
+      const q = [d[0] - c[0], d[1] - c[1]];
+      const t = ((c[0] - a[0]) * q[1] - (c[1] - a[1]) * q[0]) / (r[0] * q[1] - r[1] * q[0]);
+      const x = [a[0] + r[0] * t, a[1] + r[1] * t];
+      const one = [x, ...pts.slice(j + 1), ...pts.slice(0, i + 1)];
+      const two = [x, ...pts.slice(i + 1, j + 1)];
+      let best = null;
+      let bestArea = 0;
+      for (const part of [one, two]) {
+        const p = selfCrosses(part) ? largestLoop(part, depth + 1) : part;
+        if (!p) continue;
+        let s2 = 0;
+        for (let k = 0; k < p.length; k++) {
+          const u = p[k];
+          const v = p[(k + 1) % p.length];
+          s2 += u[0] * v[1] - v[0] * u[1];
+        }
+        if (s2 > bestArea) {
+          bestArea = s2;
+          best = p;
+        }
       }
-      return out;
-    }
-    // Remove the swallowed edges (no two side by side in one round): each
-    // one's two ends merge into one point.
-    const drop = new Uint8Array(n);
-    for (const i of gone) if (!drop[(i - 1 + n) % n] && !drop[(i + 1) % n]) drop[i] = 1;
-    const P = [];
-    const D = [];
-    for (let i = 0; i < n; i++) {
-      if (drop[(i - 1 + n) % n]) continue; // merged into the previous point
-      if (drop[i]) {
-        const j = (i + 1) % n;
-        P.push([(pts[i][0] + pts[j][0]) / 2, (pts[i][1] + pts[j][1]) / 2]);
-        D.push(dist[j]);
-      } else {
-        P.push(pts[i]);
-        D.push(dist[i]);
-      }
-    }
-    // (If the last edge was dropped, the first point was merged into it.)
-    if (drop[n - 1]) {
-      P.shift();
-      D.shift();
-    }
-    pts = P;
-    dist = D;
-    if (pts.length < 3) {
-      if (globalThis.__off) globalThis.__off.push('collapsed');
-      return null;
+      return best;
     }
   }
-  if (globalThis.__off) globalThis.__off.push('rounds');
   return null;
 }
 

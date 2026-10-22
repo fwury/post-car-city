@@ -28,7 +28,7 @@ import { keyInts } from './cores.js';
 import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
 import { planarFaces } from '../util/planar.js';
-import { inset, insetUniform } from '../util/offset.js';
+import { inset, insetUniform, selfCrosses as selfCrossing } from '../util/offset.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
 import { distToLine } from './boulevards.js';
@@ -57,6 +57,8 @@ const REMNANT = 0.12e4; // m², net: a block smaller than this is left green
 const STEP = 10; // metres between points of a new street
 const FORCED_MIN = 60; // metres: narrowest side of a park or school split off a site
 const SQUARE_MIN = 62; // metres, centreline: narrowest a square's block may be
+const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school takes
+const FALLBACK_REACH = 250; // metres from a centre a square may stand if none was found by it
 const EDGE_CELL = 4; // metres: the raster the greenway-side streets are found on
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
@@ -271,7 +273,6 @@ export function createBlocks(seed, { greenwayWidth }) {
       return true;
     };
     const supers = faces.filter((f) => signedArea(f.pts) > 200 && onLand(interiorPoint(f.pts)));
-    if (globalThis.__faces === d.key) globalThis.__facesOut = { faces, supers, lines };
 
     // ---- Sites ----
     // Distance to the nearest main street or boulevard, on the stage 3 raster.
@@ -297,9 +298,9 @@ export function createBlocks(seed, { greenwayWidth }) {
         if (k < 0 || hoods[k].core) continue;
         const p = [R.x0 + ((n % R.W) + 0.5) * R.cell, R.y0 + (Math.floor(n / R.W) + 0.5) * R.cell];
         const m = Math.min(fromMain[n], 400);
-        if (m < PARK_SITE_SET_BACK) continue;
+        // Well set back if it can be; a narrow neighbourhood takes what it has.
         const g = [acc[k][0] / acc[k][2], acc[k][1] / acc[k][2]];
-        const score = len(sub(p, g)) - 0.5 * m;
+        const score = len(sub(p, g)) - 0.5 * m + (m < PARK_SITE_SET_BACK ? 2000 + (PARK_SITE_SET_BACK - m) * 10 : 0);
         if (!best[k] || score < best[k].score) best[k] = { score, p };
       }
       best.forEach((b, k) => b && parkSite.set(k, b.p));
@@ -453,7 +454,6 @@ export function createBlocks(seed, { greenwayWidth }) {
       return [clean(A), clean(B)];
     }
 
-    const why = (k) => { if (globalThis.__why) globalThis.__why[k] = (globalThis.__why[k] || 0) + 1; };
     // The nearest place a ray from p along dir leaves the polygon.
     function rayExit(node, p, dir) {
       const P = node.pts;
@@ -468,6 +468,55 @@ export function createBlocks(seed, { greenwayWidth }) {
       return best;
     }
 
+    // Two blocks either side of one stretch of local street, joined into one
+    // (the stretch between them goes), or null if they do not share one.
+    function merge(A, B) {
+      const n = A.pts.length;
+      const m = B.pts.length;
+      const key = (p) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`;
+      const inB = new Map(B.pts.map((p, j) => [key(p), j]));
+      // Edges of A running backwards along B: A[i] -> A[i+1] is B[j+1] -> B[j].
+      const shared = new Uint8Array(n);
+      let count = 0;
+      for (let i = 0; i < n; i++) {
+        const j = inB.get(key(A.pts[(i + 1) % n]));
+        if (j === undefined) continue;
+        if (key(B.pts[(j + 1) % m]) === key(A.pts[i]) && A.tags[i].kind === 'local') {
+          shared[i] = 1;
+          count++;
+        }
+      }
+      if (!count) return null;
+      // One run only, from a corner to a corner.
+      let start = -1;
+      for (let i = 0; i < n; i++) if (shared[i] && !shared[(i - 1 + n) % n]) {
+        if (start >= 0) return null;
+        start = i;
+      }
+      if (start < 0) return null;
+      let end = start;
+      while (shared[(end + 1) % n]) end = (end + 1) % n;
+      // A: from the run's far end round to its start; B: the rest.
+      const pts = [];
+      const tags = [];
+      for (let i = (end + 1) % n; ; i = (i + 1) % n) {
+        pts.push(A.pts[i]);
+        tags.push(A.tags[i]);
+        if (i === start) break;
+      }
+      // At A[start] we cross into B, which runs on from there.
+      const jb = inB.get(key(A.pts[start]));
+      const je = inB.get(key(A.pts[(end + 1) % n]));
+      tags.pop();
+      for (let j = jb; ; j = (j + 1) % m) {
+        if (j !== jb) pts.push(B.pts[j]);
+        tags.push(B.tags[j]);
+        if ((j + 1) % m === je) break;
+      }
+      const out = clean({ pts, tags });
+      return signedArea(out.pts) > 0 && !selfCrossing(out.pts) ? out : null;
+    }
+
     // Try to split a node; returns its two children, or null.
     function split(node, ax, zone, opts = {}) {
       const size = BLOCK_SIZES[zone];
@@ -479,33 +528,33 @@ export function createBlocks(seed, { greenwayWidth }) {
       const final = size.long * size.short * 2.5;
       // One candidate cut from e1 to e2 (a carried-on street is already lined up at e1).
       function attempt(e1, e2, carried) {
-        if (e1.i === e2.i) { why('sameedge'); return null; }
-        if ((!carried && cornerDist(node, e1.i, e1.t) < CORNER_GAP) || cornerDist(node, e2.i, e2.t) < CORNER_GAP) { why('corner'); return null; }
+        if (e1.i === e2.i) return null;
+        if ((!carried && cornerDist(node, e1.i, e1.t) < CORNER_GAP) || cornerDist(node, e2.i, e2.t) < CORNER_GAP) return null;
         if (!carried) e1 = settleEnd(node, e1);
         e2 = e1 && settleEnd(node, e2);
-        if (!e1 || !e2 || e1.i === e2.i) { why('jog'); return null; }
+        if (!e1 || !e2 || e1.i === e2.i) return null;
         const p1 = at(node, e1.i, e1.t);
         const p2 = at(node, e2.i, e2.t);
         const n1 = inward(node, e1.i);
         const n2 = inward(node, e2.i);
         const ch = unit(sub(p2, p1));
         // Heading across, and not bending round much between its ends.
-        if (dot(n1, ch) < 0.5 || -dot(n2, ch) < 0.5 || -dot(n1, n2) < 0.57) { why('oblique'); return null; }
+        if (dot(n1, ch) < 0.5 || -dot(n2, ch) < 0.5 || -dot(n1, n2) < 0.57) return null;
         const pts = curve(p1, n1, p2, n2);
-        if (!gentle(pts)) { why('bend'); return null; }
-        if (!inside(node, pts)) { why('outside'); return null; }
+        if (!gentle(pts)) return null;
+        if (!inside(node, pts)) return null;
         const tag = street(opts.kind ?? 'local', opts.width ?? (zone === 'podium' ? CORE_CROSS : LOCAL));
         const kids = cut(node, e1, e2, pts, tag);
         if (kids.some((k) => k.pts.length < 3 || signedArea(k.pts) <= 0)) return null;
         if (opts.force) {
           // Even a forced split leaves both sides usable.
-          if (kids.some((k) => axes(k.pts).W < FORCED_MIN)) { why('kids'); return null; }
+          if (kids.some((k) => axes(k.pts).W < FORCED_MIN)) return null;
         } else {
           for (const k of kids) {
             const a = axes(k.pts);
             // Deeper where a wide street takes more of the block.
             const wide = k.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard') ? 18 : 0;
-            if (a.W < size.min + wide || a.L < (size.minLong ?? size.min) || (a.area < final && a.area / (a.L * a.W) < 0.55)) { why('kids'); return null; }
+            if (a.W < size.min + wide || a.L < (size.minLong ?? size.min) || (a.area < final && a.area / (a.L * a.W) < 0.55)) return null;
           }
         }
         meet(node.tags[e1.i], p1);
@@ -561,7 +610,7 @@ export function createBlocks(seed, { greenwayWidth }) {
             const c = [ax.c[0] + pos[0] * (lo + (hi - lo) * t), ax.c[1] + pos[1] * (lo + (hi - lo) * t)];
             const dir = [dir0[0] * Math.cos(j) - dir0[1] * Math.sin(j), dir0[0] * Math.sin(j) + dir0[1] * Math.cos(j)];
             const r = exits(node, c, dir);
-            if (!r) { why('noexit'); continue; }
+            if (!r) continue;
             // Straight across, or leaving square from either end.
             const tries = [r];
             for (const [e, other] of [[r[0], 1], [r[1], 0]]) {
@@ -689,18 +738,89 @@ export function createBlocks(seed, { greenwayWidth }) {
         }
         const kids = split(node, ax, zone);
         if (kids) next.push(...kids);
-        else {
-          leaves.push({ ...node, ax, zone, stuck: true });
-          if (globalThis.__stuck) {
-            const runs = [];
-            node.tags.forEach((t, i) => { if (!runs.length || runs[runs.length - 1].t !== t) runs.push({ t, n: 0, l: 0 }); const r = runs[runs.length - 1]; r.n++; r.l += len(sub(node.pts[(i + 1) % node.pts.length], node.pts[i])); });
-            globalThis.__stuck.push({ area: ax.area, L: ax.L, W: ax.W, zone, runs: runs.map((r) => r.t.kind + r.t.id + ':' + Math.round(r.l)).join(' ') });
-          }
-        }
+        else leaves.push({ ...node, ax, zone, stuck: true });
       }
       queue = next;
     }
     for (const node of queue) leaves.push({ ...node, ax: axes(node.pts), zone: zoneOf(node, axes(node.pts)), stuck: true });
+
+    // ---- Fallbacks ----
+    // Every leaf a plain block, of the land kinds.
+    const plain = (lf) => !lf.use && (lf.zone === 'perimeter' || lf.zone === 'rowhouse' || lf.zone === 'podium');
+    // A square on the main street near the centre, if splitting found none.
+    for (const h of hoods) {
+      if (squareOf.has(h.id)) continue;
+      let best = null;
+      for (const lf of leaves) {
+        if (!plain(lf) || lf.ax.area < SQUARE_AREA[0] * 0.7 || lf.ax.area > SQUARE_AREA[1] * 1.3 || lf.ax.W < SQUARE_MIN * 0.9) continue;
+        if (len(sub(lf.ax.c, h.centre)) > FALLBACK_REACH + 150) continue;
+        let r = Infinity;
+        lf.tags.forEach((t, i) => {
+          if (t.kind !== 'main' && t.kind !== 'boulevard') return;
+          r = Math.min(r, distToLine(h.centre[0], h.centre[1], [lf.pts[i], lf.pts[(i + 1) % lf.pts.length]]));
+        });
+        if (r > FALLBACK_REACH) continue;
+        if (!best || r < best.r) best = { r, lf };
+      }
+      if (best) {
+        best.lf.use = 'square';
+        best.lf.hood = h.id;
+        squareOf.set(h.id, best.lf);
+      }
+    }
+    // A park near its site, if splitting found none: the best block there,
+    // joined with its neighbour across a local street if it is small.
+    for (const [k, site] of parkSite) {
+      if (parkOf.has(k)) continue;
+      let best = null;
+      for (const lf of leaves) {
+        if (!plain(lf) || lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard')) continue;
+        const r = len(sub(lf.ax.c, site));
+        if (r > 400) continue;
+        const score = r - Math.min(lf.ax.area, 3e4) / 60;
+        if (!best || score < best.score) best = { score, lf };
+      }
+      if (!best) continue;
+      let park = best.lf;
+      if (park.ax.area < PARK_PAIR_AREA[0] * 0.55) {
+        let mate = null;
+        for (const lf of leaves) {
+          if (lf === park || !plain(lf) || lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard')) continue;
+          const joined = merge(park, lf);
+          if (joined && (!mate || lf.ax.area > mate.lf.ax.area)) mate = { lf, joined };
+        }
+        if (mate) {
+          mate.lf.use = 'merged';
+          park.pts = mate.joined.pts;
+          park.tags = mate.joined.tags;
+          park.ax = axes(park.pts);
+        }
+      }
+      park.use = 'park';
+      park.hood = k;
+      parkOf.set(k, park);
+    }
+    for (let i = leaves.length - 1; i >= 0; i--) if (leaves[i].use === 'merged') leaves.splice(i, 1);
+    // A secondary school by each park that has none.
+    const schools = new Set(leaves.filter((lf) => lf.use === 'school').map((lf) => lf.hood));
+    for (const [k, park] of parkOf) {
+      if (schools.has(k)) continue;
+      const parkPts = new Set(park.pts.map((p) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`));
+      let best = null;
+      for (const lf of leaves) {
+        if (!plain(lf) || lf.ax.area < SCHOOL_AREA || lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard')) continue;
+        const r = len(sub(lf.ax.c, park.ax.c));
+        if (r > 450) continue;
+        // Across a street from the park if it can be.
+        const touches = lf.pts.some((p) => parkPts.has(`${p[0].toFixed(3)},${p[1].toFixed(3)}`));
+        const score = r - (touches ? 300 : 0);
+        if (!best || score < best.score) best = { score, lf };
+      }
+      if (best) {
+        best.lf.use = 'school';
+        best.lf.hood = k;
+      }
+    }
 
     // A local street off each square becomes a pedestrian street.
     for (const [, sqNode] of squareOf) {
@@ -758,10 +878,12 @@ export function createBlocks(seed, { greenwayWidth }) {
         seen.add(k1);
         keep.push([a, b]);
       }
-      local.push({ kind: tag.kind, width: tag.w, segs: keep });
+      local.push({ id: tag.id, kind: tag.kind, width: tag.w, segs: keep });
     }
 
-    return { blocks, streets: local, supers: supers.length, parkSites: [...parkSite.values()] };
+    // The streets along greenways and parks, as centreline loops.
+    const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
+    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()] };
   }
 
   return { of };
