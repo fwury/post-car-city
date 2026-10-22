@@ -1,4 +1,4 @@
-// Draws districts: cores, boulevards, greenways, streams and district parks.
+// Draws districts: cores, neighbourhoods, boulevards and main streets, greenways and district parks.
 // Shared by the main thread (close zoom, drawn straight to screen) and the
 // tile workers (far zoom, drawn into cached tiles).
 //
@@ -15,6 +15,7 @@ const TRAM_WIDTH = 7;
 export const MAIN_STREET_MIN_ZOOM = 0.02;
 const TRAM_MIN_ZOOM = 0.2;
 import { palette } from './styles.js';
+import { drawBlocks } from './blockLayer.js';
 
 export const LOD_STEPS = [
   [0.4, 25],
@@ -47,7 +48,6 @@ function pathsFor(world, d, segLen) {
     core: new Path2D(),
     greenFill: [],
     greenLines: new Path2D(),
-    streams: new Path2D(),
     parks: new Path2D(),
     ring: new Path2D(),
   };
@@ -65,7 +65,6 @@ function pathsFor(world, d, segLen) {
     p.greenFill.push(path);
   }
   for (const line of g.edgeLines) addPoly(p.greenLines, line, ox, oy, false);
-  for (const s of g.streams) addPoly(p.streams, s, ox, oy, false);
   for (const pk of d.parks) {
     addPoly(p.parks, pk.shape, ox, oy, true);
   }
@@ -154,6 +153,8 @@ export function drawDistricts(ctx, view, world, layers) {
     }
   }
 
+  if (layers.blocks) drawBlocks(ctx, view, world, items, place);
+
   if (layers.streets) {
     const net = world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s);
     const lines = net.lines.map((b) => ({ b, path: boulevardPath(b) }));
@@ -216,15 +217,6 @@ export function drawDistricts(ctx, view, world, layers) {
         place(d);
         ctx.stroke(p.greenLines);
       }
-    }
-  }
-
-  if (layers.water && zoom >= 0.03) {
-    ctx.strokeStyle = palette.water;
-    ctx.lineWidth = Math.max(6, px(1));
-    for (const { d, p } of items) {
-      place(d);
-      ctx.stroke(p.streams);
     }
   }
 

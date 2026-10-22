@@ -79,7 +79,7 @@ export function createNoiseTileBuilder(getSeed, res = 96) {
 export function createDistrictTileBuilder({ pool, getWorld, getLayers, res = 512 }) {
   const layersFor = () => {
     const L = getLayers();
-    return { cores: L.cores, streets: L.streets, green: L.green, water: L.water, outlines: L.outlines, neighbourhoods: L.neighbourhoods };
+    return { cores: L.cores, streets: L.streets, green: L.green, outlines: L.outlines, neighbourhoods: L.neighbourhoods };
   };
   const local = (tile) => {
     const canvas = makeCanvas(res, res);
@@ -159,7 +159,7 @@ export class Renderer {
     } else {
       this.mode = 'vector';
       const b = camera.bounds();
-      const view = { x0: b.x0, y0: b.y0, s: camera.zoom * this.dpr, w: this.canvas.width, h: this.canvas.height, zoom: camera.zoom, pr: this.dpr };
+      const view = { x0: b.x0, y0: b.y0, s: camera.zoom * this.dpr, w: this.canvas.width, h: this.canvas.height, zoom: camera.zoom, pr: this.dpr, blocks: this.blocksFor };
       const items = drawDistricts(ctx, view, this.getWorld(), L);
       if (L.outlines) drawDistrictOutlines(ctx, view, items);
       this.resetTransform();

@@ -22,6 +22,7 @@ import { createParks } from './parks.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
 export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
+import { createBlocks } from './blocks.js';
 import { createGrowth, PARCEL } from './growth.js';
 import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf, simplify, chaikin, resample } from '../util/geom.js';
 
@@ -29,6 +30,7 @@ export const CORE_RADIUS = 380; // about 0.45 km²
 export const GREENWAY_MIN = 50;
 export const GREENWAY_MAX = 160;
 export const BOULEVARD_WIDTH = STREET_TYPES.boulevard.width;
+const CORE_CLEAR = 300; // greenways keep this far from a station
 const DISTRICT_REACH = 7000; // no district extends further than this from its core
 const DISTRICT_SEARCH = 5500; // cores this far outside a view can still reach into it
 const SMOOTHING = 4; // Chaikin passes on boundaries
@@ -122,7 +124,6 @@ export function createWorld(seed) {
     return warpFine(p[0], p[1], p);
   };
   const widthNoise = createNoise(seed, 'greenway-width');
-  const meanderNoise = createNoise(seed, 'stream-meander');
 
   const bases = new LruCache(12000);
   const districts = new LruCache(12000);
@@ -265,7 +266,7 @@ export function createWorld(seed) {
         if (!loop) {
           for (const jk of [c.keys[0], c.keys[c.keys.length - 1]]) {
             if (!junctions.has(jk)) {
-              const [x, y] = detail(...pointPos(jk));
+              const [x, y] = clearOfCores(...pointPos(jk));
               junctions.set(jk, { key: jk, x, y });
             }
           }
@@ -332,7 +333,7 @@ export function createWorld(seed) {
       for (let s = 0; s < SMOOTHING; s++) pts = chaikin(pts, loop);
       if (loop) pts.push(pts[0]);
       pts = resample(pts, SMOOTH_SPACING);
-      pts = pts.map(([x, y]) => detail(x, y));
+      pts = pts.map(([x, y]) => clearOfCores(x, y));
       const shaped = straightRuns(pts, rngFor(seed, 'greenway-runs', hashString(key)));
       pts = resample(shaped.points, FINE_SPACING);
       const first = canon[0];
@@ -342,7 +343,6 @@ export function createWorld(seed) {
         points: pts,
         runs: shaped.runs,
         first,
-        stream: toUnit(hash(seed, 'stream', ...pts[0].map(Math.round), pts.length)) < 0.5,
         // Points running from `start` (orientation only matters for open stretches).
         oriented(start) {
           return start === first ? pts : pts.slice().reverse();
@@ -353,7 +353,7 @@ export function createWorld(seed) {
             const line = [];
             for (let i = 0; i < pts.length - 1; i += step) line.push(pts[i]);
             line.push(pts[pts.length - 1]);
-            l = { line, strip: greenwayStrip(line), stream: this.stream && line.length > 3 ? streamLine(line) : null };
+            l = { line, strip: greenwayStrip(line) };
             lods.set(step, l);
           }
           return l;
@@ -362,6 +362,33 @@ export function createWorld(seed) {
       chains.set(key, g);
     }
     return g;
+  }
+
+  // Warping can carry a boundary over a station in a small district. Near a
+  // core the warp fades out, so the boundary keeps to its smoothed parcel
+  // line (which has the core on the right side), and is then eased outwards
+  // to keep CORE_CLEAR from the station. Both depend only on the point, so
+  // chains and the junctions at their ends move alike.
+  function clearOfCores(x, y) {
+    const R = 2 * CORE_CLEAR;
+    const near = cores.coresInRect(x - R, y - R, x + R, y + R);
+    const w = detail(x, y);
+    let f = 1;
+    for (const c of near) {
+      const t = Math.min(1, Math.max(0, (Math.hypot(x - c.x, y - c.y) - CORE_CLEAR) / CORE_CLEAR));
+      f = Math.min(f, t * t * (3 - 2 * t));
+    }
+    let p = [x + (w[0] - x) * f, y + (w[1] - y) * f];
+    for (const c of near) {
+      const dx = p[0] - c.x;
+      const dy = p[1] - c.y;
+      const r = Math.hypot(dx, dy);
+      if (r >= R || r < 1e-9) continue;
+      // r -> CORE_CLEAR at the core, unchanged at R, and never reordered.
+      const k = (r + ((R - r) ** 2 * CORE_CLEAR) / (R * R)) / r;
+      p = [c.x + dx * k, c.y + dy * k];
+    }
+    return p;
   }
 
   // Width varies slowly along a greenway, with small swells and pinches on top.
@@ -382,14 +409,6 @@ export function createWorld(seed) {
       right.push([x - normals[i][0] * h, y - normals[i][1] * h]);
     }
     return left.concat(right.reverse());
-  }
-
-  function streamLine(line) {
-    const normals = polylineNormals(line);
-    return line.map(([x, y], i) => {
-      const m = meanderNoise.fbm(x / 420, y / 420, 2) * greenwayWidth(x, y) * 0.32;
-      return [x + normals[i][0] * m, y + normals[i][1] * m];
-    });
   }
 
   function baseOf(key) {
@@ -432,15 +451,13 @@ export function createWorld(seed) {
     const step = Math.max(1, Math.round(segLen / FINE_SPACING));
     const edgeLines = [];
     const strips = [];
-    const streams = [];
     for (const c of d.chains) {
       const l = c.geo.lod(step);
       edgeLines.push(l.line);
       strips.push(l.strip);
-      if (l.stream) streams.push(l.stream);
     }
     const junctions = d.junctions.map((j) => ({ x: j.x, y: j.y, r: greenwayWidth(j.x, j.y) / 2 }));
-    g = { segLen, ring: d.ring, edgeLines, strips, junctions, streams };
+    g = { segLen, ring: d.ring, edgeLines, strips, junctions };
     d.lods.set(segLen, g);
     return g;
   }
@@ -519,8 +536,12 @@ export function createWorld(seed) {
     return d;
   }
 
+  // Stage 4: local streets and blocks, worked out only when wanted.
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y) });
+
   return {
     seed, cores, growth, boulevards,
+    blocks: (d) => blocks.of(d),
     district, base, lod, districtsInRect, boulevardsInRect, boulevardDistance, districtAt, greenwayWidth,
     // Stage 3: neighbourhoods and main streets of a district.
     neighbourhoods: (d) => d.stage3,
