@@ -1,0 +1,99 @@
+// Run with: node --test
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { seedFromText } from '../src/core/hash.js';
+import { createWorld } from '../src/world/districts.js';
+import { USES, EVERYDAY, EVERYDAY_REACH, NEIGHBOURHOOD_LIST } from '../src/world/uses.js';
+
+const world = createWorld(seedFromText('1'));
+const districts = world.districtsInRect(3000, 3000, 5500, 5500).slice(0, 2);
+const plotsOf = (d) => world.blocks(d).blocks.flatMap((b) => b.plots || []);
+const near = (a, b, r) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= r;
+const has = (p, use) => p.dedicated === use || p.ground === use || p.upper === use;
+const homes = (plots) => plots.filter((p) => p.dwellings > 0);
+
+test('every neighbourhood has its square, park, schools and civic buildings', () => {
+  for (const d of districts) {
+    const plots = plotsOf(d);
+    for (const h of d.stage3.hoods) {
+      const here = plots.filter((p) => p.hood === h.id);
+      const count = (use) => here.filter((p) => has(p, use)).length;
+      assert.equal(count(h.core ? 'districtPlaza' : 'market'), 1, `${h.key}: square`);
+      if (h.core) continue;
+      assert.equal(count('neighbourhoodPark'), 1, `${h.key}: park`);
+      assert.equal(count('secondarySchool'), 1, `${h.key}: secondary school`);
+      assert.ok(count('elementarySchool') >= 1, `${h.key}: no elementary school`);
+      const worship = here.filter((p) => p.dedicated && USES[p.dedicated].cat === 'worship').length;
+      assert.ok(worship >= 2, `${h.key}: ${worship} places of worship`);
+    }
+  }
+});
+
+test("each neighbourhood's list is along its main streets, close to its square", () => {
+  for (const d of districts) {
+    const plots = plotsOf(d);
+    const squares = world.blocks(d).blocks.filter((b) => b.use === 'square');
+    for (const h of d.stage3.hoods) {
+      const sq = squares.find((b) => b.hood === h.id);
+      const at = sq ? sq.plots[0].c : h.centre;
+      for (const [use] of NEIGHBOURHOOD_LIST) {
+        assert.ok(plots.some((p) => has(p, use) && near(p.c, at, 1000)), `${h.key}: no ${USES[use].label.toLowerCase()} within 1 km of its square`);
+      }
+    }
+  }
+});
+
+test('every home is around the corner from its everyday needs', () => {
+  for (const d of districts) {
+    const plots = plotsOf(d);
+    const list = homes(plots);
+    for (const use of EVERYDAY) {
+      const at = plots.filter((p) => has(p, use)).map((p) => p.c);
+      let ok = 0;
+      for (const p of list) if (at.some((q) => near(q, p.c, EVERYDAY_REACH))) ok++;
+      assert.ok(ok >= list.length * 0.98, `${d.key}: only ${((100 * ok) / list.length).toFixed(1)}% of homes within ${EVERYDAY_REACH} m of a ${USES[use].label.toLowerCase()}`);
+    }
+  }
+});
+
+test('quiet streets stay quiet; rowhouse streets have their parkettes', () => {
+  const loud = ['pub', 'liveMusic', 'nightclub', 'restaurant', 'karaoke', 'arcade', 'comedy'];
+  for (const d of districts) {
+    const plots = plotsOf(d);
+    for (const p of plots) {
+      if (p.cls === 'main' || p.cls === 'podium') continue;
+      assert.ok(!loud.includes(p.ground), `${USES[p.ground] && USES[p.ground].label} off a main street in ${d.key}`);
+    }
+    const houses = plots.filter((p) => p.cls === 'house');
+    const parkettes = plots.filter((p) => p.dedicated === 'parkette').map((p) => p.c);
+    if (houses.length < 200) continue;
+    let ok = 0;
+    for (const p of houses) if (parkettes.filter((q) => near(q, p.c, 400)).length >= 3) ok++;
+    assert.ok(ok >= houses.length * 0.8, `${d.key}: only ${((100 * ok) / houses.length).toFixed(0)}% of rowhouses have three parkettes within 400 m`);
+  }
+});
+
+test('subdistrict centres and the district core have their own', () => {
+  for (const d of districts) {
+    const plots = plotsOf(d);
+    const b = world.blocks(d);
+    const rest = d.stage3.hoods.length - 1;
+    assert.ok(Math.abs(b.programme.subdistricts.length - rest / 3) <= 1, `${d.key}: ${b.programme.subdistricts.length} subdistrict centres for ${rest} neighbourhoods`);
+    for (const use of ['library', 'fireStation', 'recCentre', 'performingArts']) {
+      assert.ok(plots.filter((p) => has(p, use)).length >= b.programme.subdistricts.length, `${d.key}: too few ${USES[use].label.toLowerCase()}s`);
+    }
+    for (const use of ['police', 'districtLibrary', 'hotel', 'officeTower', 'hospital', 'museum']) {
+      assert.ok(plots.some((p) => has(p, use)), `${d.key}: no ${USES[use].label.toLowerCase()}`);
+    }
+  }
+});
+
+test('the homes built house each neighbourhood about as many people as planned', () => {
+  for (const d of districts) {
+    const housed = world.blocks(d).programme.housed;
+    for (const h of d.stage3.hoods) {
+      const r = housed[h.id] / h.population;
+      assert.ok(r > 0.75 && r < 1.25, `${h.key}: planned for ${h.population}, housing ${housed[h.id]}`);
+    }
+  }
+});

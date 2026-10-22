@@ -203,7 +203,9 @@ function band(N, fronts, I, depth, widthOf, opts) {
       const passage = !!a.passageNext && front < PASSAGE * 1.5;
       const ok = passage ? area > 10 : area >= opts.minArea && front >= opts.minFront && !selfCrosses(pts);
       if (!ok) drop.add((k + 1) % list.length);
-      out.push({ pts, front, area, passage, edge: pointAt(N, cumN, (a.s + front / 2) % totalN).i });
+      // A corner plot has a corner of the block within its frontage.
+      const corner = corners.some((c) => (((c.s - a.s) % totalN) + totalN) % totalN < front);
+      out.push({ pts, front, area, passage, corner, edge: pointAt(N, cumN, (a.s + front / 2) % totalN).i });
     }
     if (!drop.size || list.length - drop.size < 2) return out;
     list = list.filter((_, k) => !drop.has(k));
@@ -483,7 +485,7 @@ function terraces(N, fronts, widthOf) {
       if (k > 0) pts.push(a.q);
       const area = polygonArea(pts);
       if (area < 20) continue;
-      plots.push({ pts, area, front: b.s - a.s, end: k === 0 || k === placed.length - 2, faces: front });
+      plots.push({ pts, area, front: b.s - a.s, corner: k === 0 || k === placed.length - 2, faces: front });
     }
   }
   return plots.length ? plots : fail('none');
@@ -509,7 +511,7 @@ export function plotsOfBlock(N, fronts, use, W, rng) {
     };
     if (use === 'rowhouse') {
       const t = terraces(N, fronts, widthOf);
-      if (t && t.every((p) => !selfCrosses(p.pts))) return { plots: t.map((p) => ({ ...p, kind: p.end ? 'corner' : 'rowhouse' })), inner: null, depth: null };
+      if (t && t.every((p) => !selfCrosses(p.pts))) return { plots: t.map((p) => ({ ...p, kind: 'rowhouse' })), inner: null, depth: null };
     }
     let depth;
     let I = null;
@@ -543,7 +545,7 @@ export function plotsOfBlock(N, fronts, use, W, rng) {
     const front = fronts.find(onMain) || fronts[0];
     const cut = slices(N, widthOf, front, use === 'podium' ? type.minArea * 2 : type.minArea * 1.5, use === 'podium' ? 1 : 1.4);
     const plots = cut.length ? cut : [{ pts: N, area: polygonArea(N), front: 0 }];
-    return { plots: plots.map((p) => ({ ...p, kind: use, faces: front })), inner: null, depth: null };
+    return { plots: plots.map((p, k) => ({ ...p, kind: use, faces: front, corner: k === 0 || k === plots.length - 1 })), inner: null, depth: null };
   }
   // Squares, parks, schools, campuses and greens are one plot each.
   return { plots: [{ pts: N, area: polygonArea(N), front: 0, kind: use, faces: fronts[0] }], inner: null, depth: null };

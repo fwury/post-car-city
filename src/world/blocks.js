@@ -30,6 +30,7 @@ import { STREET_TYPES } from './streetTypes.js';
 import { planarFaces } from '../util/planar.js';
 import { insetWithSources, selfCrosses as selfCrossing } from '../util/offset.js';
 import { plotsOfBlock } from './plots.js';
+import { assignProgramme } from './programme.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
 import { distToLine } from './boulevards.js';
@@ -56,6 +57,7 @@ const PARK_SHARE = 0.62; // of that pair, the park's share
 const PARK_SITE_SET_BACK = 150; // metres a park's site keeps from main streets
 const REMNANT = 0.12e4; // m², net: a block smaller than this is left green
 const STEP = 10; // metres between points of a new street
+const CAMPUS_SHARE = 0.45; // of a campus neighbourhood's land, the campus itself
 const FORCED_MIN = 60; // metres: narrowest side of a park or school split off a site
 const SQUARE_MIN = 62; // metres, centreline: narrowest a square's block may be
 const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school takes
@@ -318,7 +320,8 @@ export function createBlocks(seed, { greenwayWidth }) {
     };
     const zoneOf = (node, ax) => {
       const h = hoodAt(ax.c);
-      if (h && h.campus) return 'campus';
+      // A campus takes the middle of its neighbourhood; homes round it.
+      if (h && h.campus && len(sub(ax.c, h.centre)) < Math.sqrt((CAMPUS_SHARE * h.area) / Math.PI)) return 'campus';
       if (h && h.core && len(sub(ax.c, d.station)) < d.coreReach * 1.25) return 'podium';
       const dn = densityAt(ax.c);
       if (dn >= 22000) return 'perimeter';
@@ -754,7 +757,8 @@ export function createBlocks(seed, { greenwayWidth }) {
       if (squareOf.has(h.id)) continue;
       let best = null;
       for (const lf of leaves) {
-        if (!plain(lf) || lf.ax.area < SQUARE_AREA[0] * 0.7 || lf.ax.area > SQUARE_AREA[1] * 1.3 || lf.ax.W < SQUARE_MIN * 0.9) continue;
+        // (On a campus, its own square.)
+        if (!(plain(lf) || (!lf.use && lf.zone === 'campus')) || lf.ax.area < SQUARE_AREA[0] * 0.7 || lf.ax.area > SQUARE_AREA[1] * 1.3 || lf.ax.W < SQUARE_MIN * 0.9) continue;
         if (len(sub(lf.ax.c, h.centre)) > FALLBACK_REACH + 150) continue;
         let r = Infinity;
         lf.tags.forEach((t, i) => {
@@ -811,7 +815,7 @@ export function createBlocks(seed, { greenwayWidth }) {
       let best = null;
       for (const lf of leaves) {
         if (!plain(lf) || lf.ax.area < SCHOOL_AREA || lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard')) continue;
-        const r = len(sub(lf.ax.c, park.ax.c));
+        const r = len(sub(lf.ax.c, (park.ax || axes(park.pts)).c));
         if (r > 450) continue;
         // Across a street from the park if it can be.
         const touches = lf.pts.some((p) => parkPts.has(`${p[0].toFixed(3)},${p[1].toFixed(3)}`));
@@ -919,9 +923,12 @@ export function createBlocks(seed, { greenwayWidth }) {
       local.push({ id: tag.id, kind, width, segs: keep });
     }
 
+    // What every plot is for.
+    const programme = assignProgramme(seed, d, blocks);
+
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
-    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()] };
+    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme };
   }
 
   return { of };
