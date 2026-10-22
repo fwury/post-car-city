@@ -173,3 +173,27 @@ test('local streets never dead-end, and meet other streets square on', () => {
     assert.ok(oblique <= ends * 0.03, `${d.key}: ${oblique} of ${ends} local street ends meet another street at a slant`);
   }
 });
+
+test('plots fill their blocks, front their streets, and are sound shapes', () => {
+  let plots = 0;
+  let sharp = 0;
+  const widths = { perimeter: [], rowhouse: [] };
+  for (const d of districts.slice(0, 2)) {
+    for (const k of blocksOf(d).blocks) {
+      if (!k.plots || !['perimeter', 'rowhouse', 'podium'].includes(k.use)) continue;
+      // Plots and courtyard together are the block.
+      const sum = k.plots.reduce((s, p) => s + polygonArea(p.pts), 0) + (k.inner ? polygonArea(k.inner) : 0);
+      assert.ok(Math.abs(sum - k.area) < k.area * 0.03, `a ${k.use} block in ${d.key} is ${((100 * sum) / k.area).toFixed(0)}% plots`);
+      for (const p of k.plots) {
+        plots++;
+        if (p.kind !== 'passage' && minCorner(p.pts) < 30) sharp++;
+        if (widths[p.kind]) widths[p.kind].push(p.front);
+      }
+    }
+  }
+  assert.ok(sharp <= plots * 0.01, `${sharp} of ${plots} plots have a corner under 30°`);
+  const median = (l) => l.sort((a, b) => a - b)[l.length >> 1];
+  // Terraced houses about 5 to 8 m wide; flats over shops and blocks of flats wider.
+  assert.ok(median(widths.rowhouse) > 5 && median(widths.rowhouse) < 8, `houses ${median(widths.rowhouse).toFixed(1)} m wide`);
+  assert.ok(median(widths.perimeter) > 11 && median(widths.perimeter) < 24, `perimeter plots ${median(widths.perimeter).toFixed(1)} m wide`);
+});

@@ -16,7 +16,7 @@ self.onmessage = (e) => {
       const d = world.districtsInRect(x - 1, y - 1, x + 1, y + 1).find((q) => q.key === e.data.key);
       const b = world.blocks(d);
       const result = {
-        blocks: b.blocks.map(({ pts, use, hood, front }) => ({ pts, use, hood, front })),
+        blocks: b.blocks.map(({ pts, use, hood, front, inner, plots }) => ({ pts, use, hood, front, inner, plots: plots && plots.map(({ pts: q, kind }) => ({ pts: q, kind })) })),
         streets: b.streets,
       };
       self.postMessage({ id, result });

@@ -28,7 +28,8 @@ import { keyInts } from './cores.js';
 import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
 import { planarFaces } from '../util/planar.js';
-import { inset, insetUniform, selfCrosses as selfCrossing } from '../util/offset.js';
+import { insetWithSources, selfCrosses as selfCrossing } from '../util/offset.js';
+import { plotsOfBlock } from './plots.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
 import { distToLine } from './boulevards.js';
@@ -58,6 +59,7 @@ const STEP = 10; // metres between points of a new street
 const FORCED_MIN = 60; // metres: narrowest side of a park or school split off a site
 const SQUARE_MIN = 62; // metres, centreline: narrowest a square's block may be
 const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school takes
+const PEDESTRIAN_REACH = 220; // metres from its square a pedestrian street runs
 const FALLBACK_REACH = 250; // metres from a centre a square may stand if none was found by it
 const EDGE_CELL = 4; // metres: the raster the greenway-side streets are found on
 
@@ -834,11 +836,16 @@ export function createBlocks(seed, { greenwayWidth }) {
       if (best) {
         best.t.kind = 'pedestrian';
         best.t.w = PEDESTRIAN;
+        best.t.square = axes(sqNode.pts).c;
       }
     }
 
     // ---- Blocks ----
+    // A pedestrian street runs a block or two from its square, then goes on
+    // as a local street.
+    const kindAt = (t, p) => (t.kind === 'pedestrian' && len(sub(p, t.square)) > PEDESTRIAN_REACH ? 'local' : t.kind);
     const half = (t, p) => {
+      if (t.kind === 'pedestrian') return (kindAt(t, p) === 'pedestrian' ? PEDESTRIAN : LOCAL) / 2;
       if (t.kind === 'greenway') return PARKSIDE / 2;
       if (t.kind === 'park') return PARKSIDE;
       return t.w / 2;
@@ -852,22 +859,53 @@ export function createBlocks(seed, { greenwayWidth }) {
       for (let i = 0; i < n; i++) {
         const t = lf.tags[i];
         if (t.kind !== 'local' && t.kind !== 'pedestrian') continue;
-        if (!streets.has(t.id)) streets.set(t.id, { tag: t, segs: [] });
-        streets.get(t.id).segs.push([P[i], P[(i + 1) % n]]);
+        const mid = [(P[i][0] + P[(i + 1) % n][0]) / 2, (P[i][1] + P[(i + 1) % n][1]) / 2];
+        const kind = kindAt(t, mid);
+        const k = `${t.id}:${kind}`;
+        if (!streets.has(k)) streets.set(k, { tag: t, kind, width: kind === 'pedestrian' ? PEDESTRIAN : t.kind === 'pedestrian' ? LOCAL : t.w, segs: [] });
+        streets.get(k).segs.push([P[i], P[(i + 1) % n]]);
       }
-      const net = inset(P, dist);
+      const res = insetWithSources(P, dist);
+      const net = res ? res.pts : null;
       const area = net ? polygonArea(net) : 0;
+      // What each edge of the building line faces.
+      let fronts = null;
+      if (net) {
+        fronts = res.src.map((k) => (k >= 0 ? lf.tags[k].kind : null));
+        for (let j = 0; j < fronts.length; j++) {
+          if (fronts[j]) continue;
+          // A cut-off corner faces what its neighbour does; an unknown edge,
+          // the nearest street.
+          if (res.src[j] === -1) fronts[j] = fronts[(j - 1 + fronts.length) % fronts.length] || fronts[(j + 1) % fronts.length];
+          if (fronts[j]) continue;
+          const m = [(net[j][0] + net[(j + 1) % net.length][0]) / 2, (net[j][1] + net[(j + 1) % net.length][1]) / 2];
+          let best = Infinity;
+          for (let i = 0; i < n; i++) {
+            const dd = distToLine(m[0], m[1], [P[i], P[(i + 1) % n]]);
+            if (dd < best) {
+              best = dd;
+              fronts[j] = lf.tags[i].kind;
+            }
+          }
+        }
+      }
       // A rowhouse block on a main street is built up as a mixed-use block.
       const front = lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard');
       const use = lf.use ?? (area < REMNANT ? 'green' : lf.zone === 'rowhouse' && front ? 'perimeter' : lf.zone);
       const b = { pts: net, centreline: P, dist, use, area, stuck: !!lf.stuck, raw: polygonArea(P), hood: lf.hood ?? (hoodAt(lf.ax.c) || {}).id, front: lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard') };
       if (!net) b.use = 'green';
+      else {
+        const pl = plotsOfBlock(net, fronts, b.use, axes(net).W, rng);
+        b.plots = pl.plots;
+        b.inner = pl.inner;
+        b.fronts = fronts;
+      }
       blocks.push(b);
     }
 
     // Local and pedestrian streets as centrelines, joined up from block sides.
     const local = [];
-    for (const { tag, segs } of streets.values()) {
+    for (const { tag, kind, width, segs } of streets.values()) {
       // Each side appears twice (once from each block): keep one copy.
       const seen = new Set();
       const keep = [];
@@ -878,7 +916,7 @@ export function createBlocks(seed, { greenwayWidth }) {
         seen.add(k1);
         keep.push([a, b]);
       }
-      local.push({ id: tag.id, kind: tag.kind, width: tag.w, segs: keep });
+      local.push({ id: tag.id, kind, width, segs: keep });
     }
 
     // The streets along greenways and parks, as centreline loops.

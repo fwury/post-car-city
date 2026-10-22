@@ -24,6 +24,7 @@ export const palette = {
   building: '#e3ddd3',
   podium: '#dcd5ca',
   buildingEdge: 'rgba(150, 136, 118, 0.55)',
+  plotLine: 'rgba(150, 136, 118, 0.45)',
   courtyard: '#e6eedb',
   garden: '#e9efdc',
   plaza: '#dedad3',

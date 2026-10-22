@@ -65,17 +65,20 @@ export function selfCrosses(pts) {
 function tidy(pts, ds, tol = 0.05) {
   const P = [];
   const D = [];
+  const I = [];
   for (let i = 0; i < pts.length; i++) {
     const q = P[P.length - 1];
     if (q && Math.hypot(pts[i][0] - q[0], pts[i][1] - q[1]) < tol) continue;
     P.push(pts[i]);
     D.push(ds[i]);
+    I.push(i);
   }
   while (P.length > 3 && Math.hypot(P[0][0] - P[P.length - 1][0], P[0][1] - P[P.length - 1][1]) < tol) {
     P.pop();
     D.pop();
+    I.pop();
   }
-  return [P, D];
+  return [P, D, I];
 }
 
 // Inset a clockwise polygon. `dist[i]` is the inset of the edge from pts[i]
@@ -84,7 +87,15 @@ function tidy(pts, ds, tol = 0.05) {
 // where consecutive lines meet. An edge the inset swallows (a short one by a
 // corner, say) is dropped, and its neighbours meet directly instead.
 export function inset(pts0, dist0) {
-  const [pts, dist] = tidy(pts0, dist0);
+  const r = insetWithSources(pts0, dist0);
+  return r ? r.pts : null;
+}
+
+// The same, also giving for each edge of the result the index of the input
+// edge it was moved in from: -1 for a cut-off corner, -2 where unknown (a
+// fold that was cut away).
+export function insetWithSources(pts0, dist0) {
+  const [pts, dist, idx] = tidy(pts0, dist0);
   const n0 = pts.length;
   if (n0 < 3) return null;
   let lines = [];
@@ -96,7 +107,7 @@ export function inset(pts0, dist0) {
     const t = [(b[0] - a[0]) / l, (b[1] - a[1]) / l];
     const nrm = [-t[1], t[0]];
     const d = dist[i];
-    lines.push({ t, a: [a[0] + nrm[0] * d, a[1] + nrm[1] * d], b: [b[0] + nrm[0] * d, b[1] + nrm[1] * d], d });
+    lines.push({ t, a: [a[0] + nrm[0] * d, a[1] + nrm[1] * d], b: [b[0] + nrm[0] * d, b[1] + nrm[1] * d], d, src: idx[i] });
   }
   for (let round = 0; round < 400; round++) {
     const n = lines.length;
@@ -139,12 +150,20 @@ export function inset(pts0, dist0) {
     }
     if (gone[0] && gone[n - 1]) gone[n - 1] = 0;
     if (!any) {
-      const out = corner.flat();
+      const out = [];
+      const src = [];
+      for (let k = 0; k < n; k++) {
+        const c = corner[k];
+        for (let q = 0; q < c.length; q++) {
+          out.push(c[q]);
+          src.push(q < c.length - 1 ? -1 : lines[k].src);
+        }
+      }
       if (out.length < 3) return null;
-      if (!selfCrosses(out)) return out;
+      if (!selfCrosses(out)) return { pts: out, src };
       // Folded over where the shape narrows: keep its largest loop.
       const loop = largestLoop(out);
-      return loop;
+      return loop ? { pts: loop, src: loop.map(() => -2) } : null;
     }
     lines = lines.filter((_, k) => !gone[k]);
   }
