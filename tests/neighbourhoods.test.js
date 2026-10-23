@@ -9,7 +9,7 @@ import { pointInPolygon, polygonArea } from '../src/util/geom.js';
 
 const SEED = seedFromText('1');
 const AREA = [0, 0, 14000, 14000];
-const world = createWorld(SEED);
+const world = createWorld(SEED, { population: Infinity });
 const inner = () => world.districtsInRect(...AREA).filter((d) => d.station[0] > AREA[0] && d.station[0] < AREA[2] && d.station[1] > AREA[1] && d.station[1] < AREA[3]);
 const other = (key) => world.district(world.growth.coreOf(key));
 const same = (p, q) => p[0] === q[0] && p[1] === q[1];
@@ -31,8 +31,8 @@ function hull(P) {
 }
 
 test('stage 3 does not depend on visiting order', () => {
-  const a = createWorld(SEED);
-  const b = createWorld(SEED);
+  const a = createWorld(SEED, { population: Infinity });
+  const b = createWorld(SEED, { population: Infinity });
   const pick = (d) => JSON.stringify({ key: d.key, hoods: d.stage3.hoods.map((h) => h.polygon), lines: d.stage3.lines.map((l) => l.points) });
   const fwd = a.districtsInRect(0, 0, 8000, 8000).map(pick).sort();
   b.districtsInRect(8000, 8000, 16000, 16000);

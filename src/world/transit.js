@@ -18,7 +18,6 @@
 
 import { LruCache } from './cache.js';
 
-const CENTRE = [0, 0];
 const SECOND_STOP = 1100; // metres: a rail run in a district this long gets a second stop
 const METRO_REACH = 260; // metres a neighbourhood centre may lie off the line for the station to be named after it
 const THROUGH = -0.34; // links whose directions from the station are at least 110° apart make a line through
@@ -188,7 +187,8 @@ function smooth(P, step = 15) {
   return out;
 }
 
-export function createTransit({ baseOf, network }) {
+export function createTransit({ baseOf, network, centre = [0, 0] }) {
+  const CENTRE = centre;
   const parents = new LruCache(20000);
   // The neighbour a district's rail runs to: the one nearest the centre, if
   // nearer than it.

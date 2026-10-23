@@ -5,6 +5,8 @@
 
 export const palette = {
   land: '#f2f0eb',
+  country: '#e7ebdc', // the land round the city
+  bridgeCasing: '#7d848b',
   core: '#f3e5d2',
   natural: '#a9d59a', // primary greenways, district parks
   green: '#cde9bd', // parkettes, neighbourhood parks, courtyards (later stages)

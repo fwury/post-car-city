@@ -20,6 +20,13 @@ const VALLEY_WIDTH = 0.12; // in noise units; valleys are a few hundred metres w
 const VALLEY_SPEED = 0.55; // how much cheaper spreading is along a valley floor
 
 const NEIGHBOURS = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+const RIVER_NEAR = 700; // metres: parcels this near a river check each step for crossing it
+
+// Labels of land that is no district: the sea (or a lake), and the country
+// round the city.
+export const SEA = 'W';
+export const COUNTRY = 'C';
+export const isDistrictKey = (k) => !!k && k !== SEA && k !== COUNTRY;
 
 // Binary min-heap of (key, value) pairs.
 export class Heap {
@@ -70,8 +77,12 @@ export class Heap {
   }
 }
 
-export function createGrowth(seed, cores) {
-  const terrain = createNoise(seed, 'growth-terrain');
+// `terrain` (optional) holds the water: districts spread over land only, and
+// never across a river. `inCity` says which cores' districts are the city's;
+// the others grow too (so the city ends where they meet it) but their land
+// is the country.
+export function createGrowth(seed, cores, { terrain = null, inCity = () => true } = {}) {
+  const ground = createNoise(seed, 'growth-terrain');
   const valleys = createNoise(seed, 'growth-valleys');
   const chunks = new LruCache(3000);
 
@@ -88,7 +99,7 @@ export function createGrowth(seed, cores) {
   // Winding valleys (where a second field crosses zero) are faster still, so
   // districts reach out along them in long fingers.
   function friction(x, y) {
-    const t = terrain.fbm(x / 3400, y / 3400, 4, 2.1, 0.6) * 1.05 + 0.5;
+    const t = ground.fbm(x / 3400, y / 3400, 4, 2.1, 0.6) * 1.05 + 0.5;
     const v = Math.abs(valleys.fbm(x / 2600, y / 2600, 3, 2, 0.5));
     const valley = Math.max(0, 1 - v / VALLEY_WIDTH);
     return (0.5 + 1.15 * Math.min(1, Math.max(0, t))) * (1 - VALLEY_SPEED * valley);
@@ -101,14 +112,29 @@ export function createGrowth(seed, cores) {
     let t = terrains.get(key);
     if (t) return t;
     const n = CHUNK * CHUNK;
-    t = { px: new Float64Array(n), py: new Float64Array(n), fr: new Float64Array(n) };
+    t = { px: new Float64Array(n), py: new Float64Array(n), fr: new Float64Array(n), sea: new Uint8Array(n), cut: new Uint8Array(n) };
     for (let b = 0; b < CHUNK; b++) {
       for (let a = 0; a < CHUNK; a++) {
         const m = b * CHUNK + a;
-        const [x, y] = parcelPos(ti * CHUNK + a, tj * CHUNK + b);
+        const i = ti * CHUNK + a;
+        const j = tj * CHUNK + b;
+        const [x, y] = parcelPos(i, j);
         t.px[m] = x;
         t.py[m] = y;
         t.fr[m] = friction(x, y);
+        if (!terrain) continue;
+        // The sea cannot be crossed; nor can a river, so each step to a
+        // neighbour that crosses one is cut (a bit per neighbour).
+        if (terrain.isSea(x, y)) {
+          t.sea[m] = 1;
+          t.fr[m] = Infinity;
+        }
+        const r = terrain.nearestRiver(x, y);
+        if (r && r.d < RIVER_NEAR) {
+          NEIGHBOURS.forEach(([da, db], k) => {
+            if (terrain.crossesRiver([x, y], parcelPos(i + da, j + db))) t.cut[m] |= 1 << k;
+          });
+        }
       }
     }
     terrains.set(key, t);
@@ -127,6 +153,8 @@ export function createGrowth(seed, cores) {
     const px = new Float64Array(N);
     const py = new Float64Array(N);
     const fr = new Float64Array(N);
+    const sea = new Uint8Array(N);
+    const cut = new Uint8Array(N);
     for (let b = 0; b < W; b++) {
       for (let a = 0; a < W; a++) {
         const i = i0 + a;
@@ -139,6 +167,8 @@ export function createGrowth(seed, cores) {
         px[n] = t.px[m];
         py[n] = t.py[m];
         fr[n] = t.fr[m];
+        sea[n] = t.sea[m];
+        cut[n] = t.cut[m];
       }
     }
     const dist = new Float64Array(N).fill(Infinity);
@@ -167,7 +197,9 @@ export function createGrowth(seed, cores) {
       done[n] = 1;
       const a = n % W;
       const b = (n - a) / W;
-      for (const [da, db] of NEIGHBOURS) {
+      for (let k = 0; k < 8; k++) {
+        if (cut[n] & (1 << k)) continue;
+        const [da, db] = NEIGHBOURS[k];
         const a2 = a + da;
         const b2 = b + db;
         if (a2 < 0 || b2 < 0 || a2 >= W || b2 >= W) continue;
@@ -183,7 +215,11 @@ export function createGrowth(seed, cores) {
     }
     const out = new Array(CHUNK * CHUNK);
     for (let b = 0; b < CHUNK; b++) {
-      for (let a = 0; a < CHUNK; a++) out[b * CHUNK + a] = label[(b + MARGIN) * W + (a + MARGIN)];
+      for (let a = 0; a < CHUNK; a++) {
+        const n = (b + MARGIN) * W + (a + MARGIN);
+        const l = label[n];
+        out[b * CHUNK + a] = sea[n] ? SEA : l && inCity(l) ? l : COUNTRY;
+      }
     }
     for (const core of list) coreIndex.set(core.key, core);
     c = { labels: out, cores: list };

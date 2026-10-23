@@ -59,19 +59,24 @@ function pathsFor(world, d, segLen) {
     greenLines: new Path2D(),
     parks: new Path2D(),
     ring: new Path2D(),
+    wet: [], // which of greenFill hold water (a river, the shore)
   };
   addPoly(p.core, d.core, ox, oy, true);
   // One path per strip: strips can wind either way, and separate fills
   // avoid overlaps cancelling out.
-  for (const s of g.strips) {
+  g.strips.forEach((s, i) => {
     const path = new Path2D();
     addPoly(path, s, ox, oy, true);
     p.greenFill.push(path);
-  }
+    const kind = d.chains[i].geo.kind;
+    p.wet.push(kind === 'river' || kind === 'shore');
+  });
   for (const j of g.junctions) {
     const path = new Path2D();
     path.arc(j.x - ox, j.y - oy, j.r, 0, Math.PI * 2);
     p.greenFill.push(path);
+    const r = world.terrain && world.terrain.nearestRiver(j.x, j.y);
+    p.wet.push(!!r && r.d < 30);
   }
   for (const line of g.edgeLines) addPoly(p.greenLines, line, ox, oy, false);
   for (const pk of d.parks) {
@@ -140,6 +145,19 @@ export function drawDistricts(ctx, view, world, layers) {
   const place = (d) => ctx.setTransform(s, 0, 0, s, (d.origin[0] - x0) * s, (d.origin[1] - y0) * s);
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+
+  // The country round the city, and the city's land.
+  const terrain = world.terrain;
+  if (terrain) {
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = palette.country;
+    ctx.fillRect(0, 0, view.w, view.h);
+    ctx.fillStyle = palette.land;
+    for (const { d, p } of items) {
+      place(d);
+      ctx.fill(p.ring);
+    }
+  }
 
   const wantHoods = layers.neighbourhoods || (layers.streets && zoom >= MAIN_STREET_MIN_ZOOM);
   const hoods = wantHoods ? items.map(({ d }) => ({ d, h: hoodPathsFor(d, world.neighbourhoods(d)) })) : [];
@@ -278,6 +296,9 @@ export function drawDistricts(ctx, view, world, layers) {
     drawLayouts(ctx, lays, place, zoom, px);
   }
 
+  // Water: the sea (or lake) and the rivers.
+  if (terrain) drawWater(ctx, view, terrain, px);
+
   // Boulevards and main streets carry on under the greenways: drawn again
   // inside each greenway strip as tunnels, pale with dashed edges, so a
   // street reads as one street from district to district.
@@ -295,7 +316,9 @@ export function drawDistricts(ctx, view, world, layers) {
       }
     };
     for (const { d, p } of items) {
-      for (const strip of p.greenFill) {
+      for (let k = 0; k < p.greenFill.length; k++) {
+        if (p.wet[k]) continue;
+        const strip = p.greenFill[k];
         ctx.save();
         place(d);
         ctx.clip(strip);
@@ -310,6 +333,39 @@ export function drawDistricts(ctx, view, world, layers) {
         ctx.restore();
       }
     }
+  }
+
+  // Over a river, the streets cross on bridges.
+  if (layers.streets && terrain && terrain.rivers.length) {
+    const strokeAll = (extra) => {
+      if (zoom >= MAIN_STREET_MIN_ZOOM) {
+        ctx.lineWidth = mw + extra;
+        for (const { d, h } of hoods) {
+          place(d);
+          ctx.stroke(h.streets);
+        }
+      }
+      ctx.lineWidth = w + extra;
+      for (const { b, path } of lines) {
+        ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
+        ctx.stroke(path);
+      }
+    };
+    ctx.lineCap = 'butt';
+    for (const { d, p } of items) {
+      for (let k = 0; k < p.greenFill.length; k++) {
+        if (!p.wet[k]) continue;
+        ctx.save();
+        place(d);
+        ctx.clip(p.greenFill[k]);
+        ctx.strokeStyle = palette.bridgeCasing;
+        strokeAll(px(2.2));
+        ctx.strokeStyle = palette.road;
+        strokeAll(0);
+        ctx.restore();
+      }
+    }
+    ctx.lineCap = 'round';
   }
 
   // What is in the greenways: the stream, the trail and the paths in.
@@ -471,13 +527,12 @@ function greenwayPathsFor(g, origin) {
   let p = greenwayPaths.get(g);
   if (p && p.origin === origin) return p;
   const [ox, oy] = origin;
-  const line = (L) => {
+  const lines = (list) => {
     const path = new Path2D();
-    path.moveTo(L[0][0] - ox, L[0][1] - oy);
-    for (let i = 1; i < L.length; i++) path.lineTo(L[i][0] - ox, L[i][1] - oy);
+    for (const L of list) addPoly(path, L, ox, oy, false);
     return path;
   };
-  p = { origin, stream: line(g.stream), trail: line(g.trail) };
+  p = { origin, stream: g.streams.length ? lines(g.streams) : null, trails: lines(g.trails) };
   greenwayPaths.set(g, p);
   return p;
 }
@@ -489,6 +544,7 @@ function drawGreenwayDetail(ctx, view, world, items, place, px) {
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
   for (const { d, p, g } of ways) {
+    if (!p.stream) continue;
     place(d);
     ctx.strokeStyle = palette.streamBank;
     ctx.lineWidth = Math.max(g.streamWidth + 2, px(2.2));
@@ -509,7 +565,7 @@ function drawGreenwayDetail(ctx, view, world, items, place, px) {
     for (const { d, p } of ways) {
       place(d);
       ctx.lineWidth = Math.max(TRAIL_WIDTH, px(1.6)) + extra;
-      ctx.stroke(p.trail);
+      ctx.stroke(p.trails);
     }
     if (zoom >= 0.5) {
       for (const { d, list } of links) {
@@ -524,6 +580,32 @@ function drawGreenwayDetail(ctx, view, world, items, place, px) {
       }
     }
   }
+}
+
+// The sea and the rivers, in world coordinates.
+const waterCache = new WeakMap();
+function drawWater(ctx, view, terrain, px) {
+  let w = waterCache.get(terrain);
+  if (!w) {
+    const poly = (list) => {
+      const path = new Path2D();
+      for (const L of list) addPoly(path, L, 0, 0, true);
+      return path;
+    };
+    w = { sea: poly(terrain.seaShapes()), rivers: poly(terrain.riverShapes()) };
+    waterCache.set(terrain, w);
+  }
+  const { x0, y0, s } = view;
+  ctx.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
+  // Edges first, then the fill over their inner halves, so where rivers
+  // meet each other or the sea no edge shows.
+  ctx.strokeStyle = palette.waterEdge;
+  ctx.lineWidth = px(2);
+  ctx.stroke(w.sea);
+  ctx.stroke(w.rivers);
+  ctx.fillStyle = palette.water;
+  ctx.fill(w.sea);
+  ctx.fill(w.rivers);
 }
 
 // Boulevards and main streets to scale: cross-sections, junctions paved

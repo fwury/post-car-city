@@ -6,6 +6,9 @@
 //   - the trail, wide enough for people walking and cycling both ways, runs
 //     along one side, following the stream's bends loosely;
 //
+// Along a river the river takes the stream's place, with a path along each
+// bank; along the shore there is a promenade by the water.
+//
 // Everything is a pure function of the stretch of greenway, so the two
 // districts either side draw the same thing.
 
@@ -18,13 +21,43 @@ const STEP = 6; // metres between points along a greenway
 const STREAM_WIDTH = [4, 7];
 export const TRAIL_WIDTH = 4;
 
-export function createGreenways(seed, { greenwayWidth }) {
+const BANK_PATH = 0.45; // the bank paths' place across the bank, from the water
+const SHORE_PATH = 10; // metres from the water's edge to the promenade
+
+export function createGreenways(seed, { greenwayWidth, terrain = null }) {
   const cache = new LruCache(4000);
   const drift = createNoise(seed, 'stream-drift');
+
+  // A line split where it runs into water: the pieces on land.
+  const dry = (L) => {
+    if (!terrain) return [L];
+    const out = [];
+    let cur = [];
+    for (const q of L) {
+      if (terrain.isWater(q[0], q[1])) {
+        if (cur.length > 1) out.push(cur);
+        cur = [];
+      } else cur.push(q);
+    }
+    if (cur.length > 1) out.push(cur);
+    return out;
+  };
+  const longest = (list) => list.reduce((a, b) => (b.length > a.length ? b : a), []);
 
   function of(geo) {
     let g = cache.get(geo.key);
     if (g) return g;
+    g = shape(geo);
+    // Streams run into the water; paths stop at its edge.
+    g.streams = g.stream ? dry(g.stream) : [];
+    g.trails = g.trails.flatMap(dry);
+    g.trail = longest(g.trails);
+    cache.set(geo.key, g);
+    return g;
+  }
+
+  function shape(geo) {
+    let g;
     const P = resample(geo.points, STEP);
     const n = P.length;
     const k = hashString(geo.key);
@@ -40,9 +73,42 @@ export function createGreenways(seed, { greenwayWidth }) {
       N.push([-t[1] / l, t[0] / l]);
       half.push(greenwayWidth(P[i][0], P[i][1]) / 2);
     }
+    const L = (n - 1) * STEP;
+    if (terrain && geo.kind === 'river') {
+      const bank = terrain.BANK;
+      const trails = [1, -1].map((sd) => {
+        const T = P.map((q, i) => {
+          const r = terrain.nearestRiver(q[0], q[1]);
+          const o = sd * ((r ? r.width / 2 : 0) + bank * BANK_PATH);
+          return [q[0] + N[i][0] * o, q[1] + N[i][1] * o];
+        });
+        return chaikin(T, false);
+      });
+      return { stream: null, trail: trails[0], trails, centre: P, half, side: 1, water: 'river' };
+    }
+    if (terrain && geo.kind === 'shore') {
+      // The sea lies on the side where the shore is nearer.
+      let s = 0;
+      for (let i = 0; i < n; i += 5) {
+        const q = P[i];
+        s += terrain.shore(q[0] + N[i][0] * 20, q[1] + N[i][1] * 20) - terrain.shore(q[0] - N[i][0] * 20, q[1] - N[i][1] * 20);
+      }
+      const sd = s < 0 ? 1 : -1;
+      const off = half.map((h) => sd * Math.max(0, h - SHORE_PATH));
+      const sm = off.map((_, i) => {
+        let a = 0;
+        let c = 0;
+        for (let j = Math.max(0, i - 4); j <= Math.min(n - 1, i + 4); j++) {
+          a += off[j];
+          c++;
+        }
+        return a / c;
+      });
+      const trail = chaikin(P.map((q, i) => [q[0] + N[i][0] * sm[i], q[1] + N[i][1] * sm[i]]), false);
+      return { stream: null, trail, trails: [trail], centre: P, half, side: sd, water: 'sea' };
+    }
     // The trail keeps to one side.
     const side = u(1) < 0.5 ? 1 : -1;
-    const L = (n - 1) * STEP;
     // The stream: near the middle, drifting off it a little and back as the
     // ground lies, the way a small river does, not in regular swings. Its
     // offset follows noise in world coordinates (so it does not depend on
@@ -84,12 +150,13 @@ export function createGreenways(seed, { greenwayWidth }) {
     g = {
       stream: chaikin(stream, false),
       trail: chaikin(trail, false),
+      trails: null,
       streamWidth: STREAM_WIDTH[0] + u(4) * (STREAM_WIDTH[1] - STREAM_WIDTH[0]),
       centre: P,
       half,
       side,
     };
-    cache.set(geo.key, g);
+    g.trails = [g.trail];
     return g;
   }
 

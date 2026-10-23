@@ -26,7 +26,8 @@ import { createNeighbourhoods } from './neighbourhoods.js';
 export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
 import { createBlocks } from './blocks.js';
-import { createGrowth, PARCEL } from './growth.js';
+import { createGrowth, PARCEL, SEA, COUNTRY, isDistrictKey } from './growth.js';
+import { createTerrain, DEFAULT_POPULATION } from './terrain.js';
 import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf, simplify, chaikin, resample } from '../util/geom.js';
 
 export const CORE_RADIUS = 380; // about 0.45 km²
@@ -105,12 +106,68 @@ function straightRuns(pts, rng) {
   return { points: out, runs };
 }
 
+// Points closer than a metre to the one before are dropped.
+function dedupe(pts) {
+  const out = [pts[0]];
+  for (let i = 1; i < pts.length; i++) {
+    const q = out[out.length - 1];
+    if (Math.hypot(pts[i][0] - q[0], pts[i][1] - q[1]) > 1 || i === pts.length - 1) out.push(pts[i]);
+  }
+  if (out.length > 2 && Math.hypot(out[out.length - 1][0] - out[out.length - 2][0], out[out.length - 1][1] - out[out.length - 2][1]) < 1) out.splice(out.length - 2, 1);
+  return out;
+}
+
 // Cores reach at most this many core radii from the station (parks keep clear).
 const CORE_REACH = 1.25;
 
-export function createWorld(seed) {
-  const cores = createCores(seed);
-  const growth = createGrowth(seed, cores);
+// Boundaries this near water are laid on it: fully within the first
+// distance, fading out by the second.
+const SNAP = [280, 460];
+const RIVER_FLARE = [60, 360]; // a greenway widens to hold a river this near it
+const DRY = 450; // cores keep this far from the water
+const CITY_SHAPE = 0.35; // how far from round the city's outline wanders
+
+const smooth01 = (t) => {
+  const c = Math.max(0, Math.min(1, t));
+  return c * c * (3 - 2 * c);
+};
+
+export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
+  const terrain = createTerrain(seed, { population });
+  // Cores on dry land only: none in the water or on its very edge.
+  const allCores = createCores(seed);
+  const dryMemo = new Map();
+  const dry = (c) => {
+    let v = dryMemo.get(c.key);
+    if (v === undefined) {
+      const r = terrain.nearestRiver(c.x, c.y);
+      v = terrain.shore(c.x, c.y) > DRY && !(r && r.d < r.width / 2 + DRY);
+      dryMemo.set(c.key, v);
+    }
+    return v;
+  };
+  const cores = {
+    ...allCores,
+    coresInRect: (x0, y0, x1, y1) => allCores.coresInRect(x0, y0, x1, y1).filter(dry),
+  };
+  // The city: as many districts as its people need, the ones nearest the
+  // centre (by a distance stretched a little by direction, so the city is
+  // not round).
+  const shapeNoise = createNoise(seed, 'city-shape');
+  const bounded = Number.isFinite(terrain.districts);
+  const reach = bounded ? terrain.radius * 2.2 + 4000 : 0;
+  const ranked = (bounded ? cores.coresInRect(-reach, -reach, reach, reach) : [])
+    .map((c) => {
+      const a = Math.atan2(c.y, c.x);
+      const k = 1 + CITY_SHAPE * shapeNoise.fbm(Math.cos(a) * 1.3 + 5, Math.sin(a) * 1.3, 2);
+      return { c, r: Math.hypot(c.x, c.y) * k };
+    })
+    .sort((a, b) => a.r - b.r || (a.c.key < b.c.key ? -1 : 1));
+  const cityCores = ranked.slice(0, terrain.districts).map((e) => e.c);
+  const keys = new Set(cityCores.map((c) => c.key));
+  const city = { has: (k) => !bounded || keys.has(k) };
+  const centre = cityCores.length ? [cityCores[0].x, cityCores[0].y] : [0, 0];
+  const growth = createGrowth(seed, cores, { terrain, inCity: (k) => city.has(k) });
   const boulevards = createBoulevards(seed);
   const hoods = createNeighbourhoods(seed, { boulevards });
   const parks = createParks(seed, {
@@ -127,9 +184,9 @@ export function createWorld(seed) {
     return warpFine(p[0], p[1], p);
   };
   const widthNoise = createNoise(seed, 'greenway-width');
-  const greenways = createGreenways(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y) });
+  const greenways = createGreenways(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), terrain });
   const names = createNames(seed);
-  const transit = createTransit({ baseOf: (k) => baseOf(k), network: (b) => boulevards.network(b) });
+  const transit = createTransit({ baseOf: (k) => baseOf(k), network: (b) => boulevards.network(b), centre });
 
   const bases = new LruCache(12000);
   const districts = new LruCache(12000);
@@ -339,13 +396,22 @@ export function createWorld(seed) {
       for (let s = 0; s < SMOOTHING; s++) pts = chaikin(pts, loop);
       if (loop) pts.push(pts[0]);
       pts = resample(pts, SMOOTH_SPACING);
-      pts = pts.map(([x, y]) => clearOfCores(x, y));
-      const shaped = straightRuns(pts, rngFor(seed, 'greenway-runs', hashString(key)));
+      pts = dedupe(pts.map(([x, y]) => clearOfCores(x, y)));
+      // What the stretch is: along a river, along the shore, the city's
+      // edge with the country, or between two districts.
+      const onRiver = pts.filter(([x, y]) => {
+        const r = terrain.nearestRiver(x, y);
+        return r && r.d < 2;
+      }).length;
+      const kind = D === SEA || E === SEA ? 'shore' : onRiver > pts.length * 0.5 ? 'river' : D === COUNTRY || E === COUNTRY ? 'edge' : 'green';
+      // Water's edges keep their own line; the others run straight between bends.
+      const shaped = kind === 'river' || kind === 'shore' ? { points: pts, runs: [] } : straightRuns(pts, rngFor(seed, 'greenway-runs', hashString(key)));
       pts = resample(shaped.points, FINE_SPACING);
       const first = canon[0];
       const lods = new Map();
       g = {
         key,
+        kind,
         points: pts,
         runs: shaped.runs,
         first,
@@ -384,6 +450,11 @@ export function createWorld(seed) {
       const t = Math.min(1, Math.max(0, (Math.hypot(x - c.x, y - c.y) - CORE_CLEAR) / CORE_CLEAR));
       f = Math.min(f, t * t * (3 - 2 * t));
     }
+    // The warp fades near water too, so a boundary there stays close
+    // enough to be laid on it.
+    const r0 = terrain.nearestRiver(x, y);
+    if (r0) f = Math.min(f, smooth01((r0.d - SNAP[1]) / 400));
+    if (terrain.hasSea) f = Math.min(f, smooth01((Math.abs(terrain.shore(x, y)) - SNAP[1]) / 400));
     let p = [x + (w[0] - x) * f, y + (w[1] - y) * f];
     for (const c of near) {
       const dx = p[0] - c.x;
@@ -394,14 +465,41 @@ export function createWorld(seed) {
       const k = (r + ((R - r) ** 2 * CORE_CLEAR) / (R * R)) / r;
       p = [c.x + dx * k, c.y + dy * k];
     }
+    return toWater(p);
+  }
+
+  // Near a river, a boundary is laid on its line; near the shore, on a line
+  // half a greenway in from it, so the greenway's outer edge is the water's.
+  function toWater(p) {
+    const r = terrain.nearestRiver(p[0], p[1]);
+    if (r && r.d < SNAP[1]) {
+      const t = 1 - smooth01((r.d - SNAP[0]) / (SNAP[1] - SNAP[0]));
+      p = [p[0] + (r.p[0] - p[0]) * t, p[1] + (r.p[1] - p[1]) * t];
+    }
+    if (terrain.hasSea) {
+      const sd = Math.abs(terrain.shore(p[0], p[1]));
+      if (sd < SNAP[1]) {
+        const q = terrain.toShore(p, baseWidth(p[0], p[1]) / 2);
+        const t = 1 - smooth01((sd - SNAP[0]) / (SNAP[1] - SNAP[0]));
+        p = [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t];
+      }
+    }
     return p;
   }
 
   // Width varies slowly along a greenway, with small swells and pinches on top.
-  const greenwayWidth = (x, y) => {
+  const baseWidth = (x, y) => {
     const broad = Math.min(1, Math.max(0, widthNoise.fbm(x / 1500, y / 1500, 2) * 0.9 + 0.5));
     const fine = widthNoise.fbm(x / 230 + 91.7, y / 230, 2) * 0.22;
     return Math.max(GREENWAY_MIN, (GREENWAY_MIN + (GREENWAY_MAX - GREENWAY_MIN) * broad) * (1 + fine));
+  };
+  // Along a river the greenway holds the river and a bank either side.
+  const greenwayWidth = (x, y) => {
+    const w = baseWidth(x, y);
+    const r = terrain.nearestRiver(x, y);
+    if (!r || r.d > RIVER_FLARE[1]) return w;
+    const t = 1 - smooth01((r.d - RIVER_FLARE[0]) / (RIVER_FLARE[1] - RIVER_FLARE[0]));
+    return Math.max(w, w + (r.width + 2 * terrain.BANK - w) * t);
   };
 
   function greenwayStrip(line) {
@@ -418,6 +516,7 @@ export function createWorld(seed) {
   }
 
   function baseOf(key) {
+    if (!isDistrictKey(key)) return null;
     const c = growth.coreOf(key);
     return c ? base(c) : null;
   }
@@ -472,6 +571,7 @@ export function createWorld(seed) {
     const out = [];
     const m = DISTRICT_SEARCH;
     for (const c of cores.coresInRect(x0 - m, y0 - m, x1 + m, y1 + m)) {
+      if (!city.has(c.key)) continue;
       const b = base(c);
       if (b.bbox.x1 < x0 - 1000 || b.bbox.x0 > x1 + 1000 || b.bbox.y1 < y0 - 1000 || b.bbox.y0 > y1 + 1000) continue;
       const d = district(c);
@@ -535,7 +635,7 @@ export function createWorld(seed) {
         }
       }
     }
-    const c = best && growth.coreOf(best);
+    const c = isDistrictKey(best) && growth.coreOf(best);
     if (!c) return null;
     const d = district(c);
     for (const r of d.rings) if (pointInPolygon(x, y, r)) return d;
@@ -543,10 +643,10 @@ export function createWorld(seed) {
   }
 
   // Stage 4: local streets and blocks, worked out only when wanted.
-  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo) });
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater });
 
   return {
-    seed, cores, growth, boulevards,
+    seed, population, terrain, centre, cityCores, cores, growth, boulevards,
     blocks: (d) => blocks.of(d),
     forgetBlocks: (d) => blocks.forget(d),
     // Stage 5: the stream, trail and woods of a stretch of greenway.
@@ -558,6 +658,6 @@ export function createWorld(seed) {
     district, base, lod, districtsInRect, boulevardsInRect, boulevardDistance, districtAt, greenwayWidth,
     // Stage 3: neighbourhoods and main streets of a district.
     neighbourhoods: (d) => d.stage3,
-    coresInRect: cores.coresInRect,
+    coresInRect: (x0, y0, x1, y1) => cores.coresInRect(x0, y0, x1, y1).filter((c) => city.has(c.key)),
   };
 }

@@ -93,7 +93,7 @@ export function createDistrictTileBuilder({ pool, getWorld, getLayers, res = 512
     if (pool && !pool.broken) {
       try {
         const t = { level: tile.level, tx: tile.tx, ty: tile.ty, size: tile.size, x0: tile.x0, y0: tile.y0 };
-        const bitmap = await pool.run({ seed: getWorld().seed, tile: t, layers: layersFor(), res });
+        const bitmap = await pool.run({ seed: getWorld().seed, population: getWorld().population, tile: t, layers: layersFor(), res });
         return { canvas: bitmap, res };
       } catch (err) {
         console.warn('Tile worker failed, drawing on the main thread instead.', err);

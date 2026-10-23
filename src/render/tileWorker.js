@@ -7,9 +7,9 @@ import { renderDistrictTile } from './districtLayer.js';
 let world = null;
 
 self.onmessage = (e) => {
-  const { id, seed, tile, layers, res } = e.data;
+  const { id, seed, population, tile, layers, res } = e.data;
   try {
-    if (!world || world.seed !== seed) world = createWorld(seed);
+    if (!world || world.seed !== seed || world.population !== population) world = createWorld(seed, { population });
     if (e.data.kind === 'blocks') {
       // Stage 4 for one district, found by its station.
       const [x, y] = e.data.at;

@@ -288,7 +288,9 @@ function joinRuns(runs) {
   return out;
 }
 
-export function createBlocks(seed, { greenwayWidth, greenway }) {
+export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false }) {
+  // A path that would run through water is left out.
+  const dryPath = (pts) => pts && !pts.some((q) => isWater(q[0], q[1]));
   const names = createNames(seed);
   const cache = new LruCache(6); // (each district's blocks and buildings take tens of MB)
 
@@ -385,7 +387,11 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
       };
       // A gently curving path from p to the trail.
       const toTrail = (p, way, toward) => {
-        const T = nearestOn(way.g.trail, toward || p);
+        let T = null;
+        for (const L of way.g.trails) {
+          const t = nearestOn(L, toward || p);
+          if (t && (!T || t.r < T.r)) T = t;
+        }
         if (!T || T.r > 260) return null;
         const m = [(p[0] + T.p[0]) / 2, (p[1] + T.p[1]) / 2];
         const c = toward ? [(m[0] + toward[0]) / 2, (m[1] + toward[1]) / 2] : m;
@@ -424,7 +430,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
         if (!near || near.r.r > near.w.g.half[Math.min(near.r.i, near.w.g.half.length - 1)] + PARKSIDE * 1.5) continue;
         if (taken.some((t) => len(sub(t, q)) < GREEN_LINK_GAP)) continue;
         const pts = toTrail(q, near.w, near.r.p);
-        if (pts) {
+        if (dryPath(pts)) {
           out.push(pts);
           taken.push(q);
         }
@@ -447,7 +453,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
             const e = [x[0] + dir[0] * (h + 2) + perp[0] * sgn * (w / 2 - 1.5), x[1] + dir[1] * (h + 2) + perp[1] * sgn * (w / 2 - 1.5)];
             const toward = [e[0] - dir[0] * h * 0.6 + perp[0] * sgn * 30, e[1] - dir[1] * h * 0.6 + perp[1] * sgn * 30];
             const pts = toTrail(e, near.w, toward);
-            if (pts) out.push(pts);
+            if (dryPath(pts)) out.push(pts);
           }
         }
       }
@@ -1480,8 +1486,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
         for (const q of [lp.centre[0], lp.centre[lp.centre.length - 1]]) {
           let best = null;
           for (const c of d.chains) {
-            const T = greenway(c.geo).trail;
-            for (let i = 0; i < T.length - 1; i++) {
+            for (const T of greenway(c.geo).trails) for (let i = 0; i < T.length - 1; i++) {
               const a = T[i];
               const ab = sub(T[i + 1], a);
               const l2 = dot(ab, ab);
@@ -1491,7 +1496,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
               if (!best || r < best.r) best = { p: f, r };
             }
           }
-          if (best && best.r < greenwayWidth(q[0], q[1])) greenLinks.push([q, best.p]);
+          if (best && best.r < greenwayWidth(q[0], q[1]) && dryPath([q, best.p, [(q[0] + best.p[0]) / 2, (q[1] + best.p[1]) / 2]])) greenLinks.push([q, best.p]);
         }
       }
       const near = (q) => {

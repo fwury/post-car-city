@@ -21,6 +21,7 @@ import { hash, hashString, toUnit } from '../core/hash.js';
 import { createNoise } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { keyInts } from './cores.js';
+import { isDistrictKey } from './growth.js';
 
 export const MIN_SHARED_EDGE = 450; // metres of shared greenway needed for a link
 export const MIN_RADIUS = 50; // metres, tightest bend allowed on a boulevard
@@ -250,6 +251,8 @@ export function createBoulevards(seed) {
   function linksOf(b) {
     const best = new Map();
     for (const c of b.chains) {
+      // No links out to the sea or the country.
+      if (!isDistrictKey(c.neighbour)) continue;
       const L = crossingOf(c.geo).length;
       const cur = best.get(c.neighbour);
       if (!cur || L > cur.L || (L === cur.L && c.key < cur.c.key)) best.set(c.neighbour, { c, L });

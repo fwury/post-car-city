@@ -15,6 +15,7 @@ import { rngFor } from '../core/rng.js';
 import { LruCache } from './cache.js';
 import { polygonArea } from '../util/geom.js';
 import { distToLine } from './boulevards.js';
+import { isDistrictKey } from './growth.js';
 
 export const PARK_AREA_HA = [40, 70];
 export const PARK_SPACING = 2700; // metres between park centres, at least
@@ -49,7 +50,7 @@ export function createParks(seed, { baseOf, label, parcel, greenwayWidth, boulev
     const k = `e:${j.key}`;
     let v = status.get(k);
     if (v !== undefined) return v;
-    v = j.labels.length >= 3;
+    v = j.labels.length >= 3 && j.labels.every(isDistrictKey);
     for (const l of j.labels) {
       const b = baseOf(l);
       if (!v || !b) break;

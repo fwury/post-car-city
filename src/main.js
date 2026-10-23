@@ -21,9 +21,16 @@ const initial = readUrlState();
 const state = {
   seedText: initial.seed,
   seed: seedFromText(initial.seed),
+  population: initial.population,
   layers: loadLayers(),
 };
-let world = createWorld(state.seed);
+let world = createWorld(state.seed, { population: state.population });
+// What the city is built on, and how big it is.
+const siteEl = document.getElementById('site');
+const showSite = () => {
+  if (siteEl) siteEl.textContent = `${world.terrain.label}, ${world.terrain.districts} district${world.terrain.districts === 1 ? '' : 's'}`;
+};
+showSite();
 const getWorld = () => world;
 
 let dirty = true;
@@ -45,10 +52,10 @@ function blocksFor(d) {
     return b;
   }
   blockCache.set(k, null);
-  const seedAt = state.seed;
-  blockPool.run({ kind: 'blocks', seed: state.seed, key: k, at: d.station }).then(
+  const worldAt = world;
+  blockPool.run({ kind: 'blocks', seed: state.seed, population: state.population, key: k, at: d.station }).then(
     (b) => {
-      if (state.seed !== seedAt) return;
+      if (world !== worldAt) return;
       blockCache.set(k, b);
       // Tiles drawn before this district's blocks came in are redrawn.
       const bb = d.bbox;
@@ -95,7 +102,7 @@ input.onTap = ([sx, sy]) => {
   }
   dirty = true;
 };
-const urlSync = createUrlSync(() => ({ seed: state.seedText, x: camera.x, y: camera.y, zoom: camera.zoom }));
+const urlSync = createUrlSync(() => ({ seed: state.seedText, population: state.population, x: camera.x, y: camera.y, zoom: camera.zoom }));
 
 renderer.resize();
 camera.set(initial.x, initial.y, initial.zoom);
@@ -110,13 +117,11 @@ setupControls({
   onSeed(text) {
     state.seedText = text;
     state.seed = seedFromText(text);
-    world = createWorld(state.seed);
-    blockCache.clear();
-    renderer.clearVectorTiles();
-    noiseTiles.clear();
-    districtTiles.clear();
-    dirty = true;
-    urlSync.now();
+    rebuild();
+  },
+  onPopulation(n) {
+    state.population = n;
+    rebuild();
   },
   onLayers(name) {
     if (MAP_LAYERS.includes(name)) districtTiles.clear();
@@ -124,6 +129,19 @@ setupControls({
     dirty = true;
   },
 });
+
+function rebuild() {
+  world = createWorld(state.seed, { population: state.population });
+  showSite();
+  card.close();
+  renderer.selected = null;
+  blockCache.clear();
+  renderer.clearVectorTiles();
+  noiseTiles.clear();
+  districtTiles.clear();
+  dirty = true;
+  urlSync.now();
+}
 
 window.addEventListener('resize', () => {
   renderer.resize();
