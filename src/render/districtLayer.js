@@ -15,7 +15,7 @@ const TRAM_WIDTH = 7;
 export const MAIN_STREET_MIN_ZOOM = 0.02;
 const TRAM_MIN_ZOOM = 0.2;
 const TUNNEL_MIN_ZOOM = 0.05;
-const GREENWAY_DETAIL_ZOOM = 0.15; // streams from here; trails, paths and woods closer in
+const GREENWAY_DETAIL_ZOOM = 0.15; // streams from here; trails and paths closer in
 const STOP_MIN_ZOOM = 0.25;
 const TRANSIT_MIN_ZOOM = 0.008;
 const VIADUCT = 11; // metres: a two-track viaduct's width
@@ -24,7 +24,7 @@ import { palette } from './styles.js';
 import { TRAIL_WIDTH } from '../world/greenway.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
-import { DETAIL_MIN_ZOOM, drawSection, streetExtras, drawRails, drawTrees, drawJunctions, drawStops, offsetLine } from './streetDetail.js';
+import { DETAIL_MIN_ZOOM, drawSection, streetExtras, drawRails, drawJunctions, drawStops, offsetLine } from './streetDetail.js';
 
 export const LOD_STEPS = [
   [0.4, 25],
@@ -258,7 +258,7 @@ export function drawDistricts(ctx, view, world, layers) {
       ctx.fill(p.parks);
     }
     // Linear parks along neighbourhood boundaries: green, a trail down the
-    // middle, paths in from the streets, trees along both sides.
+    // middle, paths in from the streets.
     for (const { d } of items) {
       const b = view.blocks ? view.blocks(d) : null;
       if (!b || !b.linearParks || !b.linearParks.length) continue;
@@ -308,7 +308,7 @@ export function drawDistricts(ctx, view, world, layers) {
     }
   }
 
-  // What is in the greenways: woods, the stream, the trail and the paths in.
+  // What is in the greenways: the stream, the trail and the paths in.
   if (layers.green && zoom >= GREENWAY_DETAIL_ZOOM) drawGreenwayDetail(ctx, view, world, items, place, px);
 
   // The metro runs underground: a dashed line under the buildings. Regional
@@ -432,7 +432,7 @@ function drawLinearParks(ctx, list, origin, zoom, px) {
   let p = linearCache.get(list);
   if (!p) {
     const [ox, oy] = origin;
-    p = { fill: new Path2D(), trail: new Path2D(), links: new Path2D(), trees: [] };
+    p = { fill: new Path2D(), trail: new Path2D(), links: new Path2D() };
     for (const lp of list) {
       p.fill.moveTo(lp.pts[0][0] - ox, lp.pts[0][1] - oy);
       for (const q of lp.pts.slice(1)) p.fill.lineTo(q[0] - ox, q[1] - oy);
@@ -443,7 +443,6 @@ function drawLinearParks(ctx, list, origin, zoom, px) {
         p.links.moveTo(a[0] - ox, a[1] - oy);
         p.links.lineTo(b[0] - ox, b[1] - oy);
       }
-      for (const side of [1, -1]) p.trees.push(...streetExtrasTrees(lp.centre, side * (lp.width / 2 - 5)));
     }
     linearCache.set(list, p);
   }
@@ -458,27 +457,8 @@ function drawLinearParks(ctx, list, origin, zoom, px) {
     ctx.lineWidth = Math.max(3, px(1.2)) + extra;
     ctx.stroke(p.links);
   }
-  if (zoom >= 0.9) drawTrees(ctx, p.trees, origin[0], origin[1], px);
 }
 
-// Trees every 12 m along a line moved d to one side.
-function streetExtrasTrees(P, d) {
-  const L = offsetLine(P, d);
-  const out = [];
-  let carry = 6;
-  for (let i = 0; i < L.length - 1; i++) {
-    const a = L[i];
-    const b = L[i + 1];
-    const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    let s = carry;
-    while (s < l) {
-      out.push([a[0] + ((b[0] - a[0]) * s) / l, a[1] + ((b[1] - a[1]) * s) / l]);
-      s += 12;
-    }
-    carry = s - l;
-  }
-  return out;
-}
 
 // Each stretch of greenway is drawn by both districts beside it, the same
 // way, so the join is invisible.
@@ -493,13 +473,7 @@ function greenwayPathsFor(g, origin) {
     for (let i = 1; i < L.length; i++) path.lineTo(L[i][0] - ox, L[i][1] - oy);
     return path;
   };
-  const trees = new Path2D();
-  for (const [x, y] of g.trees) {
-    const r = 3.4 + ((Math.floor(x * 3.7) ^ Math.floor(y * 5.3)) & 7) * 0.35;
-    trees.moveTo(x - ox + r, y - oy);
-    trees.arc(x - ox, y - oy, r, 0, Math.PI * 2);
-  }
-  p = { origin, stream: line(g.stream), trail: line(g.trail), trees };
+  p = { origin, stream: line(g.stream), trail: line(g.trail) };
   greenwayPaths.set(g, p);
   return p;
 }
@@ -510,13 +484,6 @@ function drawGreenwayDetail(ctx, view, world, items, place, px) {
   for (const { d } of items) for (const c of d.chains) ways.push({ d, p: greenwayPathsFor(world.greenway(c.geo), d.origin), g: world.greenway(c.geo) });
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  if (zoom >= 0.6) {
-    ctx.fillStyle = palette.woods;
-    for (const { d, p } of ways) {
-      place(d);
-      ctx.fill(p.trees);
-    }
-  }
   for (const { d, p, g } of ways) {
     place(d);
     ctx.strokeStyle = palette.streamBank;
@@ -556,7 +523,7 @@ function drawGreenwayDetail(ctx, view, world, items, place, px) {
 }
 
 // Boulevards and main streets to scale: cross-sections, junctions paved
-// over, rails, trees and tram stops.
+// over, rails and tram stops.
 function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
   const { x0, y0, s } = view;
   const blocksOf = (d) => (view.blocks ? view.blocks(d) : null);
@@ -568,7 +535,7 @@ function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
     ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
     drawSection(ctx, path, 'boulevard', px);
   }
-  // Junctions, then rails and trees (kept clear of junctions and stops).
+  // Junctions, then rails.
   for (const { d } of hoods) {
     const b = blocksOf(d);
     if (!b || !b.junctions) continue;
@@ -577,20 +544,16 @@ function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
   }
   for (const { d } of hoods) {
     const b = blocksOf(d);
-    const clear = b && b.junctions ? [...b.junctions, ...b.tramStops.map((t) => t.p)] : [];
-    const avoid = (q) => clear.some((c) => Math.abs(c[0] - q[0]) < 24 && Math.abs(c[1] - q[1]) < 24);
     place(d);
     const [ox, oy] = d.origin;
     for (const l of world.neighbourhoods(d).lines) {
-      const e = streetExtras(l.points, 'mainStreet', avoid);
+      const e = streetExtras(l.points, 'mainStreet');
       drawRails(ctx, e.rails, ox, oy, px);
-      drawTrees(ctx, e.trees, ox, oy, px);
     }
     for (const l of d.network.lines) {
       if (l.kind === 'roundabout') continue;
-      const e = streetExtras(l.points, 'boulevard', avoid);
+      const e = streetExtras(l.points, 'boulevard');
       drawRails(ctx, e.rails, ox, oy, px);
-      drawTrees(ctx, e.trees, ox, oy, px);
     }
     if (b && b.tramStops) drawStops(ctx, b.tramStops, ox, oy, px);
   }

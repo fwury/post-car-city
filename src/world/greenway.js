@@ -7,24 +7,20 @@
 //     natural streams settle into); it takes heavy rain off the streets;
 //   - the trail, wide enough for people walking and cycling both ways, runs
 //     along one side, following the stream's bends loosely;
-//   - woodland comes in patches.
 //
 // Everything is a pure function of the stretch of greenway, so the two
 // districts either side draw the same thing.
 
 import { hash, hashString, toUnit } from '../core/hash.js';
-import { createNoise } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { resample, chaikin } from '../util/geom.js';
 
 const STEP = 6; // metres between points along a greenway
 const STREAM_WIDTH = [4, 7];
 export const TRAIL_WIDTH = 4;
-const TREE_GRID = 13;
 
 export function createGreenways(seed, { greenwayWidth }) {
   const cache = new LruCache(4000);
-  const woods = createNoise(seed, 'greenway-woods');
 
   function of(geo) {
     let g = cache.get(geo.key);
@@ -122,27 +118,10 @@ export function createGreenways(seed, { greenwayWidth }) {
       return a / c;
     });
     for (let i = 0; i < n; i++) trail.push([P[i][0] + N[i][0] * tSm[i], P[i][1] + N[i][1] * tSm[i]]);
-    // Woodland in patches, clear of the stream and trail.
-    const trees = [];
-    let acc = 0;
-    for (let i = 0; i < n; i++) {
-      if (i) acc += STEP;
-      if (acc < TREE_GRID && i) continue;
-      acc = 0;
-      for (let o = -half[i] + 7; o <= half[i] - 7; o += TREE_GRID) {
-        const j = (o * 7.3 + i * 3.1) % 1;
-        const off = o + (u(10, i, Math.round(o)) - 0.5) * 6;
-        const q = [P[i][0] + N[i][0] * off, P[i][1] + N[i][1] * off];
-        if (Math.abs(off - mOff[i]) < 9 || Math.abs(off - tSm[i]) < 7) continue;
-        if (woods.fbm(q[0] / 240, q[1] / 240, 2) + j * 0 < 0.05) continue;
-        trees.push(q);
-      }
-    }
     g = {
       stream: chaikin(resample(stream, 4), false),
       trail: chaikin(trail, false),
       streamWidth: STREAM_WIDTH[0] + u(4) * (STREAM_WIDTH[1] - STREAM_WIDTH[0]),
-      trees,
       centre: P,
       half,
       side,

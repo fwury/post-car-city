@@ -7,7 +7,7 @@ import { palette } from './styles.js';
 import { USES } from '../world/uses.js';
 import { STREET_TYPES } from '../world/streetTypes.js';
 import { BUILDING_MIN_ZOOM, paths2D, items3D, drawBuildings } from './buildingLayer.js';
-import { DETAIL_MIN_ZOOM, drawSection, localTrees, drawTrees } from './streetDetail.js';
+import { DETAIL_MIN_ZOOM, drawSection } from './streetDetail.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { ALLEY } from '../world/plots.js';
 
@@ -316,12 +316,6 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
     }
   }
   ctx.lineCap = 'round';
-  if (detail) {
-    for (const { d, ch } of list) {
-      place(d);
-      drawTrees(ctx, ch.trees || (ch.trees = localTrees(ch.segs)), d.origin[0], d.origin[1], px);
-    }
-  }
   if (zoom >= PLOT_MIN_ZOOM) {
     ctx.strokeStyle = palette.plotLine;
     ctx.lineWidth = px(0.6);

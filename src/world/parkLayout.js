@@ -85,7 +85,6 @@ class Site {
     this.features = [];
     this.paths = [];
     this.solid = []; // polygons nothing else may overlap
-    this.treeOk = new Set(); // ... of which trees may stand in these
   }
 
   clearOfPaths(R, gap) {
@@ -123,7 +122,6 @@ class Site {
     const f = w ? { kind, pts: best.R } : { kind, c: best.c, r: l };
     this.features.push(f);
     this.solid.push(best.R);
-    if (opts.trees) this.treeOk.add(best.R);
     return f;
   }
 
@@ -146,46 +144,6 @@ class Site {
       }
     }
     return null;
-  }
-
-  // Trees scattered with at least `gap` between them, off paths and features.
-  trees(gap, keep = () => true, max = 4000) {
-    const out = [];
-    const cell = gap / Math.SQRT2;
-    const grid = new Map();
-    const key = (x, y) => `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
-    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
-    for (const [x, y] of this.P) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
-    const attempts = Math.min(max * 4, Math.ceil(((x1 - x0) * (y1 - y0)) / (gap * gap)) * 3);
-    // What trees keep off: placed things (grown a little) and path points,
-    // the latter by grid cell.
-    const blocked = this.solid.filter((S) => !this.treeOk.has(S)).map((S) => grow(S, 2));
-    const PC = 8;
-    const pathCells = new Set();
-    for (const { pts } of this.paths) {
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i];
-        const b = pts[i + 1];
-        const k = Math.max(1, Math.ceil(len(sub(b, a)) / 3));
-        for (let j = 0; j <= k; j++) pathCells.add(`${Math.floor((a[0] + ((b[0] - a[0]) * j) / k) / PC)},${Math.floor((a[1] + ((b[1] - a[1]) * j) / k) / PC)}`);
-      }
-    }
-    for (let t = 0; t < attempts && out.length < max; t++) {
-      const q = [x0 + (x1 - x0) * this.rng.next(), y0 + (y1 - y0) * this.rng.next()];
-      if (!inside(this.inner, q) || !keep(q)) continue;
-      if (pathCells.has(`${Math.floor(q[0] / PC)},${Math.floor(q[1] / PC)}`)) continue;
-      if (blocked.some((S) => inside(S, q))) continue;
-      let near = false;
-      const gx = Math.floor(q[0] / cell);
-      const gy = Math.floor(q[1] / cell);
-      for (let i = -2; i <= 2 && !near; i++) for (let j = -2; j <= 2 && !near; j++) for (const o of grid.get(`${gx + i},${gy + j}`) || []) if (len(sub(o, q)) < gap) near = true;
-      if (near) continue;
-      out.push(q);
-      const k = key(q[0], q[1]);
-      if (!grid.has(k)) grid.set(k, []);
-      grid.get(k).push(q);
-    }
-    return out;
   }
 
   result(extra = {}) {
@@ -225,8 +183,7 @@ export function layoutParkette(P, rng) {
   const b = [c[0] + u[0] * L * 0.5, c[1] + u[1] * L * 0.5];
   s.bend(a, b, 2.5, 0.2);
   if (A > 550) s.place('playground', 14, 11, { gap: 2 });
-  const trees = s.trees(9);
-  return s.result({ trees });
+  return s.result();
 }
 
 // The neighbourhood park; returns its layout and the community centre's
@@ -303,8 +260,7 @@ export function layoutNeighbourhoodPark(P, rng, opts = {}) {
   s.place('washroom', 9, 6, { gap: 2 });
   // A fountain or a statue where paths cross, else in the open.
   s.place(rng.next() < 0.6 ? 'fountain' : 'statue', 5, 0, { gap: 1 });
-  const trees = s.trees(19);
-  return { ...s.result({ trees }), centre };
+  return { ...s.result(), centre };
 }
 
 // A secondary school's grounds: a 400 m track round a field if it fits,
@@ -325,11 +281,11 @@ export function layoutSchool(P, building, rng, secondary) {
     s.place('pitch', 60, 40, { tries: 120 });
     s.place('playground', 30, 24);
   }
-  return s.result({ trees: s.trees(16, () => true, 60) });
+  return s.result();
 }
 
 // A district park: trails between clearings, sports, water and woods.
-export function layoutDistrictPark(P, rng, wooded) {
+export function layoutDistrictPark(P, rng) {
   const s = new Site(P, rng, 10);
   const A = polygonArea(P);
   // Places first, as they need room: fields, a pond, courts, a dog park.
@@ -352,7 +308,7 @@ export function layoutDistrictPark(P, rng, wooded) {
   s.place('basketball', 28, 15);
   s.place('dogPark', 90, 60, { tries: 100 });
   if (rng.next() < 0.4) s.place('pool', 70, 45, { tries: 100 });
-  if (rng.next() < 0.35 && A > 3e5) s.place('cemetery', 230, 160, { tries: 160, trees: true });
+  if (rng.next() < 0.35 && A > 3e5) s.place('cemetery', 230, 160, { tries: 160 });
   s.place('playground', 40, 30);
   s.place('splash', 12, 0);
   s.place('skate', 40, 28);
@@ -392,12 +348,7 @@ export function layoutDistrictPark(P, rng, wooded) {
     const n = nodes.slice().sort((x, y) => len(sub(x, e)) - len(sub(y, e)))[0];
     if (n) s.bend(e, n, 4, 0.2);
   }
-  // Woods where the ground is wooded, sparse trees elsewhere; the cemetery
-  // is a woodland too, its paths in a grid among the trees.
-  const cem = s.features.find((f) => f.kind === 'cemetery');
-  const woods = s.trees(10, (q) => wooded(q) || (cem && inside(cem.pts, q)), 3000);
-  const lawn = s.trees(30, (q) => !wooded(q), 600);
-  return s.result({ trees: woods.concat(lawn) });
+  return s.result();
 }
 
 // A running-track shape: straights of length l joined by semicircles of radius r.
