@@ -10,7 +10,7 @@
 //
 // Paths are built once per chunk of a district and kept.
 
-export const BUILDING_MIN_ZOOM = 0.7;
+export const BUILDING_MIN_ZOOM = 1;
 const SHADOW = [0.22, 0.3]; // shadow offset in metres per metre of height
 const RAISE = [0.32, -0.8]; // where a point h metres up is drawn, per metre
 const VIEW = [-RAISE[0], -RAISE[1]]; // towards the viewer

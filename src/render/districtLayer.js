@@ -15,8 +15,10 @@ const TRAM_WIDTH = 7;
 export const MAIN_STREET_MIN_ZOOM = 0.02;
 const TRAM_MIN_ZOOM = 0.2;
 const TUNNEL_MIN_ZOOM = 0.05;
+const STOP_MIN_ZOOM = 0.25; // tram stops as markers from here (to scale from DETAIL_MIN_ZOOM)
 import { palette } from './styles.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
+import { DETAIL_MIN_ZOOM, drawSection, streetExtras, drawRails, drawTrees, drawJunctions, drawStops } from './streetDetail.js';
 
 export const LOD_STEPS = [
   [0.4, 25],
@@ -160,7 +162,9 @@ export function drawDistricts(ctx, view, world, layers) {
   const lines = net ? net.lines.map((b) => ({ b, path: boulevardPath(b) })) : [];
   const w = Math.max(BOULEVARD_WIDTH, px(zoom < 0.03 ? 1.1 : 1.6));
   const mw = Math.max(MAIN_STREET_WIDTH, px(zoom < 0.03 ? 0.7 : 1.1));
-  if (layers.streets) {
+  if (layers.streets && zoom >= DETAIL_MIN_ZOOM) {
+    drawDetailedStreets(ctx, view, world, hoods, lines, place, px);
+  } else if (layers.streets) {
     const casing = zoom >= 0.05;
     const passes = casing ? [[palette.roadCasing, px(1.5)], [palette.road, 0]] : [[palette.road, 0]];
     for (const [colour, extra] of passes) {
@@ -189,6 +193,26 @@ export function drawDistricts(ctx, view, world, layers) {
       for (const { b, path } of lines) {
         ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
         ctx.stroke(path);
+      }
+    }
+    // Tram stops, as small markers, once a district's blocks are in.
+    if (zoom >= STOP_MIN_ZOOM && view.blocks) {
+      const r = px(3.2);
+      for (const { d } of hoods) {
+        const b = view.blocks(d);
+        if (!b || !b.tramStops) continue;
+        place(d);
+        ctx.beginPath();
+        for (const st of b.tramStops) {
+          const [x, y] = [st.p[0] - d.origin[0], st.p[1] - d.origin[1]];
+          ctx.moveTo(x + r, y);
+          ctx.arc(x, y, r, 0, Math.PI * 2);
+        }
+        ctx.fillStyle = '#ffffff';
+        ctx.fill();
+        ctx.strokeStyle = palette.tram;
+        ctx.lineWidth = px(1.6);
+        ctx.stroke();
       }
     }
     // Roundabout islands.
@@ -292,6 +316,47 @@ export function drawDistricts(ctx, view, world, layers) {
   }
 
   return items;
+}
+
+// Boulevards and main streets to scale: cross-sections, junctions paved
+// over, rails, trees and tram stops.
+function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
+  const { x0, y0, s } = view;
+  const blocksOf = (d) => (view.blocks ? view.blocks(d) : null);
+  for (const { d, h } of hoods) {
+    place(d);
+    drawSection(ctx, h.streets, 'mainStreet', px);
+  }
+  for (const { b, path } of lines) {
+    ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
+    drawSection(ctx, path, 'boulevard', px);
+  }
+  // Junctions, then rails and trees (kept clear of junctions and stops).
+  for (const { d } of hoods) {
+    const b = blocksOf(d);
+    if (!b || !b.junctions) continue;
+    place(d);
+    drawJunctions(ctx, b.junctions, d.origin[0], d.origin[1], 8.5);
+  }
+  for (const { d } of hoods) {
+    const b = blocksOf(d);
+    const clear = b && b.junctions ? [...b.junctions, ...b.tramStops.map((t) => t.p)] : [];
+    const avoid = (q) => clear.some((c) => Math.abs(c[0] - q[0]) < 24 && Math.abs(c[1] - q[1]) < 24);
+    place(d);
+    const [ox, oy] = d.origin;
+    for (const l of world.neighbourhoods(d).lines) {
+      const e = streetExtras(l.points, 'mainStreet', avoid);
+      drawRails(ctx, e.rails, ox, oy, px);
+      drawTrees(ctx, e.trees, ox, oy, px);
+    }
+    for (const l of d.network.lines) {
+      if (l.kind === 'roundabout') continue;
+      const e = streetExtras(l.points, 'boulevard', avoid);
+      drawRails(ctx, e.rails, ox, oy, px);
+      drawTrees(ctx, e.trees, ox, oy, px);
+    }
+    if (b && b.tramStops) drawStops(ctx, b.tramStops, ox, oy, px);
+  }
 }
 
 // Thin district outlines along the greenway centrelines (debug).

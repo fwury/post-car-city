@@ -22,6 +22,8 @@ self.onmessage = (e) => {
         })),
         streets: b.streets,
         hoodLines: b.hoodLines,
+        tramStops: b.tramStops,
+        junctions: b.junctions,
         planned: b.planned,
         housed: b.programme.housed,
       };

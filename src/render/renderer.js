@@ -128,7 +128,10 @@ export class Renderer {
     ctx.fillStyle = palette.land;
     ctx.fillRect(0, 0, res, res);
     const s = res / tile.size;
-    const view = { x0: tile.x0, y0: tile.y0, s, w: res, h: res, zoom: s / this.dpr, pr: this.dpr, blocks: this.blocksFor };
+    // A tile is shown at between half and all of its own scale: it takes
+    // its detail from the farther of the two, so it is never busier than
+    // the map drawn live would be.
+    const view = { x0: tile.x0, y0: tile.y0, s, w: res, h: res, zoom: s / this.dpr / 2, pr: this.dpr, blocks: this.blocksFor };
     const items = drawDistricts(ctx, view, this.getWorld(), this.state.layers);
     if (this.state.layers.outlines) drawDistrictOutlines(ctx, view, items);
     return { canvas, res };
