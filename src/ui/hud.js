@@ -73,9 +73,9 @@ export function createHud(el) {
       const level = tiles.levelFor(z);
       const rows = [
         ['Cursor', cursor ? `${fmt(cursor[0])} m, ${fmt(cursor[1])} m` : 'off map'],
-        ['District', d ? `${km2(d.area)}, core ${ha(d.coreArea)}, ${d.stage3.hoods.length - 1} neighbourhoods, ${d.neighbours.length} neighbouring districts` : 'none'],
+        ['District', d ? `${world.names.district(d)}, ${km2(d.area)}, core ${ha(d.coreArea)}, ${d.stage3.hoods.length - 1} neighbourhoods, ${d.neighbours.length} neighbouring districts` : 'none'],
         ['Neighbourhood', !h ? 'none' : byBlock
-          ? `${h.character}, planned for ${people(b.planned[h.id])} people, housing ${people(b.housed[h.id])}`
+          ? `${world.names.hood(d, h)}: ${h.character}, planned for ${people(b.planned[h.id])} people, housing ${people(b.housed[h.id])}`
           : `${h.character}, ${people(h.population)} people on ${km2(h.area)} (${people(h.density)} per km²)`],
         ['Plot', plot || 'none'],
         ['Links', d ? `${d.links} boulevard links, ${d.stage3.lines.length} main streets` : 'none'],

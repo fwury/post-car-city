@@ -90,7 +90,7 @@ input.onTap = ([sx, sy]) => {
     renderer.selected = null;
   } else {
     const hood = hit.d.stage3.hoods.find((h) => h.id === hit.block.hood);
-    card.show(hit, hood ? `${hood.character}, ${hit.d.key}` : null);
+    card.show(hit, hood ? `${world.names.hood(hit.d, hood)}, ${world.names.district(hit.d)}` : world.names.district(hit.d));
     renderer.selected = hit.plot.bldg;
   }
   dirty = true;

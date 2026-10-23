@@ -6,6 +6,7 @@ import { createNoise, createWarp } from '../core/noise.js';
 import { drawDistricts, drawDistrictOutlines, renderDistrictTile } from './districtLayer.js';
 import { palette, fonts } from './styles.js';
 import { TileManager } from './tiles.js';
+import { drawLabels } from './labels.js';
 
 export const VECTOR_MIN_ZOOM = 0.1; // below this, districts are drawn from tiles (rendered in workers)
 export const LIVE_MIN_ZOOM = 2; // from here in, drawn live; between, from tiles drawn here and kept
@@ -205,6 +206,7 @@ export class Renderer {
     }
 
     if (this.selected) this.drawSelection(this.selected, L.heights === '3d');
+    if (L.labels !== false) drawLabels(ctx, camera, this.getWorld(), this.blocksFor || (() => null));
 
     if (L.noise) {
       ctx.globalAlpha = 0.55;

@@ -36,6 +36,7 @@ import { assignBuildings } from './buildings.js';
 import { tramStops } from './tram.js';
 import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
 import { createNoise } from '../core/noise.js';
+import { createNames } from './names.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
 import { distToLine } from './boulevards.js';
@@ -227,6 +228,42 @@ function splay(res) {
   return { pts, src };
 }
 
+// Join segments [a, b] that share ends into polylines (either way round).
+function joinSegs(segs) {
+  const key = (p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`;
+  const ends = new Map();
+  segs.forEach((s, i) => {
+    for (const e of [0, 1]) {
+      const k = key(s[e]);
+      if (!ends.has(k)) ends.set(k, []);
+      ends.get(k).push(i);
+    }
+  });
+  const used = new Uint8Array(segs.length);
+  const out = [];
+  const extend = (line, atEnd) => {
+    for (;;) {
+      const tip = atEnd ? line[line.length - 1] : line[0];
+      const next = (ends.get(key(tip)) || []).find((j) => !used[j]);
+      if (next === undefined) return;
+      used[next] = 1;
+      const [a, b] = segs[next];
+      const other = key(a) === key(tip) ? b : a;
+      if (atEnd) line.push(other);
+      else line.unshift(other);
+    }
+  };
+  for (let i = 0; i < segs.length; i++) {
+    if (used[i]) continue;
+    used[i] = 1;
+    const line = [segs[i][0], segs[i][1]];
+    extend(line, true);
+    extend(line, false);
+    out.push(line);
+  }
+  return out;
+}
+
 // Join polylines that meet end to start into longer ones.
 function joinRuns(runs) {
   const key = (p) => `${p[0].toFixed(1)},${p[1].toFixed(1)}`;
@@ -252,6 +289,7 @@ function joinRuns(runs) {
 
 export function createBlocks(seed, { greenwayWidth, greenway }) {
   const parkWoods = createNoise(seed, 'park-woods');
+  const names = createNames(seed);
   const cache = new LruCache(64);
 
   function of(d) {
@@ -1387,6 +1425,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
 
     // Local and pedestrian streets as centrelines, joined up from block sides.
     const local = [];
+    const usedNames = new Set();
     for (const { tag, kind, width, segs } of streets.values()) {
       // Each side appears twice (once from each block): keep one copy.
       const seen = new Set();
@@ -1398,7 +1437,22 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
         seen.add(k1);
         keep.push([a, b]);
       }
-      local.push({ id: tag.id, kind, width, segs: keep });
+      // Joined into lines (for its name along it), and named by its shape.
+      const lines = joinSegs(keep);
+      let length = 0;
+      for (const [a, b] of keep) length += len(sub(b, a));
+      const main = lines.slice().sort((x, y) => y.length - x.length)[0] || [];
+      let turn = 0;
+      for (let i = 1; i < main.length - 1; i++) {
+        const a = unit(sub(main[i], main[i - 1]));
+        const b = unit(sub(main[i + 1], main[i]));
+        turn += Math.atan2(cross(a, b), dot(a, b));
+      }
+      // (No two streets of a district share a name.)
+      let name = null;
+      for (let salt = 0; salt < 8 && (!name || usedNames.has(name.short)); salt++) name = names.street(kind === 'pedestrian' ? 'pedestrian' : 'local', hashString(`${d.key}:${tag.id}`), { length, curved: Math.abs(turn) > 1.1 }, salt);
+      usedNames.add(name.short);
+      local.push({ id: tag.id, kind, width, segs: keep, lines, name });
     }
 
     // ---- Neighbourhoods, block by block ----
