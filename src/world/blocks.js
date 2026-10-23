@@ -58,7 +58,7 @@ const ALIGN = 34; // a new street this close to one meeting the far side lines u
 const JOG = 48; // and otherwise keeps at least this far from it
 const SQUARE_AREA = [0.5e4, 1.7e4]; // m², centreline, for a neighbourhood square
 const PARK_PAIR_AREA = [4.2e4, 9.5e4]; // m², centreline, for a park and school side by side
-const PARK_SHARE = 0.62; // of that pair, the park's share
+const PARK_SHARE = 0.5; // of that pair, the park's share (the school's grounds take the rest, track and all)
 const PARK_SITE_SET_BACK = 150; // metres a park's site keeps from main streets
 const REMNANT = 0.12e4; // m², net: a block smaller than this is left green
 const STEP = 10; // metres between points of a new street
@@ -1185,7 +1185,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
         if (pk) {
           parkOf.set(pk.id, node);
           let kids = null;
-          for (const at of [PARK_SHARE, 0.55, 0.68]) if (!kids) kids = split(node, ax, 'campus', { at, force: true, along: false });
+          for (const at of [PARK_SHARE, 0.45, 0.58]) if (!kids) kids = split(node, ax, 'campus', { at, force: true, along: false });
           if (kids) {
             // The park is the larger piece.
             const [a, b] = kids[0].pts && polygonArea(kids[0].pts) >= polygonArea(kids[1].pts) ? kids : [kids[1], kids[0]];
@@ -1501,19 +1501,18 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
     const tram = tramStops(d, blocks, local);
     // What is in the parks, and the schools' grounds.
     const parkRng = rngFor(seed, 'park-layout', ...keyInts(d.coreInfo));
-    // Schools first: a secondary school whose grounds have no room for its
-    // track has it in the park next door.
-    const trackIn = new Set();
+    // Schools' grounds: a track and field where there is room.
     for (const b of blocks) {
       if (!b.plots || !b.plots.length || (b.use !== 'school' && b.use !== 'elementarySchool')) continue;
       const q = b.plots[0];
-      b.layout = layoutSchool(b.pts, q.bldg && q.bldg.pts, parkRng, b.use === 'school');
-      if (b.use === 'school' && !b.layout.features.some((f) => f.kind === 'track')) trackIn.add(b.hood);
+      b.layout = layoutSchool(b.pts, parkRng, b.use === 'school');
+      // The building where the grounds leave room for it.
+      if (q.bldg && b.layout.building) q.bldg = { ...q.bldg, pts: b.layout.building, ridge: null };
     }
     for (const b of blocks) {
       if (!b.plots || !b.plots.length) continue;
       if (b.use === 'park') {
-        b.layout = layoutNeighbourhoodPark(b.pts, parkRng, { track: trackIn.has(b.hood) });
+        b.layout = layoutNeighbourhoodPark(b.pts, parkRng);
         if (b.layout.centre) {
           b.plots[0].bldg = communityCentre(b.layout.centre);
           b.plots[0].also = 'communityCentre';

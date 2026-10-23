@@ -7,7 +7,7 @@ const FILL = {
   playground: '#f1dcae', splash: '#a9d9f2', skate: '#d9d6d0', court: '#8fb3cf', basketball: '#d99a73', tennis: '#6fa77c',
   pitch: '#93c97f', track: '#d4846a', trackField: '#93c97f', dogRun: '#d6e5c4', dogPark: '#d6e5c4', gardens: '#c4d9a2',
   washroom: '#d8d0c3', kiosk: '#e3c7a5', fountain: '#a9d9f2', statue: '#b7b2aa', pond: '#9fcff2', pool: '#e6e0d4',
-  cemetery: '#cfe0c1',
+  cemetery: '#cfe0c1', plaza: '#f1ece2',
 };
 const MARKED = new Set(['pitch', 'tennis', 'basketball', 'court', 'trackField']);
 const FENCED = new Set(['dogRun', 'dogPark', 'gardens', 'cemetery']);

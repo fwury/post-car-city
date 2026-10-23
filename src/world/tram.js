@@ -96,13 +96,39 @@ export function tramStops(d, blocks, local = []) {
   // Where every street meets a tram street, stops keep clear: the tram
   // streets' own junctions and the local streets meeting them.
   const avoid = junctions.map((j) => j.slice());
+  // Tram street segments by grid cell, to find the ones near a point.
+  const G = 40;
+  const grid = new Map();
+  lines.forEach((l, li) => {
+    for (let i = 0; i < l.pts.length - 1; i++) {
+      const [a, c] = [l.pts[i], l.pts[i + 1]];
+      for (let gx = Math.floor((Math.min(a[0], c[0]) - 24) / G); gx <= Math.floor((Math.max(a[0], c[0]) + 24) / G); gx++) {
+        for (let gy = Math.floor((Math.min(a[1], c[1]) - 24) / G); gy <= Math.floor((Math.max(a[1], c[1]) + 24) / G); gy++) {
+          const k = gx * 100003 + gy;
+          if (!grid.has(k)) grid.set(k, []);
+          grid.get(k).push([li, i]);
+        }
+      }
+    }
+  });
+  const seen = new Set();
   for (const st of local) {
     for (const [a, c] of st.segs) {
       for (const q of [a, c]) {
-        lines.forEach((l, li) => {
-          const pr = project(l.pts, l.cum, q);
-          if (pr.r < 24) avoid[li].push(pr.s);
-        });
+        const key = `${Math.round(q[0])},${Math.round(q[1])}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        const best = new Map();
+        for (const [li, i] of grid.get(Math.floor(q[0] / G) * 100003 + Math.floor(q[1] / G)) || []) {
+          const l = lines[li];
+          const p0 = l.pts[i];
+          const d = sub(l.pts[i + 1], p0);
+          const l2 = d[0] * d[0] + d[1] * d[1];
+          const t = l2 ? Math.max(0, Math.min(1, ((q[0] - p0[0]) * d[0] + (q[1] - p0[1]) * d[1]) / l2)) : 0;
+          const r = Math.hypot(p0[0] + d[0] * t - q[0], p0[1] + d[1] * t - q[1]);
+          if (r < 24 && (!best.has(li) || r < best.get(li).r)) best.set(li, { r, s: l.cum[i] + Math.sqrt(l2) * t });
+        }
+        for (const [li, v] of best) avoid[li].push(v.s);
       }
     }
   }
