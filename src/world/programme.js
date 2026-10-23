@@ -25,7 +25,7 @@ import { hash, toUnit } from '../core/hash.js';
 import { keyInts } from './cores.js';
 import { polygonArea, signedArea } from '../util/geom.js';
 import {
-  USES, EVERYDAY, EVERYDAY_REACH, NEIGHBOURHOOD_LIST, HIGH_STREET_MIX, UPSTAIRS_MIX, CORNER_MIX, WORSHIP_MIX,
+  USES, EVERYDAY, EVERYDAY_REACH, NEIGHBOURHOOD_LIST, HIGH_STREET_MIX, UPSTAIRS_MIX, OFFICE_MIX, CORNER_MIX, WORSHIP_MIX,
   DISTRICT_LIST, SUBDISTRICT_LIST,
 } from './uses.js';
 
@@ -46,18 +46,20 @@ const CORNER_SHOPS = 0.45; // ... of rowhouse end plots
 // Buildings by plot class: usual storeys, their range, the depth of the
 // building from the street where the plot runs deeper (rowhouse gardens).
 const HEIGHTS = {
-  main: { base: 6, storeys: [4, 9] },
-  unit: { base: 5, storeys: [3, 8] },
-  unitShop: { base: 5, storeys: [3, 8] },
-  corner: { base: 5, storeys: [3, 8] },
-  podium: { base: 7, storeys: [4, 10] }, // the core's street wall
-  podiumTower: { base: 16, storeys: [8, 30], tower: true }, // a corner podium with a tower over it
+  main: { base: 6, storeys: [4, 10] },
+  unit: { base: 5, storeys: [3, 9] },
+  unitShop: { base: 5, storeys: [3, 9] },
+  corner: { base: 5, storeys: [3, 9] },
+  podium: { base: 7, storeys: [5, 10] }, // a core building without a tower: shops, offices, flats above
+  podiumTower: { base: 22, storeys: [12, 40], tower: true }, // a podium of shops and offices with a tower of flats over it
   house: { base: 3, storeys: [2, 5], depth: 15, house: true },
   rowCorner: { base: 3, storeys: [2, 5], depth: 15, house: true },
   cornerShop: { base: 3, storeys: [2, 5], depth: 15, house: true },
 };
 export const PODIUM_STOREYS = 5; // a tower's podium
-const TOWER_SHARE = 0.3; // of the core's corner plots, those with a tower
+const TOWER_SHARE = 0.8; // of the core's buildings by the station, those with a tower
+const TOWER_SITE = 1100; // m²: the least a building needs for a tower
+const PODIUM_RANGE = [4, 6]; // storeys of a tower's podium: a floor of shops, the rest offices
 export const TOWER_PLATE = 650; // m², a residential tower's floor
 const DWELLING = 85; // m² of floor to a home, walls and stairs included
 const NET_SHARE = 0.85; // of a floor, the share that is homes (the rest stairs, halls)
@@ -295,7 +297,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   function dedicate(q, use, classes, reach, minArea) {
     let best = null;
     for (const p of near(q, reach)) {
-      if (!classes.includes(p.cls) || taken(p, 'dedicated')) continue;
+      // (A core building whose shops are let may still be given over whole.)
+      if (!classes.includes(p.cls) || (p.cls === 'podium' ? p.dedicated : taken(p, 'dedicated'))) continue;
       const r = len(sub(p.c, q));
       const area = polygonArea(p.pts);
       const fits = area >= minArea;
@@ -324,6 +327,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     }
     p.dedicated = use;
     p.cls = 'dedicated';
+    p.ground = null;
+    p.upper = null;
     return p;
   }
   // A block nothing has been put on yet.
@@ -375,7 +380,9 @@ export function assignProgramme(seed, d, blocks, planned = null) {
             .sort((x, y) => len(sub(centroid(x.pts), q)) - len(sub(centroid(y.pts), q)))[0];
           if (b && len(sub(centroid(b.pts), q)) < 900) dedicateBlock(b, use);
         } else if (how === 'dedicated') {
-          dedicate(q, use, use === 'fireStation' ? ['main'] : ['main', 'corner'], 700, use === 'performingArts' ? 1500 : 700);
+          // (A fire station on a main street if one is free, else round the corner.)
+          const p = dedicate(q, use, use === 'fireStation' ? ['main'] : ['main', 'corner'], 700, use === 'performingArts' ? 1500 : 700);
+          if (!p && use === 'fireStation') dedicate(q, use, ['corner', 'unit'], 700, 700);
         } else {
           const p = nearest(q, ['main', 'podium'], how, 900);
           if (p) put(p, use, how);
@@ -524,15 +531,18 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   }
   // A corner of the core may carry a tower; its floors above the podium
   // are a tower's floor plate, not the whole plot.
-  for (const p of live) p.towerSite = p.cls === 'podium' && p.corner && toUnit(hash(seed, 'tower', Math.floor(p.c[0]), Math.floor(p.c[1]))) < TOWER_SHARE;
+  // (Most near the station, fewer towards the edge of the core.)
+  for (const p of live) {
+    const t = Math.min(1, len(sub(p.c, S)) / (d.coreReach * 1.25));
+    p.towerSite = p.cls === 'podium' && polygonArea(p.pts) >= TOWER_SITE && toUnit(hash(seed, 'tower', Math.floor(p.c[0]), Math.floor(p.c[1]))) < TOWER_SHARE * (1 - 0.7 * t);
+  }
   const heightsOf = (p) => (p.towerSite ? HEIGHTS.podiumTower : HEIGHTS[p.cls]);
   const people = (p) => {
     const H = heightsOf(p);
     const footprint = H.depth ? Math.min(polygonArea(p.pts), p.front * H.depth || polygonArea(p.pts)) : polygonArea(p.pts);
     const homesFloors = Math.max(0, p.storeys - (p.ground ? 1 : 0) - (p.upper ? 1 : 0));
-    const floorArea = H.tower
-      ? footprint * Math.max(0, (p.baseStoreys || PODIUM_STOREYS) - (p.ground ? 1 : 0) - (p.upper ? 1 : 0)) + Math.min(footprint, TOWER_PLATE) * Math.max(0, p.storeys - (p.baseStoreys || PODIUM_STOREYS))
-      : footprint * homesFloors;
+    // (A tower's homes are all in the tower; its podium is shops and offices.)
+    const floorArea = H.tower ? Math.min(footprint, TOWER_PLATE) * Math.max(0, p.storeys - (p.baseStoreys || PODIUM_STOREYS)) : footprint * homesFloors;
     // A house of three storeys or more is split into flats (a plex).
     const dwellings = H.house ? Math.max(1, Math.min(3, p.storeys - (p.ground ? 1 : 0) - 1)) : Math.floor((floorArea * NET_SHARE) / DWELLING);
     p.dwellings = dwellings;
@@ -558,8 +568,13 @@ export function assignProgramme(seed, d, blocks, planned = null) {
         }
         const n = Math.max(lo, Math.min(Math.max(lo, hi), Math.floor(base * f + list.dither)));
         for (const p of list) {
-          p.baseStoreys = n;
-          p.storeys = p.towerSite ? Math.max(HEIGHTS.podiumTower.storeys[0], Math.min(HEIGHTS.podiumTower.storeys[1], Math.floor(HEIGHTS.podiumTower.base * f + list.dither))) : n;
+          if (p.towerSite) {
+            p.baseStoreys = PODIUM_RANGE[0] + Math.floor(list.dither * (PODIUM_RANGE[1] - PODIUM_RANGE[0] + 1));
+            p.storeys = Math.max(HEIGHTS.podiumTower.storeys[0], Math.min(HEIGHTS.podiumTower.storeys[1], Math.floor(HEIGHTS.podiumTower.base * f + list.dither * 6)));
+          } else {
+            p.baseStoreys = n;
+            p.storeys = n;
+          }
           total += people(p);
         }
       }
@@ -569,6 +584,23 @@ export function assignProgramme(seed, d, blocks, planned = null) {
       if (Math.abs(want - 1) < 0.03) break;
       f *= want;
     }
+  }
+  // A core building's podium holds many businesses, not one: shops round
+  // its ground floor, a frontage each, and several firms to each floor of
+  // offices above.
+  for (const p of live) {
+    if (p.cls !== 'podium') continue;
+    const r = rngFor(seed, 'tenants', Math.floor(p.c[0]), Math.floor(p.c[1]));
+    const perim = p.pts.reduce((a, q, i) => a + len(sub(p.pts[(i + 1) % p.pts.length], q)), 0);
+    const shops = Math.max(2, Math.min(14, Math.round(perim / 16)));
+    p.shops = [p.ground || pick(HIGH_STREET_MIX, r)];
+    while (p.shops.length < shops) p.shops.push(pick(HIGH_STREET_MIX, r));
+    // (Under a tower every floor above the shops is offices; otherwise one is.)
+    const officeFloors = p.towerSite ? Math.max(1, (p.baseStoreys || PODIUM_STOREYS) - 1) : 1;
+    const perFloor = Math.max(2, Math.min(6, Math.round(polygonArea(p.pts) / 450)));
+    p.offices = [];
+    for (let k = 0; k < officeFloors * perFloor; k++) p.offices.push(pick(OFFICE_MIX, r));
+    p.upper = p.offices[0];
   }
   return { subdistricts: subs.map((h) => h.id), parkettes: parkettes.length, housed: Object.fromEntries(built) };
 }

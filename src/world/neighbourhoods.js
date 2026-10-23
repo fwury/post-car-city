@@ -55,6 +55,7 @@ const EDGE_END = 400; // crossings keep this far from the ends of a greenway str
 const EDGE_CLEAR = 380; // and this far from a boulevard crossing
 const CELL = 50;
 export const ROWHOUSE_DENSITY = 18500; // people per km²: a neighbourhood less dense than this is rowhouses
+const NECK = 130; // metres: half the narrowest a neighbourhood may be, away from its middle
 const SMOOTH_TOL = 32; // metres of raster staircase removed before smoothing
 const OUTSIDE = -1;
 const LABELS = 64; // more than the neighbourhoods a district can have (edge keys are corner * LABELS + label)
@@ -90,7 +91,7 @@ function along(pts, s) {
   return pts[pts.length - 1];
 }
 
-export function createNeighbourhoods(seed, { boulevards }) {
+export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
   const mainStreets = createMainStreets(seed);
   const friction = createNoise(seed, 'neighbourhood-friction');
   // Housing form: perimeter blocks where high, rowhouses and villas where low.
@@ -164,6 +165,43 @@ export function createNeighbourhoods(seed, { boulevards }) {
     for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) if (i === 0 || j === 0 || i === W - 1 || j === H - 1) mask[j * W + i] = 0;
     const land = [];
     for (let n = 0; n < N; n++) if (mask[n] === LAND) land.push(n);
+    // ---- Rail ----
+    // Regional rail crosses on its viaduct; neighbourhoods grow up to it
+    // from either side but not across, so their boundaries follow it. The
+    // track is stamped two cells wide so nothing slips through diagonally.
+    const onRail = new Uint8Array(N);
+    for (const L of railIn(d)) {
+      for (const o of [-0.4, 0.4]) {
+        const off = L.map((p, i) => {
+          const a = L[Math.max(0, i - 1)];
+          const b = L[Math.min(L.length - 1, i + 1)];
+          const t = unit(sub(b, a));
+          return [p[0] - t[1] * o * CELL, p[1] + t[0] * o * CELL];
+        });
+        stamp(CELL, onRail, W, H, x0, y0, off);
+      }
+    }
+    // Which side of the rail each cell is on: pieces of land the track
+    // parts, numbered.
+    const side = new Int32Array(N).fill(-1);
+    {
+      let k = 0;
+      for (const n0 of land) {
+        if (side[n0] >= 0 || onRail[n0]) continue;
+        const stack = [n0];
+        side[n0] = k;
+        while (stack.length) {
+          const n = stack.pop();
+          for (const m of [n - 1, n + 1, n - W, n + W]) {
+            if (mask[m] === LAND && !onRail[m] && side[m] < 0) {
+              side[m] = k;
+              stack.push(m);
+            }
+          }
+        }
+        k++;
+      }
+    }
     // ---- People ----
     // Residents per m² of land: densest around the station, a little denser
     // along boulevards, and varying smoothly with the form of housing.
@@ -333,7 +371,7 @@ export function createNeighbourhoods(seed, { boulevards }) {
         done[n] = 1;
         for (let q = 0; q < 8; q++) {
           const m = n + OFF[q];
-          if (mask[m] !== LAND || done[m] || isSeed[m]) continue;
+          if (mask[m] !== LAND || done[m] || isSeed[m] || (onRail[m] && !onRail[n])) continue;
           const c = cost[n] + STEP[q] * (fr[n] + fr[m]) * speed[label[n]];
           if (c < cost[m]) {
             cost[m] = c;
@@ -364,6 +402,131 @@ export function createNeighbourhoods(seed, { boulevards }) {
       for (let k = 0; k < m; k++) speed[k] = Math.max(0.4, Math.min(2.5, speed[k] * (size[k] / target(k)) ** 0.5));
     }
     const total = centres.length;
+    // Land growth could not reach (the track itself, and any piece of land
+    // the rail cuts off with no centre of its own) joins the neighbourhood
+    // most of its edge touches, from the outside in.
+    function fillGaps() {
+      let gap = land.filter((n) => label[n] < 0);
+      for (let pass = 0; pass < 400 && gap.length; pass++) {
+        const next = [];
+        const set = [];
+        for (const n of gap) {
+          const counts = new Map();
+          for (const m of [n - 1, n + 1, n - W, n + W]) if (label[m] >= 0) counts.set(label[m], (counts.get(label[m]) || 0) + 1);
+          if (!counts.size) {
+            next.push(n);
+            continue;
+          }
+          let best = -1;
+          let bc = 0;
+          for (const [l, c] of [...counts].sort((x, y) => x[0] - y[0])) if (c > bc) [best, bc] = [l, c];
+          set.push([n, best]);
+        }
+        if (!set.length) break;
+        for (const [n, l] of set) label[n] = l;
+        gap = next;
+      }
+    }
+    fillGaps();
+    // Neighbourhoods are compact: a thin arm or panhandle one reaches out
+    // (narrower than about twice NECK) goes to the neighbourhoods round it.
+    // Found by opening each neighbourhood (shrinking it by NECK, then
+    // growing what is left back by as much): what does not come back is
+    // too thin. A neighbourhood that is thin all over is left alone.
+    function trimNecks() {
+      const R = NECK;
+      const edge = new Uint8Array(N);
+      for (const n of land) {
+        const l = label[n];
+        if (l < 0) continue;
+        if (label[n - 1] !== l || label[n + 1] !== l || label[n - W] !== l || label[n + W] !== l) edge[n] = 1;
+      }
+      const inner = distanceField(CELL, edge, W, H);
+      const removed = [];
+      for (let k = 0; k < total; k++) {
+        const core = new Uint8Array(N);
+        let cells = 0;
+        let kept = 0;
+        for (const n of land) {
+          if (label[n] !== k) continue;
+          cells++;
+          if (inner[n] >= R) {
+            core[n] = 1;
+            kept++;
+          }
+        }
+        if (!kept) continue;
+        const back = distanceField(CELL, core, W, H);
+        const drop = [];
+        for (const n of land) if (label[n] === k && back[n] > R + CELL * 0.5) drop.push(n);
+        // (The core is always kept compact round its station.)
+        if (k !== 0 && drop.length > cells * 0.6) continue;
+        const c = cellOf(centres[k][0], centres[k][1]);
+        for (const n of drop) if (n !== c) removed.push([n, k]);
+      }
+      for (const [n] of removed) label[n] = OUTSIDE;
+      // Each goes to the neighbourhood its edge touches most, never back
+      // to the one it came from.
+      let gap = removed;
+      for (let pass = 0; pass < 200 && gap.length; pass++) {
+        const next = [];
+        const set = [];
+        for (const [n, from] of gap) {
+          const counts = new Map();
+          for (const m of [n - 1, n + 1, n - W, n + W]) if (label[m] >= 0 && label[m] !== from) counts.set(label[m], (counts.get(label[m]) || 0) + 1);
+          if (!counts.size) {
+            next.push([n, from]);
+            continue;
+          }
+          let best = -1;
+          let bc = 0;
+          for (const [l, cn] of [...counts].sort((x, y) => x[0] - y[0])) if (cn > bc) [best, bc] = [l, cn];
+          set.push([n, best]);
+        }
+        if (!set.length) break;
+        for (const [n, l] of set) label[n] = l;
+        gap = next;
+      }
+      // Any left with nowhere else to go stay where they were.
+      for (const [n, from] of gap) label[n] = from;
+    }
+    // Even out the people neighbourhood by neighbourhood after the trimming:
+    // a cell on the edge of a fuller neighbourhood passes to an emptier one
+    // next to it, if most of its sides already touch that one (so shapes
+    // stay compact). Never the core's disc round the station, nor a centre.
+    function evenOut() {
+      const pop = peopleOf(label, total);
+      const share = pop.reduce((a, b) => a + b, 0) / total;
+      const isCentre = new Uint8Array(N);
+      for (const c of centres) {
+        const n = cellOf(c[0], c[1]);
+        if (n >= 0) isCentre[n] = 1;
+      }
+      for (let round = 0; round < 80; round++) {
+        let moved = 0;
+        for (const n of land) {
+          const a = label[n];
+          if (a < 0 || isCentre[n] || (a === 0 && Math.hypot(cx(n) - S[0], cy(n) - S[1]) < d.coreRadius * 0.8)) continue;
+          if (pop[a] < share * 0.85) continue;
+          const counts = new Map();
+          for (const m of [n - 1, n + 1, n - W, n + W]) if (label[m] >= 0 && label[m] !== a) counts.set(label[m], (counts.get(label[m]) || 0) + 1);
+          let best = -1;
+          for (const [b, c] of counts) if (c >= 2 && pop[b] < pop[a] * 0.9 && pop[b] < share * 1.08 && (best < 0 || pop[b] < pop[best])) best = b;
+          if (best < 0) continue;
+          // (Not across the rail.)
+          if (onRail[n] === 0 && side[n] >= 0 && best !== 0) {
+            const sb = sideOfHood(best);
+            if (sb >= 0 && sb !== side[n]) continue;
+          }
+          const p = dens[n] * CELL * CELL * housing(a);
+          label[n] = best;
+          pop[a] -= p;
+          pop[best] += dens[n] * CELL * CELL * housing(best);
+          moved++;
+        }
+        if (!moved) break;
+      }
+    }
     // Single cells cut off from their own kind join their neighbours.
     for (const n of land) {
       if (isSeed[n]) continue;
@@ -421,9 +584,17 @@ export function createNeighbourhoods(seed, { boulevards }) {
     // neighbourhood it is in, and boundaries fall between main streets.
     const owner = new Int16Array(N).fill(OUTSIDE);
     const ownerDist = new Float64Array(N).fill(Infinity);
+    const sideOfHood = (k) => {
+      const c = cellOf(hoods[k].centre[0], hoods[k].centre[1]);
+      return c >= 0 ? side[c] : -1;
+    };
     const claim = (x, y, k, r) => {
       const n = cellOf(x, y);
       if (n < 0 || mask[n] !== LAND || r >= ownerDist[n]) return;
+      // Never across the rail from its centre.
+      // (The core, round the station, spans the track.)
+      const sk = k === 0 ? -1 : sideOfHood(k);
+      if (sk >= 0 && side[n] !== sk) return;
       owner[n] = k;
       ownerDist[n] = r;
     };
@@ -450,7 +621,12 @@ export function createNeighbourhoods(seed, { boulevards }) {
     for (const h of hoods) {
       claim(h.centre[0], h.centre[1], h.id, 0);
       if (h.core) {
-        for (const l of d.network.lines) stampAlong(l.points, 0, S, Math.max(150, d.coreRadius * 0.7));
+        // The core: round its station, not out along its boulevards.
+        const r = Math.max(200, d.coreRadius * 0.8);
+        for (let j = -r; j <= r; j += CELL / 2) for (let i = -r; i <= r; i += CELL / 2) {
+          const q = Math.hypot(i, j);
+          if (q <= r) claim(S[0] + i, S[1] + j, 0, q);
+        }
       } else if (h.spine) {
         stampAlong(h.spine, h.id, h.centre, SPINE_REACH);
       }
@@ -477,7 +653,7 @@ export function createNeighbourhoods(seed, { boulevards }) {
         done[n] = 1;
         for (let q = 0; q < 8; q++) {
           const m = n + OFF[q];
-          if (mask[m] !== LAND || done[m] || fixedCell[m]) continue;
+          if (mask[m] !== LAND || done[m] || fixedCell[m] || (onRail[m] && !onRail[n])) continue;
           const c = cost[n] + STEP[q] * (fr[n] + fr[m]) * speed2[label[n]];
           if (c < cost[m]) {
             cost[m] = c;
@@ -494,6 +670,8 @@ export function createNeighbourhoods(seed, { boulevards }) {
     let bestErr = Infinity;
     for (let it = 0; it < BALANCE_STEPS; it++) {
       regrow(speed2);
+      fillGaps();
+      trimNecks();
       const size = peopleOf(label, total);
       const share = size.reduce((a, b) => a + b, 0) / total;
       let err = 0;
@@ -505,6 +683,7 @@ export function createNeighbourhoods(seed, { boulevards }) {
       for (let k = 0; k < total; k++) speed2[k] = Math.max(0.4, Math.min(2.5, speed2[k] * (size[k] / share) ** 0.35));
     }
     label.set(bestLabel);
+    evenOut();
     // Keep each neighbourhood to the one piece that holds its centre; stray
     // pieces go to the neighbourhoods around them.
     const keep = new Uint8Array(N);

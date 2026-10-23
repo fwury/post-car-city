@@ -7,7 +7,7 @@ import { STYLES } from '../world/architecture.js';
 
 const KINDS = {
   main: 'Mixed-use building', unit: 'Block of flats', unitShop: 'Flats over a shop', corner: 'Corner building',
-  podium: 'Podium', house: 'Terraced house', rowCorner: 'End-of-terrace house', cornerShop: 'Corner shop with a home over it',
+  podium: 'Shops and offices', house: 'Terraced house', rowCorner: 'End-of-terrace house', cornerShop: 'Corner shop with a home over it',
 };
 const ROOFS = { pitched: 'pitched roof', hipped: 'hipped roof', mansard: 'mansard roof', flat: 'flat roof' };
 const RAISE = [0.32, -0.8]; // as drawn in 3D
@@ -52,7 +52,7 @@ export function createPlaceCard(el) {
       const q = hit.plot;
       const b = q.bldg;
       const st = STYLES[b.style];
-      const title = label(q.dedicated) || KINDS[q.cls] || 'Building';
+      const title = label(q.dedicated) || (q.cls === 'podium' && b.tower ? 'Tower over shops and offices' : KINDS[q.cls]) || 'Building';
       const rows = [];
       const storeys = b.tower ? `${b.tower.storeys} storeys (tower), podium ${b.storeys}` : `${b.storeys} storey${b.storeys === 1 ? '' : 's'}`;
       const height = Math.round((b.tower ? b.tower.h : b.h) + (b.ridge ? 2.5 : 0));
@@ -60,8 +60,16 @@ export function createPlaceCard(el) {
       if (b.spire) rows.push([b.spire.thin ? 'Minaret' : 'Spire', `about ${Math.round(b.spire.h)} m`]);
       rows.push(['Style', `${st.label}, ${ROOFS[b.roof] || 'roof'}`]);
       if (q.dwellings) rows.push(['Homes', `${q.dwellings}`]);
-      if (q.ground) rows.push(['Shop floor', label(q.ground)]);
-      if (q.upper) rows.push(['Upstairs', label(q.upper)]);
+      // Many businesses: counted, by kind.
+      const tally = (list) => {
+        const m = new Map();
+        for (const k of list) m.set(label(k), (m.get(label(k)) || 0) + 1);
+        return [...m].sort((x, y) => y[1] - x[1]).map(([l, n]) => (n > 1 ? `${l} (${n})` : l)).join(', ');
+      };
+      if (q.shops && q.shops.length > 1) rows.push([`${q.shops.length} shops`, tally(q.shops)]);
+      else if (q.ground) rows.push(['Shop floor', label(q.ground)]);
+      if (q.offices && q.offices.length > 1) rows.push([`${q.offices.length} offices`, tally(q.offices)]);
+      else if (q.upper) rows.push(['Upstairs', label(q.upper)]);
       if (hood) rows.push(['Neighbourhood', hood]);
       el.innerHTML = `<div class="card-head"><h2>${title}</h2><button type="button" class="card-close" data-close aria-label="Close">×</button></div>`
         + `<dl>${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>`;

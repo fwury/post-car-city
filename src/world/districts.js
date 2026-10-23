@@ -21,6 +21,7 @@ import { createBoulevards, distToPieces } from './boulevards.js';
 import { createParks } from './parks.js';
 import { createGreenways } from './greenway.js';
 import { createTransit } from './transit.js';
+import { createRail } from './rail.js';
 import { createNames } from './names.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
 export { PARK_AREA_HA } from './parks.js';
@@ -164,12 +165,28 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     })
     .sort((a, b) => a.r - b.r || (a.c.key < b.c.key ? -1 : 1));
   const cityCores = ranked.slice(0, terrain.districts).map((e) => e.c);
+  // The central district: the one nearest all the others.
+  if (cityCores.length > 2) {
+    let best = 0;
+    let bs = Infinity;
+    cityCores.forEach((c, i) => {
+      const sum = cityCores.reduce((a, o) => a + Math.hypot(o.x - c.x, o.y - c.y), 0);
+      if (sum < bs) [best, bs] = [i, sum];
+    });
+    cityCores.unshift(...cityCores.splice(best, 1));
+  }
   const keys = new Set(cityCores.map((c) => c.key));
   const city = { has: (k) => !bounded || keys.has(k) };
   const centre = cityCores.length ? [cityCores[0].x, cityCores[0].y] : [0, 0];
   const growth = createGrowth(seed, cores, { terrain, inCity: (k) => city.has(k) });
+  // Regional rail, for the whole city: it comes before the neighbourhoods,
+  // whose boundaries follow it.
+  const rail = createRail(seed, { cores: cityCores, terrain });
   const boulevards = createBoulevards(seed);
-  const hoods = createNeighbourhoods(seed, { boulevards });
+  const hoods = createNeighbourhoods(seed, {
+    boulevards,
+    railIn: (d) => rail.near(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1).map((sg) => sg.pts),
+  });
   const parks = createParks(seed, {
     baseOf: (k) => baseOf(k), label: (i, j) => growth.label(i, j), parcel: PARCEL,
     greenwayWidth: (x, y) => greenwayWidth(x, y), boulevardDistance: (x, y) => boulevardDistance(x, y), network: (b) => boulevards.network(b),
@@ -186,7 +203,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   const widthNoise = createNoise(seed, 'greenway-width');
   const greenways = createGreenways(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), terrain });
   const names = createNames(seed);
-  const transit = createTransit({ baseOf: (k) => baseOf(k), network: (b) => boulevards.network(b), centre });
+  const transit = createTransit({ rail });
 
   const bases = new LruCache(12000);
   const districts = new LruCache(12000);
@@ -643,10 +660,10 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   }
 
   // Stage 4: local streets and blocks, worked out only when wanted.
-  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater });
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.near(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1).map((sg) => sg.pts) });
 
   return {
-    seed, population, terrain, centre, cityCores, cores, growth, boulevards,
+    seed, population, terrain, centre, cityCores, rail, cores, growth, boulevards,
     blocks: (d) => blocks.of(d),
     forgetBlocks: (d) => blocks.forget(d),
     // Stage 5: the stream, trail and woods of a stretch of greenway.

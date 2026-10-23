@@ -70,6 +70,17 @@ function centroid(P) {
 }
 
 // The part of P between s0 and s1 metres in from the line a-b (its front).
+// How far a plot reaches back from its front line.
+function lotDepth(P, a, b) {
+  const t = sub(b, a);
+  const l = len(t) || 1;
+  let n = [-t[1] / l, t[0] / l];
+  if (dot(sub(centroid(P), a), n) < 0) n = [-n[0], -n[1]];
+  return Math.max(...P.map((q) => dot(sub(q, a), n)));
+}
+const LANEWAY_YARD = 19; // metres of backyard behind a house before a laneway house is built at its end
+const LANEWAY_DEPTH = 7.5; // metres: a laneway house's depth
+
 function band(P, a, b, s0, s1) {
   const t = sub(b, a);
   const l = len(t) || 1;
@@ -323,6 +334,15 @@ export function assignBuildings(seed, d, blocks) {
         const depth = 14 + u(15, ...gk) * 3;
         const pts = (p.frontA && band(p.pts, p.frontA, p.frontB, garden, garden + depth)) || p.pts;
         p.bldg = make(pts, storeys, style, gk, { shop, ridge: ridge(pts) });
+        // A deep lot (in a block wider than two houses and their yards) has
+        // a laneway house at the back, facing the lane, as Toronto's do.
+        if (p.frontA && p.cls !== 'cornerShop') {
+          const lot = lotDepth(p.pts, p.frontA, p.frontB);
+          if (lot - garden - depth > LANEWAY_YARD) {
+            const back = band(p.pts, p.frontA, p.frontB, lot - LANEWAY_DEPTH - 1.2, lot - 1.2);
+            if (back) p.bldg.annex = make(back, 2, style, [...gk, 7], { ridge: ridge(back) });
+          }
+        }
         return;
       }
       // ---- The core: a street wall of podiums, towers rising from the

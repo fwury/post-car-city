@@ -17,8 +17,8 @@
 // halves meet.
 
 import { LruCache } from './cache.js';
+import { pointInPolygon } from '../util/geom.js';
 
-const SECOND_STOP = 1100; // metres: a rail run in a district this long gets a second stop
 const METRO_REACH = 260; // metres a neighbourhood centre may lie off the line for the station to be named after it
 const THROUGH = -0.34; // links whose directions from the station are at least 110° apart make a line through
 
@@ -187,58 +187,26 @@ function smooth(P, step = 15) {
   return out;
 }
 
-export function createTransit({ baseOf, network, centre = [0, 0] }) {
-  const CENTRE = centre;
-  const parents = new LruCache(20000);
-  // The neighbour a district's rail runs to: the one nearest the centre, if
-  // nearer than it.
-  function parentOf(key) {
-    const hit = parents.get(key);
-    if (hit !== undefined) return hit;
-    const b = baseOf(key);
-    let best = null;
-    if (b) {
-      const here = len(sub(b.station, CENTRE));
-      for (const l of network(b).links) {
-        const nb = baseOf(l.neighbour);
-        if (!nb) continue;
-        const r = len(sub(nb.station, CENTRE));
-        if (r < here - 150 && (!best || r < best.r)) best = { key: nb.key, r };
-      }
-    }
-    const v = best ? best.key : null;
-    parents.set(key, v);
-    return v;
-  }
-
+export function createTransit({ rail }) {
   const cache = new LruCache(4000);
   function of(d) {
     let t = cache.get(d.key);
     if (t) return t;
     const S = d.station;
-    const lines = d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => l.points);
-    const rail = [];
-    const railStops = [];
+    // The rail stations in this district (regional rail is laid for the
+    // whole city at once; see rail.js).
+    const railStops = rail.stations
+      .filter((st) => st.key === d.key || (!st.key && d.rings.some((r) => pointInPolygon(st.p[0], st.p[1], r))))
+      .map((st) => ({ p: st.p, second: !st.key, central: st.central, dir: st.dir }));
     const metro = [];
     const metroStops = [];
-    const mine = parentOf(d.key);
-    for (const l of d.network.links) {
-      const isRail = l.neighbour === mine || parentOf(l.neighbour) === d.key;
-      if (isRail) {
-        // Above the boulevard from the station out to the greenway.
-        const P = smooth(route(lines, S, l.p), 12);
-        rail.push(P);
-        const L = lengthOf(P);
-        // One more stop on a long run towards the centre.
-        if (l.neighbour === mine && L > SECOND_STOP) railStops.push({ p: pointAlong(P, L * 0.6), second: true });
-      }
-    }
     // ---- Metro ----
-    // Every link the rail does not take has a metro line. At the station
-    // the links pair up, each with the one most nearly opposite, so lines
-    // run straight on through; two lines through one station cross about
-    // square, an interchange. A link with no partner ends its line here.
-    const mlinks = d.network.links.filter((l) => !(l.neighbour === mine || parentOf(l.neighbour) === d.key));
+    // Every link between districts the rail does not join directly has a
+    // metro line. At the station the links pair up, each with the one most
+    // nearly opposite, so lines run straight on through; two lines through
+    // one station cross about square, an interchange. A link with no
+    // partner ends its line here.
+    const mlinks = d.network.links.filter((l) => !rail.joins(d.key, l.neighbour));
     const dirTo = (l) => unit(sub(l.p, S));
     const pairs = [];
     const left = mlinks.slice().sort((x, y) => (x.key < y.key ? -1 : 1));
@@ -286,11 +254,10 @@ export function createTransit({ baseOf, network, centre = [0, 0] }) {
       }
       metroStops.push({ p: best ? best.p : pointAlong(half, L * 0.75) });
     }
-    if (rail.length) railStops.unshift({ p: S, second: false });
     metroStops.unshift({ p: S });
-    t = { rail, railStops, metro, metroStops };
+    t = { rail: [], railStops, metro, metroStops };
     cache.set(d.key, t);
     return t;
   }
-  return { of, parentOf };
+  return { of };
 }

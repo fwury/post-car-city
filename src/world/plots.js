@@ -792,8 +792,45 @@ export function plotsOfBlock(N, fronts, use, W, rng) {
   return out;
 }
 
+// The core: high-rise blocks have no courtyard. A building takes the whole
+// block, or on a longer block several stand side by side, cut across its
+// length, with a walkway between each two (open to the sky, for people on
+// foot) so none adjoins the next.
+export const WALKWAY = 6; // metres between two podium buildings
+const PODIUM_RUN = [45, 95]; // metres: a podium building's length along its block
+function podiumLots(N) {
+  const u = longAxis(N);
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const q of N) {
+    const t = dot(q, u);
+    lo = Math.min(lo, t);
+    hi = Math.max(hi, t);
+  }
+  const L = hi - lo;
+  const k = Math.max(1, Math.min(4, Math.ceil(L / PODIUM_RUN[1])));
+  if (k === 1 || L / k < PODIUM_RUN[0]) return [{ pts: N, area: polygonArea(N), front: 0, kind: 'podium', corner: true }];
+  const o = [0, 0];
+  const out = [];
+  const step = (L - (k - 1) * WALKWAY) / k;
+  for (let i = 0; i < k; i++) {
+    const s0 = lo + i * (step + WALKWAY);
+    const lot = clipSlab(N, o, u, s0, s0 + step);
+    if (lot.length >= 3 && polygonArea(lot) > 300) out.push({ pts: lot, area: polygonArea(lot), front: 0, kind: 'podium', corner: true });
+    if (i + 1 < k) {
+      const walk = clipSlab(N, o, u, s0 + step, s0 + step + WALKWAY);
+      if (walk.length >= 3) out.push({ pts: walk, area: polygonArea(walk), front: 0, kind: 'passage', walkway: true });
+    }
+  }
+  return out.length ? out : [{ pts: N, area: polygonArea(N), front: 0, kind: 'podium', corner: true }];
+}
+
 function plotsOf(N, fronts, use, W, rng) {
-  if (use === 'perimeter' || use === 'podium' || use === 'rowhouse') {
+  if (use === 'podium') {
+    const face = fronts.find((f) => f === 'main' || f === 'boulevard' || f === 'pedestrian') || fronts[0];
+    return { plots: podiumLots(N).map((p) => ({ ...p, faces: p.walkway ? 'pedestrian' : face })), inner: null, depth: null };
+  }
+  if (use === 'perimeter' || use === 'rowhouse') {
     const onMain = (f) => f === 'main' || f === 'boulevard' || f === 'pedestrian';
     // A terrace keeps one width along each run.
     const terrace = new Map();

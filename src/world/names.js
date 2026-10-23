@@ -27,6 +27,7 @@ const THINGS = [
   'Foxglove', 'Heather', 'Clover', 'Orchard', 'Meadow', 'Spring', 'Well', 'Windmill', 'Tannery', 'Brewery', 'Granary', 'Foundry',
   'Mason', 'Weaver', 'Cooper', 'Chapel', 'Abbey', 'Priory', 'Castle', 'Tower', 'Beacon', 'Ferry', 'Wharf', 'Quarry', 'Pottery',
 ];
+const HOOD_STREET = 0.3; // share of one-word neighbourhoods whose main street takes their name
 const PLACE_WORDS = ['Green', 'Heath', 'End', 'Common', 'Park', 'Fields', 'Hill', 'Cross', 'Vale', 'Wood', 'Gate', 'Rise', 'Side', 'Town'];
 
 // Street types, by kind and shape. Most streets are plain streets.
@@ -46,6 +47,8 @@ export function createNames(seed) {
       let end = pick(ENDINGS, ...k, 3);
       // Join without doubling a letter awkwardly.
       if (root.endsWith(end[0])) end = end.slice(1);
+      // (No Wellwell or Brookbrook.)
+      if (root.toLowerCase() === end || root.toLowerCase().endsWith(end)) end = end === 'ton' ? 'ford' : 'ton';
       return root + end;
     }
     if (r < 0.85) return `${pick(SURNAMES.concat(THINGS), ...k, 4)} ${pick(PLACE_WORDS, ...k, 5)}`;
@@ -58,7 +61,34 @@ export function createNames(seed) {
     if (r < 0.75) return pick(THINGS, ...k, 12);
     return place(...k, 13).split(' ').pop();
   };
+  // Main streets. A neighbourhood with a one-word name now and then lends
+  // it to its own main street (the one through its centre): its High
+  // Street, or its Road. Otherwise a main street is named for itself, by
+  // its key (so it keeps its name across a greenway).
+  const mainCache = new WeakMap();
+  function mainStreets(d) {
+    let m = mainCache.get(d.stage3);
+    if (m) return m;
+    m = new Map();
+    for (const h of d.stage3.hoods) {
+      const name = place(hashString(d.key), 2, h.id);
+      if (name.includes(' ') || u(hashString(d.key), 30, h.id) > HOOD_STREET) continue;
+      // Its main street: the one passing nearest its centre.
+      let best = null;
+      for (const l of d.stage3.lines) {
+        let r = Infinity;
+        for (const p of l.points) r = Math.min(r, Math.hypot(p[0] - h.centre[0], p[1] - h.centre[1]));
+        if (r < 80 && (!best || r < best.r)) best = { r, l };
+      }
+      if (!best || m.has(best.l)) continue;
+      const type = u(hashString(d.key), 31, h.id) < 0.4 ? ['High St', 'High Street'] : u(hashString(d.key), 32, h.id) < 0.5 ? ['Rd', 'Road'] : ['St', 'Street'];
+      m.set(best.l, { short: `${name} ${type[0]}`, full: `${name} ${type[1]}` });
+    }
+    mainCache.set(d.stage3, m);
+    return m;
+  }
   return {
+    mainStreet: (d, l) => mainStreets(d).get(l) || null,
     district: (d) => place(hashString(d.key), 1),
     hood: (d, h) => place(hashString(d.key), 2, h.id),
     // kind: boulevard, main, local, pedestrian, parkside; shape: { length, curved }.

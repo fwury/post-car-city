@@ -302,12 +302,24 @@ export class Renderer {
       for (const d of world.districtsInRect(b.x0 - m, b.y0 - m, b.x1 + m, b.y1 + m)) {
         const t = world.transit(d);
         for (const st of t.metroStops.slice(1)) this.metroBadge(...camera.worldToScreen(st.p[0], st.p[1]));
-        for (const st of t.railStops) if (st.second) this.stationBadge(...camera.worldToScreen(st.p[0], st.p[1]), 0.8);
       }
     }
+    // Rail stations: the district stations on the lines and the stops
+    // between them; a district off the rail has its metro station.
+    const onRail = new Set();
+    for (const st of world.rail.stations) {
+      if (st.key) onRail.add(st.key);
+      const [x, y] = st.p;
+      if (x < b.x0 - m || x > b.x1 + m || y < b.y0 - m || y > b.y1 + m) continue;
+      if (st.stop && camera.zoom < 0.15) continue;
+      const [sx, sy] = camera.worldToScreen(x, y);
+      if (!big) this.stationDot(sx, sy);
+      else this.stationBadge(sx, sy, st.stop ? 0.8 : st.central ? 1.25 : 1);
+    }
     for (const c of world.coresInRect(b.x0 - m, b.y0 - m, b.x1 + m, b.y1 + m)) {
+      if (onRail.has(c.key)) continue;
       const [sx, sy] = camera.worldToScreen(c.x, c.y);
-      if (big) this.stationBadge(sx, sy);
+      if (big) this.metroBadge(sx, sy);
       else this.stationDot(sx, sy);
     }
   }
