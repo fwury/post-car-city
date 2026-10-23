@@ -225,14 +225,32 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     else p[slot] = use;
   };
   // The free slot nearest a point among plots of the given classes.
+  // (Searched ring by ring of grid cells outward, stopping once no nearer
+  // plot can be left.)
   function nearest(q, classes, slot, reach, filter = () => true) {
+    const cx = Math.floor(q[0] / G);
+    const cy = Math.floor(q[1] / G);
     let best = null;
-    for (const p of near(q, reach)) {
-      if (!classes.includes(p.cls) || taken(p, slot) || !filter(p)) continue;
-      const r = len(sub(p.c, q));
-      if (!best || r < best.r) best = { r, p };
+    let bd = reach * reach;
+    for (let r = 0; r <= Math.ceil(reach / G) + 1; r++) {
+      if (best && (r - 1) * G > Math.sqrt(bd)) break;
+      for (let gx = cx - r; gx <= cx + r; gx++) {
+        const edge = gx === cx - r || gx === cx + r;
+        for (let gy = cy - r; gy <= cy + r; gy += edge ? 1 : 2 * r || 1) {
+          for (const p of grid.get(gx * 1e6 + gy) || []) {
+            if (!classes.includes(p.cls) || taken(p, slot) || !filter(p)) continue;
+            const dx = p.c[0] - q[0];
+            const dy = p.c[1] - q[1];
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= bd && (!best || d2 < bd)) {
+              bd = d2;
+              best = p;
+            }
+          }
+        }
+      }
     }
-    return best ? best.p : null;
+    return best;
   }
   // A dedicated building: a plot big enough, or a plot joined with its neighbour.
   function dedicate(q, use, classes, reach, minArea) {

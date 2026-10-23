@@ -324,28 +324,35 @@ export function createBlocks(seed, { greenwayWidth }) {
     function hoodsByBlock(blocks) {
       const faces = blocks.filter((b) => b.centreline && b.hood != null);
       // Faces by grid cell, to find the block across a street.
-      const G = 80;
+      const G = 40;
       const grid = new Map();
+      const gkey = (gx, gy) => gx * 100003 + gy;
       faces.forEach((b, i) => {
         let [bx0, by0, bx1, by1] = [Infinity, Infinity, -Infinity, -Infinity];
         for (const [x, y] of b.centreline) [bx0, by0, bx1, by1] = [Math.min(bx0, x), Math.min(by0, y), Math.max(bx1, x), Math.max(by1, y)];
         b.box = [bx0, by0, bx1, by1];
         for (let gx = Math.floor(bx0 / G); gx <= Math.floor(bx1 / G); gx++) {
           for (let gy = Math.floor(by0 / G); gy <= Math.floor(by1 / G); gy++) {
-            const k = `${gx},${gy}`;
+            const k = gkey(gx, gy);
             if (!grid.has(k)) grid.set(k, []);
             grid.get(k).push(i);
           }
         }
       });
       const faceAt = (x, y) => {
-        for (const i of grid.get(`${Math.floor(x / G)},${Math.floor(y / G)}`) || []) if (pointInPolygon(x, y, faces[i].centreline)) return faces[i];
+        for (const i of grid.get(gkey(Math.floor(x / G), Math.floor(y / G))) || []) {
+          const f = faces[i];
+          if (x < f.box[0] || x > f.box[2] || y < f.box[1] || y > f.box[3]) continue;
+          if (pointInPolygon(x, y, f.centreline)) return f;
+        }
         return null;
       };
       // Each block's edge in short pieces, with the block across each.
-      const PIECE = 6;
+      const PIECE = 10;
       for (const b of faces) {
         const P = b.centreline;
+        // The side of each edge facing out of the block.
+        const out = signedArea(P) > 0 ? -1 : 1;
         b.across = [];
         for (let i = 0; i < P.length; i++) {
           const a = P[i];
@@ -358,8 +365,7 @@ export function createBlocks(seed, { greenwayWidth }) {
             const t0 = j / k;
             const t1 = (j + 1) / k;
             const m = [a[0] + ((c[0] - a[0]) * (t0 + t1)) / 2, a[1] + ((c[1] - a[1]) * (t0 + t1)) / 2];
-            let o = [m[0] + nrm[0] * 1.5, m[1] + nrm[1] * 1.5];
-            if (pointInPolygon(o[0], o[1], P)) o = [m[0] - nrm[0] * 1.5, m[1] - nrm[1] * 1.5];
+            const o = [m[0] + nrm[0] * 1.5 * out, m[1] + nrm[1] * 1.5 * out];
             b.across.push({
               p: [a[0] + (c[0] - a[0]) * t0, a[1] + (c[1] - a[1]) * t0],
               q: [a[0] + (c[0] - a[0]) * t1, a[1] + (c[1] - a[1]) * t1],
@@ -394,21 +400,19 @@ export function createBlocks(seed, { greenwayWidth }) {
         }
         if (!moved) break;
       }
-      // People per block, from stage 3's density, sampled on a fine grid.
-      const SAMPLE = 12.5;
+      // People per block, from stage 3's density where the block stands.
       const byBlock = new Map();
       for (const b of faces) {
-        const P = b.centreline;
         const [bx0, by0, bx1, by1] = b.box;
         let sum = 0;
-        for (let x = Math.ceil(bx0 / SAMPLE) * SAMPLE; x < bx1; x += SAMPLE) {
-          for (let y = Math.ceil(by0 / SAMPLE) * SAMPLE; y < by1; y += SAMPLE) {
-            if (!pointInPolygon(x, y, P)) continue;
-            const n = cellOf(x, y);
-            if (n >= 0) sum += R.dens[n];
-          }
+        let k = 0;
+        for (const [fx, fy] of [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) {
+          const n = cellOf(bx0 + (bx1 - bx0) * fx, by0 + (by1 - by0) * fy);
+          if (n < 0) continue;
+          sum += R.dens[n];
+          k++;
         }
-        byBlock.set(b.hood, (byBlock.get(b.hood) || 0) + sum * SAMPLE * SAMPLE);
+        if (k) byBlock.set(b.hood, (byBlock.get(b.hood) || 0) + (sum / k) * polygonArea(b.centreline));
       }
       // Stage 3's people by its own boundaries, to carry over its plan
       // (campus neighbourhoods house fewer for their land).

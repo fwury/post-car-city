@@ -31,7 +31,7 @@ const pool = createTilePool(Math.max(1, Math.min(4, (navigator.hardwareConcurren
 // Stage 4 blocks, worked out in their own workers as districts come into
 // view at close zoom (or here, if workers are missing).
 const BLOCK_CACHE = 48;
-const blockPool = createTilePool(2);
+const blockPool = createTilePool(Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)));
 const blockCache = new Map();
 function blocksFor(d) {
   const k = d.key;
