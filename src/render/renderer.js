@@ -81,7 +81,7 @@ export function createNoiseTileBuilder(getSeed, res = 96) {
 export function createDistrictTileBuilder({ pool, getWorld, getLayers, res = 512 }) {
   const layersFor = () => {
     const L = getLayers();
-    return { cores: L.cores, streets: L.streets, green: L.green, outlines: L.outlines, neighbourhoods: L.neighbourhoods };
+    return { cores: L.cores, streets: L.streets, green: L.green, outlines: L.outlines, neighbourhoods: L.neighbourhoods, transit: L.transit };
   };
   const local = (tile) => {
     const canvas = makeCanvas(res, res);
@@ -292,11 +292,41 @@ export class Renderer {
     const b = camera.bounds();
     const m = 40 / camera.zoom;
     const big = camera.zoom >= 0.06;
-    for (const c of this.getWorld().coresInRect(b.x0 - m, b.y0 - m, b.x1 + m, b.y1 + m)) {
+    const world = this.getWorld();
+    // Metro stations at neighbourhood centres, then second rail stops, then
+    // the district stations on top.
+    if (camera.zoom >= 0.15) {
+      for (const d of world.districtsInRect(b.x0 - m, b.y0 - m, b.x1 + m, b.y1 + m)) {
+        const t = world.transit(d);
+        for (const st of t.metroStops.slice(1)) this.metroBadge(...camera.worldToScreen(st.p[0], st.p[1]));
+        for (const st of t.railStops) if (st.second) this.stationBadge(...camera.worldToScreen(st.p[0], st.p[1]), 0.8);
+      }
+    }
+    for (const c of world.coresInRect(b.x0 - m, b.y0 - m, b.x1 + m, b.y1 + m)) {
       const [sx, sy] = camera.worldToScreen(c.x, c.y);
       if (big) this.stationBadge(sx, sy);
       else this.stationDot(sx, sy);
     }
+  }
+
+  // A metro station: a white disc with an M.
+  metroBadge(x, y) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.translate(Math.round(x), Math.round(y));
+    ctx.beginPath();
+    ctx.arc(0, 0, 8, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.lineWidth = 2;
+    ctx.strokeStyle = palette.metro;
+    ctx.stroke();
+    ctx.fillStyle = palette.metro;
+    ctx.font = '700 10px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('M', 0, 0.5);
+    ctx.restore();
   }
 
   stationDot(sx, sy) {
@@ -311,10 +341,11 @@ export class Renderer {
   }
 
   // Regional rail station: rounded badge with a simple train glyph.
-  stationBadge(x, y) {
+  stationBadge(x, y, scale = 1) {
     const { ctx } = this;
     ctx.save();
     ctx.translate(Math.round(x), Math.round(y));
+    ctx.scale(scale, scale);
     ctx.shadowColor = 'rgba(0, 0, 0, 0.25)';
     ctx.shadowBlur = 3;
     ctx.shadowOffsetY = 1;

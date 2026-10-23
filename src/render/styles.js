@@ -9,6 +9,10 @@ export const palette = {
   natural: '#a9d59a', // primary greenways, district parks
   green: '#cde9bd', // parkettes, neighbourhood parks, courtyards (later stages)
   water: '#9fcff2',
+  metro: '#8a5cc2',
+  railFill: '#959ca2',
+  railEdge: '#5f676e',
+  railTrack: '#5f666c',
   waterEdge: '#86bfe8',
   road: '#a7adb3',
   roadCasing: '#8c939a',
@@ -36,6 +40,10 @@ export const palette = {
   pavement: '#f2f0ec',
   selection: '#0a7aff',
   water: '#9fcff2',
+  metro: '#8a5cc2',
+  railFill: '#959ca2',
+  railEdge: '#5f676e',
+  railTrack: '#5f666c',
   streamBank: '#8fc39a',
   trail: '#f3eee4',
   trailEdge: '#cfd9c1',

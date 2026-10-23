@@ -16,7 +16,10 @@ export const MAIN_STREET_MIN_ZOOM = 0.02;
 const TRAM_MIN_ZOOM = 0.2;
 const TUNNEL_MIN_ZOOM = 0.05;
 const GREENWAY_DETAIL_ZOOM = 0.15; // streams from here; trails, paths and woods closer in
-const STOP_MIN_ZOOM = 0.25; // tram stops as markers from here (to scale from DETAIL_MIN_ZOOM)
+const STOP_MIN_ZOOM = 0.25;
+const TRANSIT_MIN_ZOOM = 0.008;
+const VIADUCT = 11; // metres: a two-track viaduct's width
+const VIADUCT_HEIGHT = 8; // tram stops as markers from here (to scale from DETAIL_MIN_ZOOM)
 import { palette } from './styles.js';
 import { TRAIL_WIDTH } from '../world/greenway.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
@@ -308,7 +311,11 @@ export function drawDistricts(ctx, view, world, layers) {
   // What is in the greenways: woods, the stream, the trail and the paths in.
   if (layers.green && zoom >= GREENWAY_DETAIL_ZOOM) drawGreenwayDetail(ctx, view, world, items, place, px);
 
+  // The metro runs underground: a dashed line under the buildings. Regional
+  // rail runs on viaducts above everything.
+  if (layers.transit && zoom >= TRANSIT_MIN_ZOOM) drawTransit(ctx, view, world, items, place, px, 'metro');
   if (drawBuildings) drawBuildings();
+  if (layers.transit && zoom >= TRANSIT_MIN_ZOOM) drawTransit(ctx, view, world, items, place, px, 'rail');
 
   if (layers.neighbourhoods) {
     ctx.strokeStyle = palette.hoodLine;
@@ -337,6 +344,87 @@ export function drawDistricts(ctx, view, world, layers) {
   }
 
   return items;
+}
+
+const transitCache = new WeakMap();
+function transitPaths(t, origin) {
+  let p = transitCache.get(t);
+  if (p && p.origin === origin) return p;
+  const [ox, oy] = origin;
+  const line = (L) => {
+    const path = new Path2D();
+    path.moveTo(L[0][0] - ox, L[0][1] - oy);
+    for (let i = 1; i < L.length; i++) path.lineTo(L[i][0] - ox, L[i][1] - oy);
+    return path;
+  };
+  p = { origin, rail: new Path2D(), metro: new Path2D(), rails: new Path2D(), shadow: new Path2D() };
+  for (const L of t.rail) {
+    p.rail.addPath(line(L));
+    // Two tracks, each a pair of rails.
+    for (const o of [-2.6, -1.1, 1.1, 2.6]) p.rails.addPath(line(offsetLine(L, o)));
+    p.shadow.addPath(line(L.map(([x, y]) => [x + VIADUCT_HEIGHT * 0.25, y + VIADUCT_HEIGHT * 0.32])));
+  }
+  for (const L of t.metro) p.metro.addPath(line(L));
+  transitCache.set(t, p);
+  return p;
+}
+
+function drawTransit(ctx, view, world, items, place, px, which) {
+  const { zoom } = view;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  const list = items.map(({ d }) => ({ d, p: transitPaths(world.transit(d), d.origin) }));
+  if (which === 'metro') {
+    if (zoom > 1.6) return;
+    ctx.strokeStyle = palette.metro;
+    ctx.globalAlpha = 0.75;
+    ctx.lineWidth = Math.max(4, px(2.2));
+    ctx.setLineDash([px(6), px(4)]);
+    for (const { d, p } of list) {
+      place(d);
+      ctx.stroke(p.metro);
+    }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    return;
+  }
+  const close = zoom >= 0.5;
+  if (close) {
+    ctx.strokeStyle = 'rgba(40, 40, 40, 0.15)';
+    ctx.lineWidth = VIADUCT;
+    for (const { d, p } of list) {
+      place(d);
+      ctx.stroke(p.shadow);
+    }
+  }
+  for (const [colour, w] of [[palette.railEdge, Math.max(VIADUCT + px(1.5), px(3.2))], [palette.railFill, Math.max(VIADUCT, px(2))]]) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = w;
+    for (const { d, p } of list) {
+      place(d);
+      ctx.stroke(p.rail);
+    }
+  }
+  if (close) {
+    ctx.strokeStyle = palette.railTrack;
+    ctx.lineWidth = Math.max(0.15, px(0.6));
+    for (const { d, p } of list) {
+      place(d);
+      ctx.stroke(p.rails);
+    }
+  } else {
+    // Farther out, ties along the line, as maps draw railways.
+    ctx.strokeStyle = '#ffffff';
+    ctx.lineWidth = Math.max(VIADUCT, px(2)) * 0.45;
+    ctx.setLineDash([px(1.2), px(5)]);
+    ctx.lineCap = 'butt';
+    for (const { d, p } of list) {
+      place(d);
+      ctx.stroke(p.rail);
+    }
+    ctx.setLineDash([]);
+    ctx.lineCap = 'round';
+  }
 }
 
 const linearCache = new WeakMap();
