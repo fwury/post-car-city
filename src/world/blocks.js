@@ -290,7 +290,7 @@ function joinRuns(runs) {
 export function createBlocks(seed, { greenwayWidth, greenway }) {
   const parkWoods = createNoise(seed, 'park-woods');
   const names = createNames(seed);
-  const cache = new LruCache(64);
+  const cache = new LruCache(6); // (each district's blocks and buildings take tens of MB)
 
   function of(d) {
     let out = cache.get(d.key);
