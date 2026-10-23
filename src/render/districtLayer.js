@@ -15,8 +15,10 @@ const TRAM_WIDTH = 7;
 export const MAIN_STREET_MIN_ZOOM = 0.02;
 const TRAM_MIN_ZOOM = 0.2;
 const TUNNEL_MIN_ZOOM = 0.05;
+const GREENWAY_DETAIL_ZOOM = 0.15; // streams from here; trails, paths and woods closer in
 const STOP_MIN_ZOOM = 0.25; // tram stops as markers from here (to scale from DETAIL_MIN_ZOOM)
 import { palette } from './styles.js';
+import { TRAIL_WIDTH } from '../world/greenway.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
 import { DETAIL_MIN_ZOOM, drawSection, streetExtras, drawRails, drawTrees, drawJunctions, drawStops } from './streetDetail.js';
 
@@ -287,6 +289,9 @@ export function drawDistricts(ctx, view, world, layers) {
     }
   }
 
+  // What is in the greenways: woods, the stream, the trail and the paths in.
+  if (layers.green && zoom >= GREENWAY_DETAIL_ZOOM) drawGreenwayDetail(ctx, view, world, items, place, px);
+
   if (drawBuildings) drawBuildings();
 
   if (layers.neighbourhoods) {
@@ -316,6 +321,81 @@ export function drawDistricts(ctx, view, world, layers) {
   }
 
   return items;
+}
+
+// Each stretch of greenway is drawn by both districts beside it, the same
+// way, so the join is invisible.
+const greenwayPaths = new WeakMap();
+function greenwayPathsFor(g, origin) {
+  let p = greenwayPaths.get(g);
+  if (p && p.origin === origin) return p;
+  const [ox, oy] = origin;
+  const line = (L) => {
+    const path = new Path2D();
+    path.moveTo(L[0][0] - ox, L[0][1] - oy);
+    for (let i = 1; i < L.length; i++) path.lineTo(L[i][0] - ox, L[i][1] - oy);
+    return path;
+  };
+  const trees = new Path2D();
+  for (const [x, y] of g.trees) {
+    const r = 3.4 + ((Math.floor(x * 3.7) ^ Math.floor(y * 5.3)) & 7) * 0.35;
+    trees.moveTo(x - ox + r, y - oy);
+    trees.arc(x - ox, y - oy, r, 0, Math.PI * 2);
+  }
+  p = { origin, stream: line(g.stream), trail: line(g.trail), trees };
+  greenwayPaths.set(g, p);
+  return p;
+}
+
+function drawGreenwayDetail(ctx, view, world, items, place, px) {
+  const { zoom } = view;
+  const ways = [];
+  for (const { d } of items) for (const c of d.chains) ways.push({ d, p: greenwayPathsFor(world.greenway(c.geo), d.origin), g: world.greenway(c.geo) });
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  if (zoom >= 0.6) {
+    ctx.fillStyle = palette.woods;
+    for (const { d, p } of ways) {
+      place(d);
+      ctx.fill(p.trees);
+    }
+  }
+  for (const { d, p, g } of ways) {
+    place(d);
+    ctx.strokeStyle = palette.streamBank;
+    ctx.lineWidth = Math.max(g.streamWidth + 2, px(2.2));
+    ctx.stroke(p.stream);
+    ctx.strokeStyle = palette.water;
+    ctx.lineWidth = Math.max(g.streamWidth, px(1.4));
+    ctx.stroke(p.stream);
+  }
+  if (zoom < 0.3) return;
+  // The trail, and the paths in from the streets (over the stream: bridges).
+  const links = [];
+  for (const { d } of items) {
+    const b = view.blocks ? view.blocks(d) : null;
+    if (b && b.greenLinks) links.push({ d, list: b.greenLinks });
+  }
+  for (const [colour, extra] of [[palette.trailEdge, px(1.2)], [palette.trail, 0]]) {
+    ctx.strokeStyle = colour;
+    for (const { d, p } of ways) {
+      place(d);
+      ctx.lineWidth = Math.max(TRAIL_WIDTH, px(1.6)) + extra;
+      ctx.stroke(p.trail);
+    }
+    if (zoom >= 0.5) {
+      for (const { d, list } of links) {
+        place(d);
+        ctx.lineWidth = Math.max(3, px(1.2)) + extra;
+        ctx.beginPath();
+        for (const L of list) {
+          ctx.moveTo(L[0][0] - d.origin[0], L[0][1] - d.origin[1]);
+          for (let i = 1; i < L.length; i++) ctx.lineTo(L[i][0] - d.origin[0], L[i][1] - d.origin[1]);
+        }
+        ctx.stroke();
+      }
+    }
+  }
 }
 
 // Boulevards and main streets to scale: cross-sections, junctions paved

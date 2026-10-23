@@ -67,6 +67,7 @@ const SPLAY_BELOW = (55 * Math.PI) / 180; // a building line corner sharper than
 const SPLAY = 9; // metres back from the point, each way
 const AWKWARD_AREA = 0.45e4; // m²: a block this small ...
 const AWKWARD_RECT = 0.62; // ... and this far from rectangular is a green
+const GREEN_LINK_GAP = 140; // metres between local streets' paths into a greenway
 const OVERSIZE = 1.5; // a block this many times its usual area must split, one way or another
 const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
 const SQUARE_FORMS = { corner: 0.3, against: 0.35 }; // shares of squares by form; the rest stand on their own
@@ -244,7 +245,7 @@ function joinRuns(runs) {
   return out;
 }
 
-export function createBlocks(seed, { greenwayWidth }) {
+export function createBlocks(seed, { greenwayWidth, greenway }) {
   const cache = new LruCache(64);
 
   function of(d) {
@@ -322,6 +323,92 @@ export function createBlocks(seed, { greenwayWidth }) {
       const n = cellOf(p[0], p[1]);
       return n >= 0 ? R.dens[n] * 1e6 : 0;
     };
+
+    function linksToGreenways(leaves) {
+      const ways = d.chains.map((c) => ({ c, g: greenway(c.geo) }));
+      const nearestOn = (L, q) => {
+        let best = null;
+        for (let i = 0; i < L.length - 1; i++) {
+          const a = L[i];
+          const ab = sub(L[i + 1], a);
+          const l2 = dot(ab, ab);
+          const t = l2 ? Math.max(0, Math.min(1, dot(sub(q, a), ab) / l2)) : 0;
+          const f = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+          const r = len(sub(f, q));
+          if (!best || r < best.r) best = { p: f, r, i };
+        }
+        return best;
+      };
+      // A gently curving path from p to the trail.
+      const toTrail = (p, way, toward) => {
+        const T = nearestOn(way.g.trail, toward || p);
+        if (!T || T.r > 260) return null;
+        const m = [(p[0] + T.p[0]) / 2, (p[1] + T.p[1]) / 2];
+        const c = toward ? [(m[0] + toward[0]) / 2, (m[1] + toward[1]) / 2] : m;
+        const pts = [];
+        for (let k = 0; k <= 8; k++) {
+          const t = k / 8;
+          pts.push([(1 - t) * (1 - t) * p[0] + 2 * (1 - t) * t * c[0] + t * t * T.p[0], (1 - t) * (1 - t) * p[1] + 2 * (1 - t) * t * c[1] + t * t * T.p[1]]);
+        }
+        return pts;
+      };
+      const wayNear = (q) => {
+        let best = null;
+        for (const w of ways) {
+          const r = nearestOn(w.g.centre, q);
+          if (r && (!best || r.r < best.r.r)) best = { w, r };
+        }
+        return best;
+      };
+      const out = [];
+      // Local streets meeting a greenway's street, every so often.
+      const meets = [];
+      for (const lf of leaves) {
+        const n = lf.pts.length;
+        for (let i = 0; i < n; i++) {
+          const a = lf.tags[(i - 1 + n) % n].kind;
+          const b = lf.tags[i].kind;
+          if ((a === 'local' && b === 'greenway') || (a === 'greenway' && b === 'local')) {
+            const q = lf.pts[i];
+            if (!meets.some((m) => len(sub(m, q)) < 10)) meets.push(q);
+          }
+        }
+      }
+      const taken = [];
+      for (const q of meets.sort((x, y) => x[0] - y[0] || x[1] - y[1])) {
+        const near = wayNear(q);
+        if (!near || near.r.r > near.w.g.half[Math.min(near.r.i, near.w.g.half.length - 1)] + PARKSIDE * 1.5) continue;
+        if (taken.some((t) => len(sub(t, q)) < GREEN_LINK_GAP)) continue;
+        const pts = toTrail(q, near.w, near.r.p);
+        if (pts) {
+          out.push(pts);
+          taken.push(q);
+        }
+      }
+      // From each pavement of a street just before it dips under a greenway.
+      const under = [
+        ...st.lines.filter((l) => l.crossing).map((l) => ({ P: l.points, w: STREET_TYPES.mainStreet.width })),
+        ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => ({ P: l.points, w: STREET_TYPES.boulevard.width, both: true })),
+      ];
+      for (const { P, w, both } of under) {
+        for (const end of both ? [0, P.length - 1] : [0]) {
+          const x = P[end];
+          const near = wayNear(x);
+          if (!near || near.r.r > 12) continue;
+          const nx = P[end === 0 ? Math.min(3, P.length - 1) : Math.max(0, P.length - 4)];
+          const dir = unit(sub(nx, x));
+          const perp = [-dir[1], dir[0]];
+          const h = near.w.g.half[Math.min(near.r.i, near.w.g.half.length - 1)];
+          for (const sgn of [1, -1]) {
+            const e = [x[0] + dir[0] * (h + 2) + perp[0] * sgn * (w / 2 - 1.5), x[1] + dir[1] * (h + 2) + perp[1] * sgn * (w / 2 - 1.5)];
+            const toward = [e[0] - dir[0] * h * 0.6 + perp[0] * sgn * 30, e[1] - dir[1] * h * 0.6 + perp[1] * sgn * 30];
+            const pts = toTrail(e, near.w, toward);
+            if (pts) out.push(pts);
+          }
+        }
+      }
+      return out;
+    }
 
     function hoodsByBlock(blocks) {
       const faces = blocks.filter((b) => b.centreline && b.hood != null);
@@ -1190,6 +1277,10 @@ export function createBlocks(seed, { greenwayWidth }) {
     // its own blocks' land holds (stage 3's plan, shifted with the land).
     const { planned, hoodLines } = hoodsByBlock(blocks);
 
+    // Paths into the greenways, from local streets that meet them and from
+    // the pavements of streets that pass under them.
+    const greenLinks = greenway ? linksToGreenways(leaves) : [];
+
     // What every plot is for.
     const programme = assignProgramme(seed, d, blocks, planned);
     // And what stands on it.
@@ -1198,7 +1289,7 @@ export function createBlocks(seed, { greenwayWidth }) {
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
-    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions };
+    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks };
   }
 
   return { of };

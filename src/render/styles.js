@@ -35,6 +35,11 @@ export const palette = {
   localCasing: '#dcd9d3',
   pavement: '#f2f0ec',
   selection: '#0a7aff',
+  water: '#9fcff2',
+  streamBank: '#8fc39a',
+  trail: '#f3eee4',
+  trailEdge: '#cfd9c1',
+  woods: '#93c784',
   yard: '#ebe7df', // the ground round buildings: yards, light wells, forecourts
   pedestrianStreet: '#e9dfcc',
   // Dedicated buildings, by what they are for.
