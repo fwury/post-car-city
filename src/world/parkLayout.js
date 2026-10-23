@@ -1,12 +1,9 @@
 // Stage 5: what is in a park.
 //
 // Parkettes: a path through, trees and benches; a playground in the bigger
-// ones. Neighbourhood parks (after Queen's Park): a loop path inside the
-// park, paths weaving across it, a playground, a splash pad and a skate park
-// (as room allows), a games court, a washroom, a small dog run, community
-// gardens, a fountain where paths meet, open lawn with trees here and there,
-// and the neighbourhood's community centre built into its edge, on a
-// street. District parks: all that and more, larger: playing fields, tennis
+// ones. Neighbourhood parks (after Queen's Park or Finsbury Park): a mesh of
+// paths from entrances round the edge to junctions through the park, and the
+// neighbourhood's community centre built into its edge, on a street. District parks: all that and more, larger: playing fields, tennis
 // and basketball courts, a full dog park, food kiosks, a pond, sometimes an
 // outdoor pool or a woodland cemetery, woods, and trails between them.
 // Secondary schools have their running track and field; elementary schools
@@ -85,7 +82,6 @@ class Site {
     this.features = [];
     this.paths = [];
     this.solid = []; // polygons nothing else may overlap
-    this.treeOk = new Set(); // ... of which trees may stand in these
   }
 
   clearOfPaths(R, gap) {
@@ -109,10 +105,18 @@ class Site {
     for (const [x, y] of this.inner) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
     const tries = opts.tries || 80;
     let best = null;
-    for (let t = 0; t < tries; t++) {
-      const c = [x0 + (x1 - x0) * this.rng.next(), y0 + (y1 - y0) * this.rng.next()];
+    // A tight fit is searched for on a grid along the site's axes, nearest
+    // the middle first; otherwise spots are tried at random.
+    const grid = [];
+    if (opts.grid) {
+      for (let a = -this.ax.L / 2; a <= this.ax.L / 2; a += 6) for (let b = -this.ax.W / 2; b <= this.ax.W / 2; b += 6) grid.push([a, b]);
+      grid.sort((p, q) => Math.hypot(...p) - Math.hypot(...q));
+    }
+    for (let t = 0; t < (opts.grid ? grid.length * 2 : tries); t++) {
+      const g = opts.grid ? grid[t >> 1] : null;
+      const c = g ? [this.ax.c[0] + u[0] * g[0] + v[0] * g[1], this.ax.c[1] + u[1] * g[0] + v[1] * g[1]] : [x0 + (x1 - x0) * this.rng.next(), y0 + (y1 - y0) * this.rng.next()];
       if (!inside(this.inner, c)) continue;
-      const dir = this.rng.next() < 0.5 ? u : v;
+      const dir = opts.grid ? (t & 1 ? v : u) : this.rng.next() < 0.5 ? u : v;
       const R = w ? rect(c, dir, l, w) : circlePts(c, l, 16);
       if (!this.fits(R, opts.gap ?? 3)) continue;
       const score = opts.score ? opts.score(c) : 0;
@@ -123,7 +127,6 @@ class Site {
     const f = w ? { kind, pts: best.R } : { kind, c: best.c, r: l };
     this.features.push(f);
     this.solid.push(best.R);
-    if (opts.trees) this.treeOk.add(best.R);
     return f;
   }
 
@@ -146,46 +149,6 @@ class Site {
       }
     }
     return null;
-  }
-
-  // Trees scattered with at least `gap` between them, off paths and features.
-  trees(gap, keep = () => true, max = 4000) {
-    const out = [];
-    const cell = gap / Math.SQRT2;
-    const grid = new Map();
-    const key = (x, y) => `${Math.floor(x / cell)},${Math.floor(y / cell)}`;
-    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
-    for (const [x, y] of this.P) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
-    const attempts = Math.min(max * 4, Math.ceil(((x1 - x0) * (y1 - y0)) / (gap * gap)) * 3);
-    // What trees keep off: placed things (grown a little) and path points,
-    // the latter by grid cell.
-    const blocked = this.solid.filter((S) => !this.treeOk.has(S)).map((S) => grow(S, 2));
-    const PC = 8;
-    const pathCells = new Set();
-    for (const { pts } of this.paths) {
-      for (let i = 0; i < pts.length - 1; i++) {
-        const a = pts[i];
-        const b = pts[i + 1];
-        const k = Math.max(1, Math.ceil(len(sub(b, a)) / 3));
-        for (let j = 0; j <= k; j++) pathCells.add(`${Math.floor((a[0] + ((b[0] - a[0]) * j) / k) / PC)},${Math.floor((a[1] + ((b[1] - a[1]) * j) / k) / PC)}`);
-      }
-    }
-    for (let t = 0; t < attempts && out.length < max; t++) {
-      const q = [x0 + (x1 - x0) * this.rng.next(), y0 + (y1 - y0) * this.rng.next()];
-      if (!inside(this.inner, q) || !keep(q)) continue;
-      if (pathCells.has(`${Math.floor(q[0] / PC)},${Math.floor(q[1] / PC)}`)) continue;
-      if (blocked.some((S) => inside(S, q))) continue;
-      let near = false;
-      const gx = Math.floor(q[0] / cell);
-      const gy = Math.floor(q[1] / cell);
-      for (let i = -2; i <= 2 && !near; i++) for (let j = -2; j <= 2 && !near; j++) for (const o of grid.get(`${gx + i},${gy + j}`) || []) if (len(sub(o, q)) < gap) near = true;
-      if (near) continue;
-      out.push(q);
-      const k = key(q[0], q[1]);
-      if (!grid.has(k)) grid.set(k, []);
-      grid.get(k).push(q);
-    }
-    return out;
   }
 
   result(extra = {}) {
@@ -225,24 +188,14 @@ export function layoutParkette(P, rng) {
   const b = [c[0] + u[0] * L * 0.5, c[1] + u[1] * L * 0.5];
   s.bend(a, b, 2.5, 0.2);
   if (A > 550) s.place('playground', 14, 11, { gap: 2 });
-  const trees = s.trees(9);
-  return s.result({ trees });
+  return s.result();
 }
 
 // The neighbourhood park; returns its layout and the community centre's
 // footprint, built into the park's edge on a street.
-export function layoutNeighbourhoodPark(P, rng, opts = {}) {
+export function layoutNeighbourhoodPark(P, rng) {
   const s = new Site(P, rng, 4);
   const A = polygonArea(P);
-  // The secondary school's track, when its own grounds have no room for it.
-  if (opts.track) {
-    const t = s.place('track', 178, 96, { tries: 200 });
-    if (t) {
-      const ax = axesOf(t.pts);
-      t.pts = oval(ax.c, ax.u, 84.4, 47);
-      s.features.push({ kind: 'trackField', pts: oval(ax.c, ax.u, 84.4, 36.5) });
-    }
-  }
   // The community centre first, at the edge, on a street.
   let centre = null;
   {
@@ -277,59 +230,61 @@ export function layoutNeighbourhoodPark(P, rng, opts = {}) {
       }
     }
   }
-  // Paths: a loop inside the park, the entrances joined to it, and a path
-  // or two weaving across.
-  const loop = loopOf(P, 14);
-  if (loop) {
-    s.path(loop, 3.5);
-    for (const e of entrances(P, rng, 5)) {
-      const t = nearestOnRing(loop, e);
-      if (t) s.bend(e, t.p, 3, 0.1);
-    }
-    const k = loop.length;
-    for (let w = 0; w < (A > 3e4 ? 2 : 1); w++) {
-      const i = Math.floor(rng.next() * k);
-      const j = (i + Math.floor(k * (0.35 + rng.next() * 0.3))) % k;
-      s.bend(loop[i], loop[j], 3, 0.35);
-    }
-  }
-  // Amenities, as room allows.
-  s.place('playground', 28, 22);
-  s.place(rng.next() < 0.6 ? 'splash' : 'skate', rng.next() < 0.6 ? 10 : 30, rng.next() < 0.6 ? 0 : 22);
-  if (A > 2.6e4) s.place('skate', 30, 20);
-  s.place('court', 32, 19);
-  s.place('dogRun', 34, 26);
-  s.place('gardens', 34, 24);
-  s.place('washroom', 9, 6, { gap: 2 });
-  // A fountain or a statue where paths cross, else in the open.
-  s.place(rng.next() < 0.6 ? 'fountain' : 'statue', 5, 0, { gap: 1 });
-  const trees = s.trees(19);
-  return { ...s.result({ trees }), centre };
+  pathNetwork(s, P, rng, { spacing: 55, edgeEvery: 85, width: 3.2 });
+  return { ...s.result(), centre };
 }
 
-// A secondary school's grounds: a 400 m track round a field if it fits,
-// else a field; an elementary school's: a playground and a small field.
-export function layoutSchool(P, building, rng, secondary) {
-  const s = new Site(P, rng, 3);
-  if (building) s.solid.push(building);
+// A school's grounds: for a secondary school a 400 m track round a field
+// (or, with no room for one, a field), for an elementary school a field and
+// a playground; then the school building, compact, in the room left, as
+// near the street as it can be. Returns the layout and the building's
+// footprint.
+export function layoutSchool(P, rng, secondary) {
+  const s = new Site(P, rng, 4);
+  const edge = (c) => {
+    let best = Infinity;
+    for (let i = 0; i < P.length; i++) best = Math.min(best, segDist(c, P[i], P[(i + 1) % P.length]));
+    return best;
+  };
+  // The building: the biggest of a few sizes that fits, nearest the edge.
+  const building = (sizes) => {
+    for (const [l, w] of sizes) {
+      const f = s.place('school', l, w, { grid: true, gap: 3, score: edge });
+      if (f) {
+        s.features.pop();
+        return f.pts;
+      }
+    }
+    return null;
+  };
+  let pts = null;
   if (secondary) {
-    const t = s.place('track', 178, 96, { tries: 160 });
+    const t = s.place('track', 174, 92, { grid: true, gap: 2 });
     if (t) {
-      // A 400 m track: two straights and two bends round the field.
       const ax = axesOf(t.pts);
-      t.pts = oval(ax.c, ax.u, 84.4, 47);
+      t.pts = oval(ax.c, ax.u, 84.4, 45);
       s.features.push({ kind: 'trackField', pts: oval(ax.c, ax.u, 84.4, 36.5) });
-    } else s.place('pitch', 100, 64, { tries: 160 }) || s.place('pitch', 80, 50, { tries: 160 });
+    }
+    pts = building([[110, 34], [90, 30], [70, 28], [55, 24], [42, 22]]);
+    if (!t) s.place('pitch', 100, 64, { grid: true }) || s.place('pitch', 80, 50, { grid: true });
     s.place('court', 28, 15);
   } else {
-    s.place('pitch', 60, 40, { tries: 120 });
+    pts = building([[75, 26], [60, 22], [45, 20], [34, 18]]);
+    s.place('pitch', 60, 40, { grid: true }) || s.place('pitch', 44, 30, { grid: true });
     s.place('playground', 30, 24);
   }
-  return s.result({ trees: s.trees(16, () => true, 60) });
+  return { ...s.result(), building: pts };
+}
+
+function segDist(q, a, b) {
+  const ab = sub(b, a);
+  const l2 = dot(ab, ab);
+  const t = l2 ? Math.max(0, Math.min(1, dot(sub(q, a), ab) / l2)) : 0;
+  return len(sub([a[0] + ab[0] * t, a[1] + ab[1] * t], q));
 }
 
 // A district park: trails between clearings, sports, water and woods.
-export function layoutDistrictPark(P, rng, wooded) {
+export function layoutDistrictPark(P, rng) {
   const s = new Site(P, rng, 10);
   const A = polygonArea(P);
   // Places first, as they need room: fields, a pond, courts, a dog park.
@@ -352,7 +307,7 @@ export function layoutDistrictPark(P, rng, wooded) {
   s.place('basketball', 28, 15);
   s.place('dogPark', 90, 60, { tries: 100 });
   if (rng.next() < 0.4) s.place('pool', 70, 45, { tries: 100 });
-  if (rng.next() < 0.35 && A > 3e5) s.place('cemetery', 230, 160, { tries: 160, trees: true });
+  if (rng.next() < 0.35 && A > 3e5) s.place('cemetery', 230, 160, { tries: 160 });
   s.place('playground', 40, 30);
   s.place('splash', 12, 0);
   s.place('skate', 40, 28);
@@ -392,12 +347,7 @@ export function layoutDistrictPark(P, rng, wooded) {
     const n = nodes.slice().sort((x, y) => len(sub(x, e)) - len(sub(y, e)))[0];
     if (n) s.bend(e, n, 4, 0.2);
   }
-  // Woods where the ground is wooded, sparse trees elsewhere; the cemetery
-  // is a woodland too, its paths in a grid among the trees.
-  const cem = s.features.find((f) => f.kind === 'cemetery');
-  const woods = s.trees(10, (q) => wooded(q) || (cem && inside(cem.pts, q)), 3000);
-  const lawn = s.trees(30, (q) => !wooded(q), 600);
-  return s.result({ trees: woods.concat(lawn) });
+  return s.result();
 }
 
 // A running-track shape: straights of length l joined by semicircles of radius r.
@@ -414,6 +364,122 @@ export function oval(c, u, l, r, k = 14) {
   }
   return out;
 }
+
+// A park's paths: entrances at its corners and along its sides, joined to
+// junctions spread through it by gently curving paths, as a mesh. Paths only
+// meet at junctions, and leave a junction at a good angle to each other.
+export function pathNetwork(s, P, rng, { spacing, edgeEvery, width }) {
+  const n = P.length;
+  // Entrances: the corners, then along the sides.
+  const gates = [];
+  const sign = Math.sign(P.reduce((a, p, i) => a + cross(p, P[(i + 1) % n]), 0)) || 1;
+  for (let i = 0; i < n; i++) {
+    const a = P[(i - 1 + n) % n];
+    const v = P[i];
+    const b = P[(i + 1) % n];
+    const turn = Math.atan2(cross(sub(v, a), sub(b, v)), dot(sub(v, a), sub(b, v))) * sign;
+    if (turn > 0.6) {
+      // Just inside the corner, along its bisector.
+      const bis = [(a[0] + b[0]) / 2 - v[0], (a[1] + b[1]) / 2 - v[1]];
+      const l = len(bis) || 1;
+      gates.push([v[0] + (bis[0] / l) * 3, v[1] + (bis[1] / l) * 3]);
+    }
+    const L = len(sub(b, v));
+    const k = Math.floor(L / edgeEvery);
+    for (let j = 1; j <= k; j++) {
+      const t = j / (k + 1);
+      gates.push([v[0] + (b[0] - v[0]) * t, v[1] + (b[1] - v[1]) * t]);
+    }
+  }
+  const clean = [];
+  for (const g of gates) if (!clean.some((o) => len(sub(o, g)) < spacing * 0.6)) clean.push(g);
+  // Junctions inside, kept apart and off what is built.
+  const deep = insetUniform(P, spacing * 0.35) || P;
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [x, y] of deep) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+  const nodes = [];
+  for (let t = 0; t < 600; t++) {
+    const q = [x0 + (x1 - x0) * rng.next(), y0 + (y1 - y0) * rng.next()];
+    if (!inside(deep, q) || s.solid.some((S) => inside(grow(S, 6), q))) continue;
+    if (nodes.some((o) => len(sub(o, q)) < spacing)) continue;
+    nodes.push(q);
+  }
+  if (!nodes.length) {
+    // A small park: one junction in the middle.
+    const c = s.ax.c;
+    if (inside(P, c)) nodes.push(c);
+  }
+  const edges = [];
+  const all = nodes.concat(clean);
+  const isGate = (i) => i >= nodes.length;
+  const degreeDirs = all.map(() => []);
+  const crosses = (a, b) => {
+    for (const [i, j] of edges) {
+      const p = all[i];
+      const q = all[j];
+      if (p === a || p === b || q === a || q === b) continue;
+      const r = sub(b, a);
+      const t2 = sub(q, p);
+      const den = cross(r, t2);
+      if (Math.abs(den) < 1e-9) continue;
+      const u = cross(sub(p, a), t2) / den;
+      const v = cross(sub(p, a), r) / den;
+      if (u > 0.02 && u < 0.98 && v > 0.02 && v < 0.98) return true;
+    }
+    return false;
+  };
+  const wellAngled = (i, j) => {
+    const d1 = unitOf(sub(all[j], all[i]));
+    const d2 = unitOf(sub(all[i], all[j]));
+    return degreeDirs[i].every((e) => dot(e, d1) < 0.82) && degreeDirs[j].every((e) => dot(e, d2) < 0.82);
+  };
+  const clearOfBuilt = (a, b) => {
+    for (let t = 0.1; t < 1; t += 0.1) {
+      const q = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+      if (!inside(P, q) || s.solid.some((S) => inside(S, q))) return false;
+    }
+    return true;
+  };
+  const add = (i, j) => {
+    if (crosses(all[i], all[j]) || !wellAngled(i, j) || !clearOfBuilt(all[i], all[j])) return false;
+    edges.push([i, j]);
+    degreeDirs[i].push(unitOf(sub(all[j], all[i])));
+    degreeDirs[j].push(unitOf(sub(all[i], all[j])));
+    return true;
+  };
+  // Junctions joined nearest first (all connected), then more links, short
+  // first, while they fit; then every entrance to its nearest junction.
+  const cand = [];
+  for (let i = 0; i < nodes.length; i++) for (let j = i + 1; j < nodes.length; j++) cand.push([len(sub(nodes[i], nodes[j])), i, j]);
+  cand.sort((a, b) => a[0] - b[0]);
+  const comp = nodes.map((_, i) => i);
+  const find = (i) => (comp[i] === i ? i : (comp[i] = find(comp[i])));
+  for (const [, i, j] of cand) if (find(i) !== find(j) && add(i, j)) comp[find(i)] = find(j);
+  for (const [dd, i, j] of cand) if (dd < spacing * 1.9 && !edges.some(([a, b]) => (a === i && b === j) || (a === j && b === i))) add(i, j);
+  for (let g = nodes.length; g < all.length; g++) {
+    const order = nodes.map((_, i) => i).sort((a, b) => len(sub(all[a], all[g])) - len(sub(all[b], all[g])));
+    for (const i of order.slice(0, 3)) if (add(g, i)) break;
+  }
+  // Each link a gentle curve.
+  for (const [i, j] of edges) {
+    const a = all[i];
+    const b = all[j];
+    const d = sub(b, a);
+    const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const k = (rng.next() - 0.5) * 0.18;
+    const ctrl = [m[0] - d[1] * k, m[1] + d[0] * k];
+    s.path(bezier(a, ctrl, b, Math.max(6, Math.ceil(len(d) / 6))), isGate(i) || isGate(j) ? width * 0.9 : width);
+  }
+  // A little round square at junctions where three or more paths meet.
+  nodes.forEach((q, i) => {
+    if (degreeDirs[i].length >= 3) s.features.push({ kind: 'plaza', c: q, r: width * 1.6 });
+  });
+}
+
+const unitOf = (v) => {
+  const l = len(v) || 1;
+  return [v[0] / l, v[1] / l];
+};
 
 // The community centre as a building.
 export function communityCentre(pts) {

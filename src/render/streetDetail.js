@@ -1,14 +1,12 @@
 // Streets drawn to scale close in: each street's cross-section, from the
 // building line in (pavement, tree strip, cycle track, kerb, traffic lane,
 // tram tracks, planted median), as strokes one inside another along its
-// centreline; then the rails, the trees, the paving over junctions, and the
+// centreline; then the rails, the paving over junctions, and the
 // tram stops' platforms.
 
 import { STREET_TYPES } from '../world/streetTypes.js';
 
 export const DETAIL_MIN_ZOOM = 1.1;
-const TREE_SPACING = 11; // metres between street trees
-const TREE_R = 2.6; // canopy radius
 const RAIL_GAUGE = 1.435;
 const PLATFORM = [40, 4]; // a tram stop's platform: length, width
 
@@ -97,6 +95,40 @@ export function drawSection(ctx, path, type, px) {
   ctx.lineCap = 'round';
 }
 
+// Several streets' cross-sections drawn together, layer by layer from the
+// outside in, so where streets meet their carriageways open into each other
+// instead of one street's pavement running across the other. items:
+// [{ path, type, place }] (place() sets the transform for that path).
+export function drawSections(ctx, items, px) {
+  ctx.lineCap = 'butt';
+  const layers = items.map((it) => sectionLayers(it.type));
+  const depth = Math.max(0, ...layers.map((l) => l.length));
+  for (let k = 0; k < depth; k++) {
+    for (const pass of ['kerb', 'fill']) {
+      items.forEach((it, i) => {
+        const L = layers[i][k];
+        if (!L || (pass === 'kerb' && !L.kerb)) return;
+        it.place();
+        ctx.strokeStyle = pass === 'kerb' ? KERB : COLOURS[L.el] || COLOURS.drive;
+        ctx.lineWidth = 2 * L.r + (pass === 'kerb' ? px(1) : 0);
+        ctx.stroke(it.path);
+      });
+    }
+  }
+  ctx.lineCap = 'round';
+}
+
+// The half-width of a street's carriageway: everything inside its pavements.
+export function carriageway(type) {
+  const T = STREET_TYPES[type];
+  let r = T.side.reduce((a, [, w]) => a + w, 0) + T.centre.reduce((a, [, w]) => a + w, 0) / 2;
+  for (const [el, w] of T.side) {
+    if (!PAVED.has(el)) break;
+    r -= w;
+  }
+  return r;
+}
+
 // A polyline moved d metres to its left (or right, d < 0).
 export function offsetLine(P, d) {
   const out = [];
@@ -110,34 +142,15 @@ export function offsetLine(P, d) {
   return out;
 }
 
-// Rails and tree positions for one street centreline, kept by its points.
+// Rails for one street centreline, kept by its points.
 const extrasCache = new WeakMap();
-export function streetExtras(P, type, avoid) {
+export function streetExtras(P, type) {
   let e = extrasCache.get(P);
   if (e) return e;
   const f = sectionFeatures(type);
   const rails = [];
   for (const c of f.tram) for (const g of [-RAIL_GAUGE / 2, RAIL_GAUGE / 2]) rails.push(offsetLine(P, c + g));
-  const trees = [];
-  for (const side of [1, -1]) {
-    for (const r of f.trees) {
-      const L = offsetLine(P, side * r);
-      let carry = TREE_SPACING / 2;
-      for (let i = 0; i < L.length - 1; i++) {
-        const a = L[i];
-        const b = L[i + 1];
-        const l = Math.hypot(b[0] - a[0], b[1] - a[1]);
-        let s = carry;
-        while (s < l) {
-          const q = [a[0] + ((b[0] - a[0]) * s) / l, a[1] + ((b[1] - a[1]) * s) / l];
-          if (!avoid(q)) trees.push(q);
-          s += TREE_SPACING;
-        }
-        carry = s - l;
-      }
-    }
-  }
-  e = { rails, trees };
+  e = { rails };
   extrasCache.set(P, e);
   return e;
 }
@@ -153,21 +166,6 @@ export function drawRails(ctx, rails, ox, oy, px) {
   ctx.stroke();
 }
 
-export function drawTrees(ctx, trees, ox, oy, px) {
-  if (!trees.length) return;
-  const path = new Path2D();
-  for (const [x, y] of trees) {
-    // Not all the same size: a little bigger or smaller by where they stand.
-    const r = TREE_R * (0.85 + 0.3 * (((Math.floor(x * 7.13) ^ Math.floor(y * 3.71)) & 15) / 15));
-    path.moveTo(x - ox + r, y - oy);
-    path.arc(x - ox, y - oy, r, 0, Math.PI * 2);
-  }
-  ctx.fillStyle = '#a9cf94';
-  ctx.fill(path);
-  ctx.strokeStyle = 'rgba(70, 110, 60, 0.35)';
-  ctx.lineWidth = px(0.6);
-  ctx.stroke(path);
-}
 
 // Junctions paved over (so medians and tree strips stop short of them).
 export function drawJunctions(ctx, junctions, ox, oy, r) {
@@ -203,32 +201,4 @@ export function drawStops(ctx, stops, ox, oy, px) {
     }
     ctx.restore();
   }
-}
-
-// Street trees along local and pedestrian streets in a chunk: in the tree
-// strip each side, kept clear of junctions and of street ends.
-export function localTrees(segs) {
-  const key = (p) => `${Math.round(p[0] * 10)},${Math.round(p[1] * 10)}`;
-  const degree = new Map();
-  for (const { a, c } of segs) for (const p of [a, c]) degree.set(key(p), (degree.get(key(p)) || 0) + 1);
-  const ends = [];
-  for (const { a, c } of segs) for (const p of [a, c]) if (degree.get(key(p)) !== 2) ends.push(p);
-  const out = [];
-  for (const { kind, a, c } of segs) {
-    const type = kind === 'pedestrian' ? 'pedestrianStreet' : 'localStreet';
-    const f = sectionFeatures(type);
-    if (!f.trees.length) continue;
-    const dx = c[0] - a[0];
-    const dy = c[1] - a[1];
-    const l = Math.hypot(dx, dy);
-    if (l < 1) continue;
-    const n = [-dy / l, dx / l];
-    // Trees on a common grid along x+y, so neighbouring segments line up.
-    for (let s = TREE_SPACING / 2; s < l; s += TREE_SPACING) {
-      const p = [a[0] + (dx * s) / l, a[1] + (dy * s) / l];
-      if (ends.some((e) => Math.abs(e[0] - p[0]) < 14 && Math.abs(e[1] - p[1]) < 14)) continue;
-      for (const side of [1, -1]) out.push([p[0] + n[0] * side * f.trees[0], p[1] + n[1] * side * f.trees[0]]);
-    }
-  }
-  return out;
 }

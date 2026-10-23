@@ -40,8 +40,8 @@ const LANDMARKS = {
   recCentre: { storeys: 2, styles: ['modern'], floor: 5, inset: 5 },
   hospital: { storeys: 7, styles: ['modern'], inset: 6, share: 0.68 },
   hospice: { storeys: 3, styles: ['modern'] },
-  elementarySchool: { storeys: 2, styles: ['modern'], inset: 6, share: 0.42 },
-  secondarySchool: { storeys: 3, styles: ['modern'], inset: 6, share: 0.38 },
+  elementarySchool: { storeys: 2, styles: ['modern'], inset: 6, strip: [22, 90] },
+  secondarySchool: { storeys: 3, styles: ['modern'], inset: 6, strip: [30, 130] },
   altPrimary: { storeys: 2, styles: ['modern'] },
   altSecondary: { storeys: 3, styles: ['modern'] },
   college: { storeys: 5, styles: ['modern', 'neoclassical'] },
@@ -283,6 +283,16 @@ export function assignBuildings(seed, d, blocks) {
           const lo = -ax.L / 2;
           pts = clipSlab(inner, ax.c, ax.u, lo, lo + ax.L * L.share) || inner;
           extra.ground = p.dedicated === 'hospital' ? 'garden' : 'yard';
+        } else if (L.strip && whole) {
+          // A school: a compact building along one long side of its grounds
+          // (depth by length), the rest its yard and playing field.
+          const inner = insetUniform(p.pts, L.inset || 5) || p.pts;
+          const ax = axesOf(inner);
+          const [depth, long] = L.strip;
+          const along = clipSlab(inner, ax.c, ax.v, -ax.W / 2, -ax.W / 2 + Math.min(depth, ax.W * 0.4)) || inner;
+          const l = Math.min(long, ax.L * 0.8);
+          pts = clipSlab(along, ax.c, ax.u, -l / 2, l / 2) || along;
+          extra.ground = 'yard';
         } else if (L.inset && whole) {
           pts = insetUniform(p.pts, L.inset) || p.pts;
         } else if (L.setback) {
@@ -307,8 +317,10 @@ export function assignBuildings(seed, d, blocks) {
       if (p.kind === 'rowhouse' || ['house', 'rowCorner', 'cornerShop'].includes(p.cls)) {
         if (!['georgian', 'victorian', 'neoclassical', 'artDeco'].includes(style)) style = u(13, ...gk) < 0.6 ? 'victorian' : 'georgian';
         // One builder, one terrace: the same garden and depth all along.
-        const garden = p.cls === 'cornerShop' ? 0 : 1.5 + u(14, ...gk) * 2.5;
-        const depth = (p.cls === 'house' ? 9 : 11) + u(15, ...gk) * 2.5;
+        // Toronto proportions: a front garden of 3 to 5 m, a house 14 to 17 m
+        // deep (much longer than it is wide), a short backyard to the lane.
+        const garden = p.cls === 'cornerShop' ? 0 : 3 + u(14, ...gk) * 2;
+        const depth = 14 + u(15, ...gk) * 3;
         const pts = (p.frontA && band(p.pts, p.frontA, p.frontB, garden, garden + depth)) || p.pts;
         p.bldg = make(pts, storeys, style, gk, { shop, ridge: ridge(pts) });
         return;

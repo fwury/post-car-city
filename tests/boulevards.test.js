@@ -7,7 +7,7 @@ import { MIN_SHARED_EDGE, MIN_RADIUS, minRadius, distToLine } from '../src/world
 
 const SEED = seedFromText('1');
 const AREA = [0, 0, 14000, 14000];
-const world = createWorld(SEED);
+const world = createWorld(SEED, { population: Infinity });
 const inner = () => world.districtsInRect(...AREA).filter((d) => d.station[0] > AREA[0] && d.station[0] < AREA[2] && d.station[1] > AREA[1] && d.station[1] < AREA[3]);
 const other = (key) => world.district(world.growth.coreOf(key));
 const ends = (l) => [l.points[0], l.points[l.points.length - 1]];

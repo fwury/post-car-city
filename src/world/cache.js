@@ -22,6 +22,10 @@ export class LruCache {
     return value;
   }
 
+  delete(key) {
+    return this.map.delete(key);
+  }
+
   get size() {
     return this.map.size;
   }

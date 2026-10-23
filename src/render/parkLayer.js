@@ -1,14 +1,13 @@
 // Draws what is in parks and school grounds (stage 5): paths, pitches and
-// courts with their markings, playgrounds, water, gardens and trees.
+// courts with their markings, playgrounds, water and gardens.
 
 export const PARK_DETAIL_ZOOM = 0.45; // features and paths from here
-const TREE_ZOOM = 0.9;
 
 const FILL = {
   playground: '#f1dcae', splash: '#a9d9f2', skate: '#d9d6d0', court: '#8fb3cf', basketball: '#d99a73', tennis: '#6fa77c',
   pitch: '#93c97f', track: '#d4846a', trackField: '#93c97f', dogRun: '#d6e5c4', dogPark: '#d6e5c4', gardens: '#c4d9a2',
   washroom: '#d8d0c3', kiosk: '#e3c7a5', fountain: '#a9d9f2', statue: '#b7b2aa', pond: '#9fcff2', pool: '#e6e0d4',
-  cemetery: '#cfe0c1',
+  cemetery: '#cfe0c1', plaza: '#f1ece2',
 };
 const MARKED = new Set(['pitch', 'tennis', 'basketball', 'court', 'trackField']);
 const FENCED = new Set(['dogRun', 'dogPark', 'gardens', 'cemetery']);
@@ -26,7 +25,7 @@ const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
 export function layoutPaths(layout, ox, oy) {
   let p = cache.get(layout);
   if (p) return p;
-  p = { kinds: new Map(), lines: new Path2D(), fences: new Path2D(), paths: new Map(), trees: new Path2D(), pool: new Path2D(), headstones: new Path2D() };
+  p = { kinds: new Map(), lines: new Path2D(), fences: new Path2D(), paths: new Map(), pool: new Path2D(), headstones: new Path2D() };
   const kind = (k) => {
     if (!p.kinds.has(k)) p.kinds.set(k, new Path2D());
     return p.kinds.get(k);
@@ -79,11 +78,6 @@ export function layoutPaths(layout, ox, oy) {
     path.moveTo(pts[0][0] - ox, pts[0][1] - oy);
     for (let i = 1; i < pts.length; i++) path.lineTo(pts[i][0] - ox, pts[i][1] - oy);
   }
-  for (const [x, y] of layout.trees || []) {
-    const r = 3 + ((Math.floor(x * 3.1) ^ Math.floor(y * 2.3)) & 7) * 0.3;
-    p.trees.moveTo(x - ox + r, y - oy);
-    p.trees.arc(x - ox, y - oy, r, 0, Math.PI * 2);
-  }
   cache.set(layout, p);
   return p;
 }
@@ -134,14 +128,5 @@ export function drawLayouts(ctx, list, place, zoom, px) {
       ctx.stroke(p.headstones);
     }
   }
-  if (zoom >= TREE_ZOOM) {
-    ctx.fillStyle = '#a3cc8d';
-    ctx.strokeStyle = 'rgba(70, 110, 60, 0.3)';
-    ctx.lineWidth = px(0.6);
-    for (const { d, p } of list) {
-      place(d);
-      ctx.fill(p.trees);
-      ctx.stroke(p.trees);
-    }
-  }
+
 }

@@ -28,7 +28,7 @@ import { rngFor } from '../core/rng.js';
 import { createNoise } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { keyInts } from './cores.js';
-import { Heap } from './growth.js';
+import { Heap, isDistrictKey } from './growth.js';
 import { createMainStreets } from './mainStreets.js';
 import { fill, distanceField, stamp } from '../util/raster.js';
 export { MAIN_STREET_REACH } from './mainStreets.js';
@@ -397,6 +397,7 @@ export function createNeighbourhoods(seed, { boulevards }) {
     // Greenway crossings, with the normal pointing into this district.
     const crossings = [];
     for (const c of d.chains) {
+      if (!isDistrictKey(c.neighbour)) continue;
       const same = c.points === c.geo.points;
       // Parks at the ends of the stretch belong to both districts, so both
       // skip the same crossings: none inside a park.

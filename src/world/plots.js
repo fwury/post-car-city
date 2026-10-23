@@ -280,99 +280,81 @@ function band(N, fronts, I, depth, widthOf, opts) {
 }
 
 // The public paths of a courtyard: a ring just inside the backs of the
-// buildings, joining every gap, and through the garden a small network of
-// paths, as in a park: a few junctions spread about the garden, linked by
-// gently curving paths, with the nearer gaps joined to them. Paths never
-// all meet in one place; where three or more meet there is a little square.
+// buildings, which every gap opens onto, and across the garden one to three
+// paths from gap to gap, each a single easy curve. Paths across cross each
+// other at a good angle or keep well apart, never running side by side;
+// where two cross there is a little round square.
 function courtyard(I, doors, rng) {
   const green = insetUniform(I, COURT_RING);
   if (!green || polygonArea(green) < 60) return { green: null, paths: [], nodes: [] };
   const A = polygonArea(green);
-  // Bend a path from a to b a little to one side; null if it leaves the garden.
-  const bend = (a, b, within) => {
-    const d = sub(b, a);
-    const L = len(d);
-    if (L < 4) return null;
-    const nrm = [-d[1] / L, d[0] / L];
-    for (const k of [(rng.next() - 0.5) * 0.5, (rng.next() - 0.5) * 0.25, 0]) {
-      const c = [(a[0] + b[0]) / 2 + nrm[0] * k * L, (a[1] + b[1]) / 2 + nrm[1] * k * L];
-      const pts = [];
-      const m = Math.max(4, Math.ceil(L / 4));
-      for (let i = 0; i <= m; i++) {
-        const t = i / m;
-        pts.push([(1 - t) * (1 - t) * a[0] + 2 * (1 - t) * t * c[0] + t * t * b[0], (1 - t) * (1 - t) * a[1] + 2 * (1 - t) * t * c[1] + t * t * b[1]]);
-      }
-      if (pts.slice(1, -1).every((q, i) => inside(i < 2 || i > pts.length - 5 ? I : within, q))) return pts;
+  let cx = 0;
+  let cy = 0;
+  for (const q of green) {
+    cx += q[0] / green.length;
+    cy += q[1] / green.length;
+  }
+  const c = [cx, cy];
+  const want = doors.length < 2 || A < 350 ? 0 : Math.min(3, 1 + Math.floor(A / 2200));
+  // A curve from a to b bowing gently past the middle; null if it leaves the
+  // courtyard.
+  const curveFor = (a, b) => {
+    const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+    const ctrl = [m[0] + (c[0] - m[0]) * 0.5, m[1] + (c[1] - m[1]) * 0.5];
+    const pts = [];
+    const k = Math.max(6, Math.ceil(len(sub(b, a)) / 4));
+    for (let i = 0; i <= k; i++) {
+      const t = i / k;
+      pts.push([(1 - t) * (1 - t) * a[0] + 2 * (1 - t) * t * ctrl[0] + t * t * b[0], (1 - t) * (1 - t) * a[1] + 2 * (1 - t) * t * ctrl[1] + t * t * b[1]]);
     }
-    return null;
+    return pts.slice(1, -1).every((q) => inside(I, q)) ? pts : null;
   };
-  // Junctions, spread out and kept off the garden's edge.
-  const want = A < 450 ? 0 : Math.min(5, 1 + Math.floor(A / 1600));
-  const deep = insetUniform(green, 7) || green;
-  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
-  for (const [x, y] of deep) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
-  const cands = [];
-  for (let t = 0; t < 80 && cands.length < 30; t++) {
-    const q = [x0 + (x1 - x0) * rng.next(), y0 + (y1 - y0) * rng.next()];
-    if (inside(deep, q)) cands.push(q);
+  const angle = (q) => Math.atan2(q[1] - c[1], q[0] - c[0]);
+  const pairs = [];
+  for (let i = 0; i < doors.length; i++) {
+    for (let j = i + 1; j < doors.length; j++) {
+      let da = Math.abs(angle(doors[i]) - angle(doors[j]));
+      if (da > Math.PI) da = 2 * Math.PI - da;
+      if (da < (2 * Math.PI) / 3) continue;
+      pairs.push({ i, j, score: da + rng.next() * 0.3 });
+    }
   }
-  const nodes = [];
-  while (nodes.length < want && cands.length) {
-    // The candidate farthest from those chosen (the first at random).
-    let best = 0;
-    let bd = -1;
-    cands.forEach((q, i) => {
-      const dd = nodes.length ? Math.min(...nodes.map((n) => len(sub(n.p, q)))) : rng.next();
-      if (dd > bd) [best, bd] = [i, dd];
-    });
-    if (nodes.length && bd < 14) break;
-    nodes.push({ p: cands.splice(best, 1)[0], degree: 0 });
-  }
+  pairs.sort((x, y) => y.score - x.score);
   const paths = [];
-  const link = (a, b, na, nb) => {
-    const pts = bend(a, b, green);
-    if (!pts) return false;
-    paths.push(pts);
-    if (na) na.degree++;
-    if (nb) nb.degree++;
-    return true;
+  const nodes = [];
+  const used = new Set();
+  const segX = (p, q, r, t) => {
+    const d1 = sub(q, p);
+    const d2 = sub(t, r);
+    const den = cross(d1, d2);
+    if (Math.abs(den) < 1e-9) return null;
+    const u = cross(sub(r, p), d2) / den;
+    const v = cross(sub(r, p), d1) / den;
+    return u > 0 && u < 1 && v > 0 && v < 1 ? { at: [p[0] + d1[0] * u, p[1] + d1[1] * u], cos: Math.abs(dot(d1, d2)) / (len(d1) * len(d2)) } : null;
   };
-  // Junctions joined up, nearest first (a spanning tree), with now and then
-  // one more link to make a loop.
-  const joined = nodes.length ? [nodes[0]] : [];
-  while (joined.length < nodes.length) {
-    let pick = null;
-    for (const n of nodes) {
-      if (joined.includes(n)) continue;
-      for (const m of joined) {
-        const dd = len(sub(n.p, m.p));
-        if (!pick || dd < pick.dd) pick = { n, m, dd };
-      }
+  for (const pr of pairs) {
+    if (paths.length >= want) break;
+    if (used.has(pr.i) || used.has(pr.j)) continue;
+    const pts = curveFor(doors[pr.i], doors[pr.j]);
+    if (!pts) continue;
+    // Against the paths already laid: cross at 45° or more, or keep 12 m off.
+    let ok = true;
+    const meets = [];
+    for (const o of paths) {
+      let crossed = null;
+      for (let a = 0; a < pts.length - 1 && !crossed; a++) for (let b2 = 0; b2 < o.length - 1 && !crossed; b2++) crossed = segX(pts[a], pts[a + 1], o[b2], o[b2 + 1]);
+      if (crossed) {
+        if (crossed.cos > Math.SQRT1_2) ok = false;
+        else meets.push(crossed.at);
+      } else if (pts.some((q) => o.some((r) => len(sub(q, r)) < 12))) ok = false;
     }
-    joined.push(pick.n);
-    link(pick.m.p, pick.n.p, pick.m, pick.n);
+    if (!ok) continue;
+    paths.push(pts);
+    used.add(pr.i);
+    used.add(pr.j);
+    for (const m of meets) nodes.push({ p: m, r: 3.5 });
   }
-  if (nodes.length >= 4 && rng.next() < 0.6) {
-    const [a, b] = [nodes[nodes.length - 1], nodes[nodes.length - 2]];
-    link(a.p, b.p, a, b);
-  }
-  // Gaps to their nearest junction, at most three to any one.
-  if (nodes.length) {
-    for (const d of doors) {
-      const order = nodes.slice().sort((a, b) => len(sub(a.p, d)) - len(sub(b.p, d)));
-      const n = order.find((q) => q.degree < 4);
-      if (n) link(d, n.p, null, n);
-    }
-  } else if (doors.length >= 2) {
-    // A small courtyard: one path across, between the two gaps farthest apart.
-    let pair = null;
-    for (let i = 0; i < doors.length; i++) for (let j = i + 1; j < doors.length; j++) {
-      const dd = len(sub(doors[i], doors[j]));
-      if (!pair || dd > pair.dd) pair = { a: doors[i], b: doors[j], dd };
-    }
-    link(pair.a, pair.b, null, null);
-  }
-  return { green, paths, nodes: nodes.filter((n) => n.degree >= 3).map((n) => ({ p: n.p, r: 3 + n.degree * 0.5 })) };
+  return { green, paths, nodes };
 }
 
 function inside(P, q) {
@@ -649,6 +631,13 @@ function terraces(N, fronts, widthOf) {
     const sd = sub(spineHalf[spineHalf.length - 1], spineHalf[0]);
     const side = Math.sign(cross(sd, sub(probe, spineHalf[0]))) || 1;
     const back = shiftLine(spineHalf, (side * ALLEY) / 2);
+    // Its ends run on (or are cut back) to meet the block's edge exactly.
+    const cumN = ringParams(N);
+    for (const [e, f] of [[0, 1], [back.length - 1, back.length - 2]]) {
+      const dir = unit(sub(back[e], back[f]));
+      const hit = rayToRing(back[f], dir, 400, N, cumN);
+      if (hit) back[e] = hit.q;
+    }
     const F = [back[0]];
     const ff = [];
     for (let k = (from.i + 1) % n, guard = 0; guard <= n; k = (k + 1) % n, guard++) {
@@ -744,20 +733,44 @@ function terraces(N, fronts, widthOf) {
       placed.push({ s: c, p, q: hit.q, qs: hit.s });
     }
     placed.push({ s: cumF[F.length - 1], p: F[F.length - 1], q: B[0], qs: 0 });
-    for (let k = 0; k + 1 < placed.length; k++) {
-      const a = placed[k];
-      const b = placed[k + 1];
-      const pts = [a.p, ...lineBetween(F, cumF, a.s, b.s), b.p];
-      if (k + 1 < placed.length - 1) pts.push(b.q);
-      // Back along the spine, from b's cut to a's.
-      pts.push(...lineBetween(B, cumB, b.qs, a.qs));
-      if (k > 0) pts.push(a.q);
-      const area = polygonArea(pts);
-      if (area < 20) continue;
-      // (Tidied: the alley's ends leave slivers at the block's corners.)
-      const tidy = tidyRing(pts);
-      plots.push({ pts: tidy, area: polygonArea(tidy), front: b.s - a.s, corner: k === 0 || k === placed.length - 2, faces: front, frontA: a.p, frontB: b.p, row });
+    // The long frontage's ends: a corner house faces the long street, its
+    // front measured from the corner, not round the short side.
+    const cornerA = F[run.a];
+    const cornerB = F[run.b];
+    const build = (list) => {
+      const out = [];
+      for (let k = 0; k + 1 < list.length; k++) {
+        const a = list[k];
+        const b = list[k + 1];
+        const pts = [a.p, ...lineBetween(F, cumF, a.s, b.s), b.p];
+        if (k + 1 < list.length - 1) pts.push(b.q);
+        // Back along the spine, from b's cut to a's.
+        pts.push(...lineBetween(B, cumB, b.qs, a.qs));
+        if (k > 0) pts.push(a.q);
+        // (Tidied: the alley's ends leave slivers at the block's corners.)
+        const tidy = tidyRing(pts);
+        const first = k === 0;
+        const last = k + 1 === list.length - 1;
+        out.push({
+          pts: tidy, area: polygonArea(tidy), front: b.s - a.s, corner: first || last, faces: front, row,
+          frontA: first ? cornerA : a.p, frontB: last ? cornerB : b.p,
+          bad: tidy.length < 3 || selfCrosses(tidy) || (polygonArea(tidy) > MAX_HOUSE && list.length > 3),
+        });
+      }
+      return out;
+    };
+    // A house that comes out crossing itself (or far too big, at an awkward
+    // end) joins the house next to it: the cut between them goes.
+    let list = placed;
+    let built = build(list);
+    for (let round = 0; round < 6 && built.some((p) => p.bad) && list.length > 3; round++) {
+      const k = built.findIndex((p) => p.bad);
+      const drop = k === built.length - 1 ? k : k + 1;
+      if (drop <= 0 || drop >= list.length - 1) break;
+      list = list.filter((_, i) => i !== drop);
+      built = build(list);
     }
+    for (const p of built) if (p.area >= 20) plots.push(p);
   }
   if (!plots.length) return fail('none');
   plots.alley = M;
@@ -799,8 +812,8 @@ function plotsOf(N, fronts, use, W, rng) {
     // there far bigger than its neighbours means the spine went wrong.
     if (use === 'rowhouse' && rectness(N) >= TERRACE_RECT) {
       const t = terraces(N, fronts, widthOf);
-      const ok = t && t.every((p) => !selfCrosses(p.pts) && p.area <= MAX_HOUSE);
-      if (ok) return { plots: t.map((p) => ({ ...p, kind: 'rowhouse' })), inner: null, depth: null, alley: t.alley };
+      const ok = t && t.every((p) => !p.bad);
+      if (ok) return { plots: t.map(({ bad, ...p }) => ({ ...p, kind: 'rowhouse' })), inner: null, depth: null, alley: t.alley };
     }
     let depth;
     let I = null;

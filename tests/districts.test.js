@@ -15,7 +15,7 @@ const SEED = seedFromText('1');
 const AREA = [0, 0, 14000, 14000];
 
 // One world for the read-only checks; generation is pure, so sharing is safe.
-const world = createWorld(SEED);
+const world = createWorld(SEED, { population: Infinity });
 const inner = () => world.districtsInRect(...AREA).filter((d) => d.station[0] > AREA[0] && d.station[0] < AREA[2] && d.station[1] > AREA[1] && d.station[1] < AREA[3]);
 
 test('cores keep their spacing', () => {
@@ -40,8 +40,8 @@ test('shared boundaries match exactly from both sides', () => {
 });
 
 test('generation does not depend on visiting order', () => {
-  const a = createWorld(SEED);
-  const b = createWorld(SEED);
+  const a = createWorld(SEED, { population: Infinity });
+  const b = createWorld(SEED, { population: Infinity });
   const pick = (d) => JSON.stringify({ key: d.key, ring: d.ring, core: d.core, parks: d.parks.map((p) => p.key), lines: d.network.lines.map((l) => l.points) });
   const fwd = a.districtsInRect(0, 0, 9000, 9000).map(pick).sort();
   b.districtsInRect(9000, 9000, 18000, 18000);

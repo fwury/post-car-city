@@ -1,34 +1,63 @@
 // Stage 5: what is in a primary greenway. The whole strip is left natural
 // (meadow and woodland) but for a stream and a trail:
 //
-//   - the stream winds down the middle in meanders about as long as the
-//     greenway is wide, swinging about a quarter of that each way, so it runs
-//     about one and a half times the greenway's length (the meander shape
-//     natural streams settle into); it takes heavy rain off the streets;
+//   - the stream runs down the middle, drifting a little off it and back
+//     as a small river does; it takes heavy rain off the streets;
 //   - the trail, wide enough for people walking and cycling both ways, runs
 //     along one side, following the stream's bends loosely;
-//   - woodland comes in patches.
+//
+// Along a river the river takes the stream's place, with a path along each
+// bank; along the shore there is a promenade by the water.
 //
 // Everything is a pure function of the stretch of greenway, so the two
 // districts either side draw the same thing.
 
 import { hash, hashString, toUnit } from '../core/hash.js';
-import { createNoise } from '../core/noise.js';
 import { LruCache } from './cache.js';
+import { createNoise } from '../core/noise.js';
 import { resample, chaikin } from '../util/geom.js';
 
 const STEP = 6; // metres between points along a greenway
 const STREAM_WIDTH = [4, 7];
 export const TRAIL_WIDTH = 4;
-const TREE_GRID = 13;
 
-export function createGreenways(seed, { greenwayWidth }) {
+const BANK_PATH = 0.45; // the bank paths' place across the bank, from the water
+const SHORE_PATH = 10; // metres from the water's edge to the promenade
+
+export function createGreenways(seed, { greenwayWidth, terrain = null }) {
   const cache = new LruCache(4000);
-  const woods = createNoise(seed, 'greenway-woods');
+  const drift = createNoise(seed, 'stream-drift');
+
+  // A line split where it runs into water: the pieces on land.
+  const dry = (L) => {
+    if (!terrain) return [L];
+    const out = [];
+    let cur = [];
+    for (const q of L) {
+      if (terrain.isWater(q[0], q[1])) {
+        if (cur.length > 1) out.push(cur);
+        cur = [];
+      } else cur.push(q);
+    }
+    if (cur.length > 1) out.push(cur);
+    return out;
+  };
+  const longest = (list) => list.reduce((a, b) => (b.length > a.length ? b : a), []);
 
   function of(geo) {
     let g = cache.get(geo.key);
     if (g) return g;
+    g = shape(geo);
+    // Streams run into the water; paths stop at its edge.
+    g.streams = g.stream ? dry(g.stream) : [];
+    g.trails = g.trails.flatMap(dry);
+    g.trail = longest(g.trails);
+    cache.set(geo.key, g);
+    return g;
+  }
+
+  function shape(geo) {
+    let g;
     const P = resample(geo.points, STEP);
     const n = P.length;
     const k = hashString(geo.key);
@@ -44,72 +73,61 @@ export function createGreenways(seed, { greenwayWidth }) {
       N.push([-t[1] / l, t[0] / l]);
       half.push(greenwayWidth(P[i][0], P[i][1]) / 2);
     }
+    const L = (n - 1) * STEP;
+    if (terrain && geo.kind === 'river') {
+      const bank = terrain.BANK;
+      const trails = [1, -1].map((sd) => {
+        const T = P.map((q, i) => {
+          const r = terrain.nearestRiver(q[0], q[1]);
+          const o = sd * ((r ? r.width / 2 : 0) + bank * BANK_PATH);
+          return [q[0] + N[i][0] * o, q[1] + N[i][1] * o];
+        });
+        return chaikin(T, false);
+      });
+      return { stream: null, trail: trails[0], trails, centre: P, half, side: 1, water: 'river' };
+    }
+    if (terrain && geo.kind === 'shore') {
+      // The sea lies on the side where the shore is nearer.
+      let s = 0;
+      for (let i = 0; i < n; i += 5) {
+        const q = P[i];
+        s += terrain.shore(q[0] + N[i][0] * 20, q[1] + N[i][1] * 20) - terrain.shore(q[0] - N[i][0] * 20, q[1] - N[i][1] * 20);
+      }
+      const sd = s < 0 ? 1 : -1;
+      const off = half.map((h) => sd * Math.max(0, h - SHORE_PATH));
+      const sm = off.map((_, i) => {
+        let a = 0;
+        let c = 0;
+        for (let j = Math.max(0, i - 4); j <= Math.min(n - 1, i + 4); j++) {
+          a += off[j];
+          c++;
+        }
+        return a / c;
+      });
+      const trail = chaikin(P.map((q, i) => [q[0] + N[i][0] * sm[i], q[1] + N[i][1] * sm[i]]), false);
+      return { stream: null, trail, trails: [trail], centre: P, half, side: sd, water: 'sea' };
+    }
     // The trail keeps to one side.
     const side = u(1) < 0.5 ? 1 : -1;
-    const L = (n - 1) * STEP;
-    // The stream: a sine-generated curve, the shape meanders settle into.
-    // Its heading swings ±OMEGA either side of down the valley over each
-    // meander (whose length follows the greenway's width), so it runs about
-    // 1/J0(OMEGA) = 1.5 times as far as the valley. Walked out in valley
-    // coordinates (x down the valley, y across), then laid on the
-    // centreline, squeezed if a loop would leave the greenway.
-    const OMEGA = 1.22;
-    const ph = u(2) * Math.PI * 2;
-    const vary = u(3) * 1000;
-    const halfAt = (x) => half[Math.max(0, Math.min(n - 1, Math.round(x / STEP)))];
-    const walk = [];
-    {
-      let x = 0;
-      let y = 0;
-      let phase = ph;
-      for (let guard = 0; x < L && guard < 20000; guard++) {
-        const h = halfAt(x);
-        const M = Math.max(110, Math.min(400, 1.7 * 2 * h)) * (0.85 + 0.3 * (0.5 + 0.5 * Math.sin(x / 700 + vary)));
-        const th = OMEGA * Math.sin(phase);
-        x += Math.cos(th) * 2;
-        y += Math.sin(th) * 2;
-        phase += (2 * Math.PI * 2) / M;
-        walk.push([x, y]);
-      }
+    // The stream: near the middle, drifting off it a little and back as the
+    // ground lies, the way a small river does, not in regular swings. Its
+    // offset follows noise in world coordinates (so it does not depend on
+    // which way the stretch is walked), up to about a quarter of the half
+    // width, easing to the middle at each end, where it meets the streams
+    // of the stretches beyond.
+    const mOff = new Array(n);
+    for (let i = 0; i < n; i++) {
+      const [x, y] = P[i];
+      const wander = drift.fbm(x / 420, y / 420, 3, 2.1, 0.5) * 1.6 + drift.fbm(x / 130 + 17.3, y / 130, 2) * 0.35;
+      const amp = Math.min(14, half[i] * 0.28);
+      const s0 = i * STEP;
+      const fade = Math.min(1, s0 / 90, (L - s0) / 90);
+      mOff[i] = Math.max(-1, Math.min(1, wander)) * amp * Math.max(0, fade);
     }
-    // Centre the swings (the walk drifts), then fit them in.
-    const ys = walk.map((q) => q[1]);
-    const mean = (i) => {
-      let a = 0;
-      let c = 0;
-      for (let j = Math.max(0, i - 120); j <= Math.min(ys.length - 1, i + 120); j += 4) {
-        a += ys[j];
-        c++;
-      }
-      return a / c;
-    };
-    const mAt = new Float64Array(n);
-    const raw = walk.map((q, i) => [q[0], q[1] - mean(i)]);
-    // How far the loops swing nearby, so a stretch can be scaled to fit
-    // (keeping its shape) rather than cut off.
-    const reach = raw.map((_, i) => {
-      let m = 0;
-      for (let j = Math.max(0, i - 150); j <= Math.min(raw.length - 1, i + 150); j += 3) m = Math.max(m, Math.abs(raw[j][1]));
-      return m || 1;
-    });
-    const stream = [];
-    for (const [k, [x, y0]] of raw.entries()) {
-      const i = Math.max(0, Math.min(n - 1, Math.round(x / STEP)));
-      const h = half[i];
-      const room = Math.max(2, h - 20);
-      const fade = Math.max(0, Math.min(1, x / 70, (L - x) / 70));
-      const y = y0 * Math.min(1, room / reach[k]) * fade - side * Math.min(6, h * 0.1);
-      mAt[i] = y;
-      // (Between centreline points, so the stream does not step.)
-      const f = Math.max(0, Math.min(n - 1.001, x / STEP));
-      const i0 = Math.floor(f);
-      const t = f - i0;
-      const lerp = (A, j) => A[i0][j] + (A[i0 + 1][j] - A[i0][j]) * t;
-      stream.push([lerp(P, 0) + lerp(N, 0) * y, lerp(P, 1) + lerp(N, 1) * y]);
-    }
-    for (let i = 1; i < n; i++) if (!mAt[i]) mAt[i] = mAt[i - 1];
+    // Smoothed, so it bends gently.
+    for (let r = 0; r < 3; r++) for (let i = 1; i < n - 1; i++) mOff[i] = (mOff[i - 1] + 2 * mOff[i] + mOff[i + 1]) / 4;
+    const stream = P.map((q, i) => [q[0] + N[i][0] * mOff[i], q[1] + N[i][1] * mOff[i]]);
     const trail = [];
-    const mOff = Array.from(mAt);
     const tOff = mOff.map((m, i) => side * Math.max(half[i] * 0.55, Math.min(half[i] - 9, Math.abs(m) + 16)) + m * 0.2);
     // Smooth the trail's offsets so it bends less than the stream.
     const tSm = tOff.map((_, i) => {
@@ -121,33 +139,24 @@ export function createGreenways(seed, { greenwayWidth }) {
       }
       return a / c;
     });
-    for (let i = 0; i < n; i++) trail.push([P[i][0] + N[i][0] * tSm[i], P[i][1] + N[i][1] * tSm[i]]);
-    // Woodland in patches, clear of the stream and trail.
-    const trees = [];
-    let acc = 0;
+    // The trail eases to the middle at each end too, so where greenways meet
+    // their trails meet, at the joining of their streams (a footbridge).
     for (let i = 0; i < n; i++) {
-      if (i) acc += STEP;
-      if (acc < TREE_GRID && i) continue;
-      acc = 0;
-      for (let o = -half[i] + 7; o <= half[i] - 7; o += TREE_GRID) {
-        const j = (o * 7.3 + i * 3.1) % 1;
-        const off = o + (u(10, i, Math.round(o)) - 0.5) * 6;
-        const q = [P[i][0] + N[i][0] * off, P[i][1] + N[i][1] * off];
-        if (Math.abs(off - mOff[i]) < 9 || Math.abs(off - tSm[i]) < 7) continue;
-        if (woods.fbm(q[0] / 240, q[1] / 240, 2) + j * 0 < 0.05) continue;
-        trees.push(q);
-      }
+      const s0 = i * STEP;
+      const f = Math.max(0, Math.min(1, s0 / 70, (L - s0) / 70));
+      const o = tSm[i] * (f * f * (3 - 2 * f));
+      trail.push([P[i][0] + N[i][0] * o, P[i][1] + N[i][1] * o]);
     }
     g = {
-      stream: chaikin(resample(stream, 4), false),
+      stream: chaikin(stream, false),
       trail: chaikin(trail, false),
+      trails: null,
       streamWidth: STREAM_WIDTH[0] + u(4) * (STREAM_WIDTH[1] - STREAM_WIDTH[0]),
-      trees,
       centre: P,
       half,
       side,
     };
-    cache.set(geo.key, g);
+    g.trails = [g.trail];
     return g;
   }
 

@@ -7,7 +7,7 @@ import { palette } from './styles.js';
 import { USES } from '../world/uses.js';
 import { STREET_TYPES } from '../world/streetTypes.js';
 import { BUILDING_MIN_ZOOM, paths2D, items3D, drawBuildings } from './buildingLayer.js';
-import { DETAIL_MIN_ZOOM, drawSection, localTrees, drawTrees } from './streetDetail.js';
+import { DETAIL_MIN_ZOOM, drawSections } from './streetDetail.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { ALLEY } from '../world/plots.js';
 
@@ -15,7 +15,7 @@ export const BLOCK_MIN_ZOOM = 0.25;
 export const PLOT_MIN_ZOOM = 1;
 export const USE_MIN_ZOOM = 1.6; // shop-floor dots from here in
 const PERIMETER_DEPTH = 14; // metres of building along a perimeter block's streets
-const ROWHOUSE_DEPTH = 10;
+const ROWHOUSE_DEPTH = 19; // front garden and house
 const CAMPUS_DEPTH = 18;
 // A local street's pavement each side: its clearway and furnishing zones.
 const PAVEMENT = STREET_TYPES.localStreet.side.reduce((a, [, w]) => a + w, 0);
@@ -223,10 +223,9 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
   // still, its whole cross-section.
   const detail = zoom >= DETAIL_MIN_ZOOM;
   if (detail) {
-    for (const { d, p } of list) {
-      place(d);
-      for (const st of p.streets.values()) drawSection(ctx, st.path, st.kind === 'pedestrian' ? 'pedestrianStreet' : 'localStreet', px);
-    }
+    const items = [];
+    for (const { d, p } of list) for (const st of p.streets.values()) items.push({ path: st.path, type: st.kind === 'pedestrian' ? 'pedestrianStreet' : 'localStreet', place: () => place(d) });
+    drawSections(ctx, items, px);
   }
   const passes = detail ? [] : zoom >= PLOT_MIN_ZOOM ? ['casing', 'pavement', 'fill'] : ['casing', 'fill'];
   for (const pass of passes) {
@@ -316,12 +315,6 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
     }
   }
   ctx.lineCap = 'round';
-  if (detail) {
-    for (const { d, ch } of list) {
-      place(d);
-      drawTrees(ctx, ch.trees || (ch.trees = localTrees(ch.segs)), d.origin[0], d.origin[1], px);
-    }
-  }
   if (zoom >= PLOT_MIN_ZOOM) {
     ctx.strokeStyle = palette.plotLine;
     ctx.lineWidth = px(0.6);

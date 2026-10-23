@@ -35,7 +35,6 @@ import { assignProgramme } from './programme.js';
 import { assignBuildings } from './buildings.js';
 import { tramStops } from './tram.js';
 import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
-import { createNoise } from '../core/noise.js';
 import { createNames } from './names.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
@@ -50,7 +49,7 @@ const PARKSIDE = LOCAL; // the street along a greenway or park edge
 // never split into a piece narrower than `min` (or shorter than `minLong`).
 export const BLOCK_SIZES = {
   perimeter: { long: 175, short: 140, min: 80 },
-  rowhouse: { long: 210, short: 96, min: 62, minLong: 120 },
+  rowhouse: { long: 200, short: 86, min: 56, minLong: 110 },
   podium: { long: 165, short: 135, min: 80 },
   campus: { long: 270, short: 220, min: 110 },
 };
@@ -59,7 +58,7 @@ const ALIGN = 34; // a new street this close to one meeting the far side lines u
 const JOG = 48; // and otherwise keeps at least this far from it
 const SQUARE_AREA = [0.5e4, 1.7e4]; // m², centreline, for a neighbourhood square
 const PARK_PAIR_AREA = [4.2e4, 9.5e4]; // m², centreline, for a park and school side by side
-const PARK_SHARE = 0.62; // of that pair, the park's share
+const PARK_SHARE = 0.5; // of that pair, the park's share (the school's grounds take the rest, track and all)
 const PARK_SITE_SET_BACK = 150; // metres a park's site keeps from main streets
 const REMNANT = 0.12e4; // m², net: a block smaller than this is left green
 const STEP = 10; // metres between points of a new street
@@ -74,6 +73,8 @@ const GREEN_LINK_GAP = 140; // metres between local streets' paths into a greenw
 const LINEAR_PARK_RUN = [220, 1000]; // metres: a secondary greenway's length, main street to main street
 const LINEAR_PARK_SHARE = 0.5; // of such stretches of boundary, those made linear parks
 const LINEAR_PARK_WIDTH = [28, 40]; // metres
+const ROW_AWKWARD_AREA = 0.9e4; // m²: a rowhouse block bigger than this that is far from rectangular is split again ...
+const TERRACE_RECT_GOOD = 0.78; // ... (rectangular enough, by this measure); a smaller one is a green
 const OVERSIZE = 1.5; // a block this many times its usual area must split, one way or another
 const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
 const SQUARE_FORMS = { corner: 0.3, against: 0.35 }; // shares of squares by form; the rest stand on their own
@@ -287,8 +288,9 @@ function joinRuns(runs) {
   return out;
 }
 
-export function createBlocks(seed, { greenwayWidth, greenway }) {
-  const parkWoods = createNoise(seed, 'park-woods');
+export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false }) {
+  // A path that would run through water is left out.
+  const dryPath = (pts) => pts && !pts.some((q) => isWater(q[0], q[1]));
   const names = createNames(seed);
   const cache = new LruCache(6); // (each district's blocks and buildings take tens of MB)
 
@@ -385,7 +387,11 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
       };
       // A gently curving path from p to the trail.
       const toTrail = (p, way, toward) => {
-        const T = nearestOn(way.g.trail, toward || p);
+        let T = null;
+        for (const L of way.g.trails) {
+          const t = nearestOn(L, toward || p);
+          if (t && (!T || t.r < T.r)) T = t;
+        }
         if (!T || T.r > 260) return null;
         const m = [(p[0] + T.p[0]) / 2, (p[1] + T.p[1]) / 2];
         const c = toward ? [(m[0] + toward[0]) / 2, (m[1] + toward[1]) / 2] : m;
@@ -424,7 +430,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
         if (!near || near.r.r > near.w.g.half[Math.min(near.r.i, near.w.g.half.length - 1)] + PARKSIDE * 1.5) continue;
         if (taken.some((t) => len(sub(t, q)) < GREEN_LINK_GAP)) continue;
         const pts = toTrail(q, near.w, near.r.p);
-        if (pts) {
+        if (dryPath(pts)) {
           out.push(pts);
           taken.push(q);
         }
@@ -447,7 +453,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
             const e = [x[0] + dir[0] * (h + 2) + perp[0] * sgn * (w / 2 - 1.5), x[1] + dir[1] * (h + 2) + perp[1] * sgn * (w / 2 - 1.5)];
             const toward = [e[0] - dir[0] * h * 0.6 + perp[0] * sgn * 30, e[1] - dir[1] * h * 0.6 + perp[1] * sgn * 30];
             const pts = toTrail(e, near.w, toward);
-            if (pts) out.push(pts);
+            if (dryPath(pts)) out.push(pts);
           }
         }
       }
@@ -1187,7 +1193,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
         if (pk) {
           parkOf.set(pk.id, node);
           let kids = null;
-          for (const at of [PARK_SHARE, 0.55, 0.68]) if (!kids) kids = split(node, ax, 'campus', { at, force: true, along: false });
+          for (const at of [PARK_SHARE, 0.45, 0.58]) if (!kids) kids = split(node, ax, 'campus', { at, force: true, along: false });
           if (kids) {
             // The park is the larger piece.
             const [a, b] = kids[0].pts && polygonArea(kids[0].pts) >= polygonArea(kids[1].pts) ? kids : [kids[1], kids[0]];
@@ -1200,7 +1206,10 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
         }
         const sizeZone = zone;
         const size = BLOCK_SIZES[sizeZone];
-        if (ax.L <= size.long && ax.W <= size.short) {
+        // (A rowhouse block must also be near enough rectangular for its
+        // terraces; one that is not is split again, if it is big enough.)
+        const awkwardRow = zone === 'rowhouse' && ax.area > ROW_AWKWARD_AREA && rectness(node.pts) < TERRACE_RECT_GOOD;
+        if (ax.L <= size.long && ax.W <= size.short && !awkwardRow) {
           leaves.push({ ...node, ax, zone });
           continue;
         }
@@ -1404,13 +1413,19 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
       const front = lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard');
       // A small block of awkward shape (a triangle, say) is left as a green:
       // no plots cut from it would make sensible buildings.
-      const awkward = net && area < AWKWARD_AREA && rectness(net) < AWKWARD_RECT;
+      const awkward = net && ((area < AWKWARD_AREA && rectness(net) < AWKWARD_RECT) || (lf.zone === 'rowhouse' && !lf.use && area < ROW_AWKWARD_AREA && rectness(net) < TERRACE_RECT_GOOD - 0.1));
       const use = lf.use ?? (area < REMNANT || awkward ? 'green' : lf.zone === 'rowhouse' && front ? 'perimeter' : lf.zone);
       const b = { pts: net, centreline: P, dist, use, area, stuck: !!lf.stuck, raw: polygonArea(P), hood: lf.hood ?? (hoodAt(lf.ax.c) || {}).id, front: lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard') };
       if (lf.form) b.form = lf.form;
       if (!net) b.use = 'green';
       else {
-        const pl = plotsOfBlock(net, fronts, b.use, axes(net).W, rng);
+        let pl = plotsOfBlock(net, fronts, b.use, axes(net).W, rng);
+        // A rowhouse block that would take neither terraces nor a ring of
+        // houses (cut into long strips instead) is left as a green.
+        if (b.use === 'rowhouse' && !pl.alley && !pl.inner) {
+          b.use = 'green';
+          pl = plotsOfBlock(net, fronts, 'green', 0, rng);
+        }
         b.plots = pl.plots;
         b.inner = pl.inner;
         b.court = pl.court;
@@ -1466,6 +1481,24 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
     // crossing for people walking and cycling).
     for (const lp of linearParks) {
       lp.links = [];
+      // An end in a primary greenway: a path on to its trail.
+      if (greenway) {
+        for (const q of [lp.centre[0], lp.centre[lp.centre.length - 1]]) {
+          let best = null;
+          for (const c of d.chains) {
+            for (const T of greenway(c.geo).trails) for (let i = 0; i < T.length - 1; i++) {
+              const a = T[i];
+              const ab = sub(T[i + 1], a);
+              const l2 = dot(ab, ab);
+              const t = l2 ? Math.max(0, Math.min(1, dot(sub(q, a), ab) / l2)) : 0;
+              const f = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+              const r = len(sub(f, q));
+              if (!best || r < best.r) best = { p: f, r };
+            }
+          }
+          if (best && best.r < greenwayWidth(q[0], q[1]) && dryPath([q, best.p, [(q[0] + best.p[0]) / 2, (q[1] + best.p[1]) / 2]])) greenLinks.push([q, best.p]);
+        }
+      }
       const near = (q) => {
         let best = null;
         for (let i = 0; i < lp.centre.length - 1; i++) {
@@ -1500,22 +1533,21 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
     const programme = assignProgramme(seed, d, blocks, planned);
     // And what stands on it.
     assignBuildings(seed, d, blocks);
-    const tram = tramStops(d, blocks);
+    const tram = tramStops(d, blocks, local);
     // What is in the parks, and the schools' grounds.
     const parkRng = rngFor(seed, 'park-layout', ...keyInts(d.coreInfo));
-    // Schools first: a secondary school whose grounds have no room for its
-    // track has it in the park next door.
-    const trackIn = new Set();
+    // Schools' grounds: a track and field where there is room.
     for (const b of blocks) {
       if (!b.plots || !b.plots.length || (b.use !== 'school' && b.use !== 'elementarySchool')) continue;
       const q = b.plots[0];
-      b.layout = layoutSchool(b.pts, q.bldg && q.bldg.pts, parkRng, b.use === 'school');
-      if (b.use === 'school' && !b.layout.features.some((f) => f.kind === 'track')) trackIn.add(b.hood);
+      b.layout = layoutSchool(b.pts, parkRng, b.use === 'school');
+      // The building where the grounds leave room for it.
+      if (q.bldg && b.layout.building) q.bldg = { ...q.bldg, pts: b.layout.building, ridge: null };
     }
     for (const b of blocks) {
       if (!b.plots || !b.plots.length) continue;
       if (b.use === 'park') {
-        b.layout = layoutNeighbourhoodPark(b.pts, parkRng, { track: trackIn.has(b.hood) });
+        b.layout = layoutNeighbourhoodPark(b.pts, parkRng);
         if (b.layout.centre) {
           b.plots[0].bldg = communityCentre(b.layout.centre);
           b.plots[0].also = 'communityCentre';
@@ -1523,15 +1555,17 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
       }
       for (const q of b.plots) if (q.dedicated === 'parkette' && q.pts.length > 2) q.layout = layoutParkette(q.pts, parkRng);
       // A stadium's pitch.
-      if (b.use === 'stadium' && b.plots[0].bldg && b.plots[0].bldg.pitch) b.layout = { features: [{ kind: 'pitch', pts: b.plots[0].bldg.pitch }], paths: [], trees: [] };
+      if (b.use === 'stadium' && b.plots[0].bldg && b.plots[0].bldg.pitch) b.layout = { features: [{ kind: 'pitch', pts: b.plots[0].bldg.pitch }], paths: [] };
     }
     // District parks, laid out the same way by every district they touch.
-    const districtParks = d.parks.map((pk) => ({ key: pk.key, layout: layoutDistrictPark(pk.shape, rngFor(seed, 'district-park', hashString(pk.key)), (q) => parkWoods.fbm(q[0] / 300, q[1] / 300, 2) > 0.08) }));
+    const districtParks = d.parks.map((pk) => ({ key: pk.key, layout: layoutDistrictPark(pk.shape, rngFor(seed, 'district-park', hashString(pk.key))) }));
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
     return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks };
   }
 
-  return { of };
+  // Forget a district's blocks (a worker that has handed them on keeps none).
+  const forget = (d) => cache.delete(d.key);
+  return { of, forget };
 }

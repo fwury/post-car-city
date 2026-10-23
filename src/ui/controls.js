@@ -1,6 +1,9 @@
-// Seed input, layer toggles, zoom buttons and URL sync (seed, x, y, zoom).
+// Seed and population inputs, layer toggles, zoom buttons and URL sync
+// (seed, pop, x, y, zoom).
 
-const DEFAULT_VIEW = { seed: '1', x: 0, y: 0, zoom: 0.03 };
+const DEFAULT_VIEW = { seed: '1', pop: 1500000, x: 0, y: 0, zoom: 0.03 };
+const MIN_POPULATION = 150000;
+const MAX_POPULATION = 10000000;
 const LAYERS_KEY = 'post-car-city:layers:v5';
 export const MAP_LAYERS = ['cores', 'streets', 'green', 'outlines', 'neighbourhoods', 'blocks'];
 export const DEFAULT_LAYERS = {
@@ -20,6 +23,7 @@ export function readUrlState() {
   const seed = (p.get('seed') ?? '').trim() || DEFAULT_VIEW.seed;
   return {
     seed,
+    population: Math.round(Math.max(MIN_POPULATION, Math.min(MAX_POPULATION, num('pop', DEFAULT_VIEW.pop)))),
     x: num('x', DEFAULT_VIEW.x),
     y: num('y', DEFAULT_VIEW.y),
     zoom: num('zoom', DEFAULT_VIEW.zoom),
@@ -31,9 +35,10 @@ export function createUrlSync(getState) {
   let timer = null;
   const write = () => {
     timer = null;
-    const { seed, x, y, zoom } = getState();
+    const { seed, population, x, y, zoom } = getState();
     const p = new URLSearchParams();
     p.set('seed', seed);
+    p.set('pop', String(population));
     p.set('x', x.toFixed(2));
     p.set('y', y.toFixed(2));
     p.set('zoom', String(Number(zoom.toPrecision(6))));
@@ -71,7 +76,7 @@ function randomSeedText() {
   return String(100000 + (a[0] % 900000));
 }
 
-export function setupControls({ state, camera, onSeed, onLayers }) {
+export function setupControls({ state, camera, onSeed, onPopulation, onLayers }) {
   const form = document.getElementById('seed-form');
   const input = document.getElementById('seed');
   const newSeed = document.getElementById('new-seed');
@@ -86,6 +91,18 @@ export function setupControls({ state, camera, onSeed, onLayers }) {
     }
     onSeed(text);
   });
+
+  // Population: the presets, plus whatever the URL asked for.
+  const pop = document.getElementById('population');
+  if (![...pop.options].some((o) => Number(o.value) === state.population)) {
+    const o = document.createElement('option');
+    o.value = String(state.population);
+    o.textContent = state.population.toLocaleString('en-GB').replace(/,/g, ' ');
+    const after = [...pop.options].find((q) => Number(q.value) > state.population);
+    pop.insertBefore(o, after || null);
+  }
+  pop.value = String(state.population);
+  pop.addEventListener('change', () => onPopulation(Number(pop.value)));
 
   newSeed.addEventListener('click', () => {
     const text = randomSeedText();
