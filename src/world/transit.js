@@ -7,8 +7,10 @@
 // second stop on the way out.
 //
 // The metro runs in tunnels, between neighbouring districts the rail does
-// not join directly, through a neighbourhood centre on the way: a station
-// at each core and at the neighbourhood centres it passes.
+// not join directly. Lines run straight on through stations (two lines
+// through one cross about square, an interchange), with a station at each
+// core and one more between each core and the next, about a kilometre
+// apart, at a neighbourhood centre near the line where there is one.
 //
 // Each district works out its own half of every line, from its station to
 // where the line crosses the greenway to the next district, so the two
@@ -18,11 +20,16 @@ import { LruCache } from './cache.js';
 
 const CENTRE = [0, 0];
 const SECOND_STOP = 1100; // metres: a rail run in a district this long gets a second stop
-const METRO_REACH = 380; // metres a neighbourhood centre may lie off the line to have a station
+const METRO_REACH = 260; // metres a neighbourhood centre may lie off the line for the station to be named after it
+const THROUGH = -0.34; // links whose directions from the station are at least 110° apart make a line through
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const len = (v) => Math.hypot(v[0], v[1]);
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
+const unit = (v) => {
+  const l = len(v) || 1;
+  return [v[0] / l, v[1] / l];
+};
 
 function lengthOf(P) {
   let L = 0;
@@ -128,6 +135,38 @@ function route(lines, a, b) {
   return out.reverse();
 }
 
+// A cubic Hermite curve through points with given unit tangents, each
+// span's tangents scaled to its length; sampled every few metres.
+function hermite(P, T, step = 15) {
+  const out = [P[0]];
+  for (let i = 0; i < P.length - 1; i++) {
+    const a = P[i];
+    const b = P[i + 1];
+    const D = len(sub(b, a));
+    const k = D * 0.9;
+    const m = Math.max(2, Math.ceil(D / step));
+    for (let s = 1; s <= m; s++) {
+      const t = s / m;
+      const h00 = 2 * t ** 3 - 3 * t * t + 1;
+      const h10 = t ** 3 - 2 * t * t + t;
+      const h01 = -2 * t ** 3 + 3 * t * t;
+      const h11 = t ** 3 - t * t;
+      out.push([0, 1].map((c) => h00 * a[c] + h10 * k * T[i][c] + h01 * b[c] + h11 * k * T[i + 1][c]));
+    }
+  }
+  return out;
+}
+
+function nearestIndex(P, q) {
+  let best = 0;
+  let bd = Infinity;
+  P.forEach((p, i) => {
+    const r = len(sub(p, q));
+    if (r < bd) [best, bd] = [i, r];
+  });
+  return best;
+}
+
 // A smooth curve through points (Catmull-Rom), sampled every few metres.
 function smooth(P, step = 15) {
   if (P.length < 3) return P;
@@ -192,24 +231,60 @@ export function createTransit({ baseOf, network }) {
         const L = lengthOf(P);
         // One more stop on a long run towards the centre.
         if (l.neighbour === mine && L > SECOND_STOP) railStops.push({ p: pointAlong(P, L * 0.6), second: true });
-      } else {
-        // In tunnel: through the neighbourhood centre nearest the way, if
-        // one is close to it.
-        const ab = sub(l.p, S);
-        const l2 = dot(ab, ab);
-        let via = null;
-        for (const h of d.stage3.hoods) {
-          if (h.core) continue;
-          const t = l2 ? dot(sub(h.centre, S), ab) / l2 : 0;
-          if (t < 0.2 || t > 0.85) continue;
-          const f = [S[0] + ab[0] * t, S[1] + ab[1] * t];
-          const r = len(sub(f, h.centre));
-          if (r < METRO_REACH && (!via || r < via.r)) via = { p: h.centre, r };
-        }
-        const P = smooth(via ? [S, via.p, l.p] : [S, l.p], 15);
-        metro.push(P);
-        if (via && !metroStops.some((m) => len(sub(m.p, via.p)) < 50)) metroStops.push({ p: via.p });
       }
+    }
+    // ---- Metro ----
+    // Every link the rail does not take has a metro line. At the station
+    // the links pair up, each with the one most nearly opposite, so lines
+    // run straight on through; two lines through one station cross about
+    // square, an interchange. A link with no partner ends its line here.
+    const mlinks = d.network.links.filter((l) => !(l.neighbour === mine || parentOf(l.neighbour) === d.key));
+    const dirTo = (l) => unit(sub(l.p, S));
+    const pairs = [];
+    const left = mlinks.slice().sort((x, y) => (x.key < y.key ? -1 : 1));
+    while (left.length >= 2) {
+      let best = null;
+      for (let i = 0; i < left.length; i++) {
+        for (let j = i + 1; j < left.length; j++) {
+          const c = dot(dirTo(left[i]), dirTo(left[j]));
+          if (!best || c < best.c) best = { c, i, j };
+        }
+      }
+      if (best.c > THROUGH) break;
+      pairs.push([left[best.i], left[best.j]]);
+      left.splice(best.j, 1);
+      left.splice(best.i, 1);
+    }
+    for (const [a, b] of pairs) {
+      // Smooth through the station, square to the greenway at each end.
+      const through = unit(sub(b.p, a.p));
+      const P = hermite([a.p, S, b.p], [a.n, through, [-b.n[0], -b.n[1]]]);
+      metro.push(P);
+    }
+    for (const l of left) metro.push(hermite([S, l.p], [dirTo(l), [-l.n[0], -l.n[1]]]));
+    // One station between this core and the next on each line, at a
+    // neighbourhood centre near the way if there is one (kept by the
+    // district with the lower key, so the two do not both add one).
+    for (const l of mlinks) {
+      if (d.key > l.neighbour) continue;
+      const P = metro.find((L) => L.some((q) => len(sub(q, l.p)) < 1));
+      if (!P) continue;
+      // The half of the line from the station to this link's crossing.
+      const iS = nearestIndex(P, S);
+      const iE = nearestIndex(P, l.p);
+      const half = iS <= iE ? P.slice(iS, iE + 1) : P.slice(iE, iS + 1).reverse();
+      const L = lengthOf(half);
+      if (L < 300) continue;
+      let best = null;
+      for (const h of d.stage3.hoods) {
+        if (h.core) continue;
+        const k = nearestIndex(half, h.centre);
+        const along = lengthOf(half.slice(0, k + 1)) / L;
+        const r = len(sub(half[k], h.centre));
+        if (along < 0.35 || along > 0.95 || r > METRO_REACH) continue;
+        if (!best || r < best.r) best = { r, p: half[k] };
+      }
+      metroStops.push({ p: best ? best.p : pointAlong(half, L * 0.75) });
     }
     if (rail.length) railStops.unshift({ p: S, second: false });
     metroStops.unshift({ p: S });

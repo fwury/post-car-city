@@ -381,8 +381,8 @@ function drawTransit(ctx, view, world, items, place, px, which) {
   if (which === 'metro') {
     if (zoom > 1.6) return;
     ctx.strokeStyle = palette.metro;
-    ctx.globalAlpha = 0.75;
-    ctx.lineWidth = Math.max(4, px(2.2));
+    ctx.globalAlpha = 0.85;
+    ctx.lineWidth = Math.max(5, px(3));
     ctx.setLineDash([px(6), px(4)]);
     for (const { d, p } of list) {
       place(d);
