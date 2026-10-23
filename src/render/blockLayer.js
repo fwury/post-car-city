@@ -224,7 +224,7 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
   const detail = zoom >= DETAIL_MIN_ZOOM;
   if (detail) {
     const items = [];
-    for (const { d, p } of list) for (const st of p.streets.values()) items.push({ path: st.path, type: st.kind === 'pedestrian' ? 'pedestrianStreet' : 'localStreet', place: () => place(d) });
+    for (const { d, p } of list) for (const st of p.streets.values()) items.push({ path: st.path, type: st.kind === 'local' ? 'localStreet' : 'pedestrianStreet', place: () => place(d) });
     drawSections(ctx, items, px);
   }
   const passes = detail ? [] : zoom >= PLOT_MIN_ZOOM ? ['casing', 'pavement', 'fill'] : ['casing', 'fill'];
@@ -232,16 +232,16 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
     for (const { d, p } of list) {
       place(d);
       for (const st of p.streets.values()) {
-        if (pass === 'casing' && st.kind === 'pedestrian') continue;
+        if (pass === 'casing' && st.kind !== 'local') continue;
         if (pass === 'casing') {
           ctx.strokeStyle = palette.localCasing;
           ctx.lineWidth = st.width + px(1.2);
         } else if (pass === 'pavement') {
-          if (st.kind === 'pedestrian') continue;
+          if (st.kind !== 'local') continue;
           ctx.strokeStyle = palette.pavement;
           ctx.lineWidth = st.width;
-        } else if (st.kind === 'pedestrian') {
-          ctx.strokeStyle = palette.pedestrianStreet;
+        } else if (st.kind !== 'local') {
+          ctx.strokeStyle = st.kind === 'rail' ? palette.pavement : palette.pedestrianStreet;
           ctx.lineWidth = st.width;
         } else {
           ctx.strokeStyle = palette.localStreet;

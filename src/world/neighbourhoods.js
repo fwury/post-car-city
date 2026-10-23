@@ -90,7 +90,7 @@ function along(pts, s) {
   return pts[pts.length - 1];
 }
 
-export function createNeighbourhoods(seed, { boulevards }) {
+export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
   const mainStreets = createMainStreets(seed);
   const friction = createNoise(seed, 'neighbourhood-friction');
   // Housing form: perimeter blocks where high, rowhouses and villas where low.
@@ -164,6 +164,43 @@ export function createNeighbourhoods(seed, { boulevards }) {
     for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) if (i === 0 || j === 0 || i === W - 1 || j === H - 1) mask[j * W + i] = 0;
     const land = [];
     for (let n = 0; n < N; n++) if (mask[n] === LAND) land.push(n);
+    // ---- Rail ----
+    // Regional rail crosses on its viaduct; neighbourhoods grow up to it
+    // from either side but not across, so their boundaries follow it. The
+    // track is stamped two cells wide so nothing slips through diagonally.
+    const onRail = new Uint8Array(N);
+    for (const L of railIn(d)) {
+      for (const o of [-0.4, 0.4]) {
+        const off = L.map((p, i) => {
+          const a = L[Math.max(0, i - 1)];
+          const b = L[Math.min(L.length - 1, i + 1)];
+          const t = unit(sub(b, a));
+          return [p[0] - t[1] * o * CELL, p[1] + t[0] * o * CELL];
+        });
+        stamp(CELL, onRail, W, H, x0, y0, off);
+      }
+    }
+    // Which side of the rail each cell is on: pieces of land the track
+    // parts, numbered.
+    const side = new Int32Array(N).fill(-1);
+    {
+      let k = 0;
+      for (const n0 of land) {
+        if (side[n0] >= 0 || onRail[n0]) continue;
+        const stack = [n0];
+        side[n0] = k;
+        while (stack.length) {
+          const n = stack.pop();
+          for (const m of [n - 1, n + 1, n - W, n + W]) {
+            if (mask[m] === LAND && !onRail[m] && side[m] < 0) {
+              side[m] = k;
+              stack.push(m);
+            }
+          }
+        }
+        k++;
+      }
+    }
     // ---- People ----
     // Residents per m² of land: densest around the station, a little denser
     // along boulevards, and varying smoothly with the form of housing.
@@ -333,7 +370,7 @@ export function createNeighbourhoods(seed, { boulevards }) {
         done[n] = 1;
         for (let q = 0; q < 8; q++) {
           const m = n + OFF[q];
-          if (mask[m] !== LAND || done[m] || isSeed[m]) continue;
+          if (mask[m] !== LAND || done[m] || isSeed[m] || (onRail[m] && !onRail[n])) continue;
           const c = cost[n] + STEP[q] * (fr[n] + fr[m]) * speed[label[n]];
           if (c < cost[m]) {
             cost[m] = c;
@@ -364,6 +401,32 @@ export function createNeighbourhoods(seed, { boulevards }) {
       for (let k = 0; k < m; k++) speed[k] = Math.max(0.4, Math.min(2.5, speed[k] * (size[k] / target(k)) ** 0.5));
     }
     const total = centres.length;
+    // Land growth could not reach (the track itself, and any piece of land
+    // the rail cuts off with no centre of its own) joins the neighbourhood
+    // most of its edge touches, from the outside in.
+    function fillGaps() {
+      let gap = land.filter((n) => label[n] < 0);
+      for (let pass = 0; pass < 400 && gap.length; pass++) {
+        const next = [];
+        const set = [];
+        for (const n of gap) {
+          const counts = new Map();
+          for (const m of [n - 1, n + 1, n - W, n + W]) if (label[m] >= 0) counts.set(label[m], (counts.get(label[m]) || 0) + 1);
+          if (!counts.size) {
+            next.push(n);
+            continue;
+          }
+          let best = -1;
+          let bc = 0;
+          for (const [l, c] of [...counts].sort((x, y) => x[0] - y[0])) if (c > bc) [best, bc] = [l, c];
+          set.push([n, best]);
+        }
+        if (!set.length) break;
+        for (const [n, l] of set) label[n] = l;
+        gap = next;
+      }
+    }
+    fillGaps();
     // Single cells cut off from their own kind join their neighbours.
     for (const n of land) {
       if (isSeed[n]) continue;
@@ -421,9 +484,16 @@ export function createNeighbourhoods(seed, { boulevards }) {
     // neighbourhood it is in, and boundaries fall between main streets.
     const owner = new Int16Array(N).fill(OUTSIDE);
     const ownerDist = new Float64Array(N).fill(Infinity);
+    const sideOfHood = (k) => {
+      const c = cellOf(hoods[k].centre[0], hoods[k].centre[1]);
+      return c >= 0 ? side[c] : -1;
+    };
     const claim = (x, y, k, r) => {
       const n = cellOf(x, y);
       if (n < 0 || mask[n] !== LAND || r >= ownerDist[n]) return;
+      // Never across the rail from its centre.
+      const sk = sideOfHood(k);
+      if (sk >= 0 && side[n] !== sk) return;
       owner[n] = k;
       ownerDist[n] = r;
     };
@@ -477,7 +547,7 @@ export function createNeighbourhoods(seed, { boulevards }) {
         done[n] = 1;
         for (let q = 0; q < 8; q++) {
           const m = n + OFF[q];
-          if (mask[m] !== LAND || done[m] || fixedCell[m]) continue;
+          if (mask[m] !== LAND || done[m] || fixedCell[m] || (onRail[m] && !onRail[n])) continue;
           const c = cost[n] + STEP[q] * (fr[n] + fr[m]) * speed2[label[n]];
           if (c < cost[m]) {
             cost[m] = c;
@@ -505,6 +575,7 @@ export function createNeighbourhoods(seed, { boulevards }) {
       for (let k = 0; k < total; k++) speed2[k] = Math.max(0.4, Math.min(2.5, speed2[k] * (size[k] / share) ** 0.35));
     }
     label.set(bestLabel);
+    fillGaps();
     // Keep each neighbourhood to the one piece that holds its centre; stray
     // pieces go to the neighbourhoods around them.
     const keep = new Uint8Array(N);

@@ -44,6 +44,7 @@ const LOCAL = STREET_TYPES.localStreet.width;
 const PEDESTRIAN = STREET_TYPES.pedestrianStreet.width;
 const CORE_CROSS = STREET_TYPES.coreCrossStreet.width;
 const PARKSIDE = LOCAL; // the street along a greenway or park edge
+const RAIL_CORRIDOR = 21; // metres between building lines either side of a rail viaduct (the viaduct and a lane each side)
 
 // Block sizes, centreline to centreline: stop splitting once both sides fit;
 // never split into a piece narrower than `min` (or shorter than `minLong`).
@@ -288,7 +289,7 @@ function joinRuns(runs) {
   return out;
 }
 
-export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false }) {
+export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [] }) {
   // A path that would run through water is left out.
   const dryPath = (pts) => pts && !pts.some((q) => isWater(q[0], q[1]));
   const names = createNames(seed);
@@ -729,7 +730,35 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // Along the greenway, the street's centreline: half the street in from the
     // greenway's edge. Found on a fine raster of the land, so the line splits
     // cleanly where the land narrows to a neck.
-    for (const loop of parksideLines(d)) lines.push({ pts: loop, closed: true, tag: street('greenway', PARKSIDE) });
+    const sideLoops = parksideLines(d);
+    for (const loop of sideLoops) lines.push({ pts: loop, closed: true, tag: street('greenway', PARKSIDE) });
+    // Regional rail on its viaduct, with a lane along each side under it:
+    // blocks face it as they would a street. Only the stretches over the
+    // district's land, each run on a little past the parkside street so
+    // they meet it.
+    const railLines = [];
+    for (const L of railIn(d)) {
+      const inside = (q) => sideLoops.some((lp) => pointInPolygon(q[0], q[1], lp));
+      let run = null;
+      const flush = () => {
+        if (run && run.length > 1) {
+          const ext = (a, b) => {
+            const t = unit(sub(a, b));
+            return [a[0] + t[0] * 8, a[1] + t[1] * 8];
+          };
+          run.unshift(ext(run[0], run[1]));
+          run.push(ext(run[run.length - 1], run[run.length - 2]));
+          railLines.push(run);
+        }
+        run = null;
+      };
+      for (const q of resample(L, 10)) {
+        if (inside(q)) (run ||= []).push(q);
+        else flush();
+      }
+      flush();
+    }
+    for (const L of railLines) lines.push({ pts: L, tag: street('rail', RAIL_CORRIDOR) });
     for (const pk of d.parks) lines.push({ pts: pk.shape, closed: true, tag: street('park', PARKSIDE * 2, { park: pk.key }) });
     // Secondary greenways: linear parks along some stretches of the
     // boundaries between neighbourhoods, each from one main street to the
@@ -1143,7 +1172,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
 
     // Does a node front a neighbourhood's main street right by its centre?
     const squareFor = (node, area, W) => {
-      if (area < SQUARE_AREA[0] || area > SQUARE_AREA[1] || W < SQUARE_MIN) return null;
+      if (area < SQUARE_AREA[0] || area > SQUARE_AREA[1] || W < SQUARE_MIN || !node.tags.some((t) => t.kind === 'local')) return null;
       let x0 = Infinity;
       let y0 = Infinity;
       let x1 = -Infinity;
@@ -1236,6 +1265,8 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       let best = null;
       for (const lf of leaves) {
         // (On a campus, its own square.)
+        // (It needs a local street to turn into its pedestrian street.)
+        if (!lf.tags.some((t) => t.kind === 'local')) continue;
         if (!(plain(lf) || (!lf.use && lf.zone === 'campus')) || lf.ax.area < SQUARE_AREA[0] * 0.7 || lf.ax.area > SQUARE_AREA[1] * 1.3 || lf.ax.W < SQUARE_MIN * 0.9) continue;
         if (len(sub(lf.ax.c, h.centre)) > FALLBACK_REACH + 150) continue;
         let r = Infinity;
@@ -1378,7 +1409,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       });
       for (let i = 0; i < n; i++) {
         const t = lf.tags[i];
-        if (t.kind !== 'local' && t.kind !== 'pedestrian') continue;
+        if (t.kind !== 'local' && t.kind !== 'pedestrian' && t.kind !== 'rail') continue;
         const mid = [(P[i][0] + P[(i + 1) % n][0]) / 2, (P[i][1] + P[(i + 1) % n][1]) / 2];
         const kind = kindAt(t, mid);
         const k = `${t.id}:${kind}`;
@@ -1462,7 +1493,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       }
       // (No two streets of a district share a name.)
       let name = null;
-      for (let salt = 0; salt < 8 && (!name || usedNames.has(name.short)); salt++) name = names.street(kind === 'pedestrian' ? 'pedestrian' : 'local', hashString(`${d.key}:${tag.id}`), { length, curved: Math.abs(turn) > 1.1 }, salt);
+      for (let salt = 0; salt < 8 && (!name || usedNames.has(name.short)); salt++) name = names.street(kind === 'pedestrian' || kind === 'rail' ? 'pedestrian' : 'local', hashString(`${d.key}:${tag.id}`), { length, curved: Math.abs(turn) > 1.1 }, salt);
       usedNames.add(name.short);
       local.push({ id: tag.id, kind, width, segs: keep, lines, name });
     }

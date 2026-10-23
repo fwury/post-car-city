@@ -46,10 +46,10 @@ const CORNER_SHOPS = 0.45; // ... of rowhouse end plots
 // Buildings by plot class: usual storeys, their range, the depth of the
 // building from the street where the plot runs deeper (rowhouse gardens).
 const HEIGHTS = {
-  main: { base: 6, storeys: [4, 9] },
-  unit: { base: 5, storeys: [3, 8] },
-  unitShop: { base: 5, storeys: [3, 8] },
-  corner: { base: 5, storeys: [3, 8] },
+  main: { base: 6, storeys: [4, 10] },
+  unit: { base: 5, storeys: [3, 9] },
+  unitShop: { base: 5, storeys: [3, 9] },
+  corner: { base: 5, storeys: [3, 9] },
   podium: { base: 7, storeys: [4, 10] }, // the core's street wall
   podiumTower: { base: 16, storeys: [8, 30], tower: true }, // a corner podium with a tower over it
   house: { base: 3, storeys: [2, 5], depth: 15, house: true },

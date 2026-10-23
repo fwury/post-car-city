@@ -411,31 +411,35 @@ function transitPaths(t, origin) {
   let p = transitCache.get(t);
   if (p && p.origin === origin) return p;
   const [ox, oy] = origin;
-  const line = (L) => {
-    const path = new Path2D();
-    path.moveTo(L[0][0] - ox, L[0][1] - oy);
-    for (let i = 1; i < L.length; i++) path.lineTo(L[i][0] - ox, L[i][1] - oy);
-    return path;
-  };
-  p = { origin, rail: new Path2D(), metro: new Path2D(), rails: new Path2D(), shadow: new Path2D() };
-  for (const L of t.rail) {
-    p.rail.addPath(line(L));
-    // Two tracks, each a pair of rails.
-    for (const o of [-2.6, -1.1, 1.1, 2.6]) p.rails.addPath(line(offsetLine(L, o)));
-    p.shadow.addPath(line(L.map(([x, y]) => [x + VIADUCT_HEIGHT * 0.25, y + VIADUCT_HEIGHT * 0.32])));
-  }
-  for (const L of t.metro) p.metro.addPath(line(L));
+  p = { origin, metro: new Path2D() };
+  for (const L of t.metro) addPoly(p.metro, L, ox, oy, false);
   transitCache.set(t, p);
   return p;
 }
 
+// Regional rail, for the whole city: each stretch of track's paths, in
+// world coordinates.
+const railCache = new WeakMap();
+function railPaths(sg) {
+  let p = railCache.get(sg);
+  if (p) return p;
+  const L = sg.pts;
+  p = { rail: new Path2D(), rails: new Path2D(), shadow: new Path2D() };
+  addPoly(p.rail, L, 0, 0, false);
+  // Two tracks, each a pair of rails.
+  for (const o of [-2.6, -1.1, 1.1, 2.6]) addPoly(p.rails, offsetLine(L, o), 0, 0, false);
+  addPoly(p.shadow, L.map(([x, y]) => [x + VIADUCT_HEIGHT * 0.25, y + VIADUCT_HEIGHT * 0.32]), 0, 0, false);
+  railCache.set(sg, p);
+  return p;
+}
+
 function drawTransit(ctx, view, world, items, place, px, which) {
-  const { zoom } = view;
+  const { zoom, x0, y0, s } = view;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  const list = items.map(({ d }) => ({ d, p: transitPaths(world.transit(d), d.origin) }));
   if (which === 'metro') {
     if (zoom > 1.6) return;
+    const list = items.map(({ d }) => ({ d, p: transitPaths(world.transit(d), d.origin) }));
     ctx.strokeStyle = palette.metro;
     ctx.globalAlpha = 0.85;
     ctx.lineWidth = Math.max(5, px(3));
@@ -448,40 +452,32 @@ function drawTransit(ctx, view, world, items, place, px, which) {
     ctx.globalAlpha = 1;
     return;
   }
+  if (!world.rail) return;
+  const m = VIADUCT * 2;
+  const list = world.rail.near(x0 - m, y0 - m, x0 + view.w / s + m, y0 + view.h / s + m).map(railPaths);
+  ctx.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
   const close = zoom >= 0.5;
   if (close) {
     ctx.strokeStyle = 'rgba(40, 40, 40, 0.15)';
     ctx.lineWidth = VIADUCT;
-    for (const { d, p } of list) {
-      place(d);
-      ctx.stroke(p.shadow);
-    }
+    for (const p of list) ctx.stroke(p.shadow);
   }
   for (const [colour, w] of [[palette.railEdge, Math.max(VIADUCT + px(1.5), px(3.2))], [palette.railFill, Math.max(VIADUCT, px(2))]]) {
     ctx.strokeStyle = colour;
     ctx.lineWidth = w;
-    for (const { d, p } of list) {
-      place(d);
-      ctx.stroke(p.rail);
-    }
+    for (const p of list) ctx.stroke(p.rail);
   }
   if (close) {
     ctx.strokeStyle = palette.railTrack;
     ctx.lineWidth = Math.max(0.15, px(0.6));
-    for (const { d, p } of list) {
-      place(d);
-      ctx.stroke(p.rails);
-    }
+    for (const p of list) ctx.stroke(p.rails);
   } else {
     // Farther out, ties along the line, as maps draw railways.
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = Math.max(VIADUCT, px(2)) * 0.45;
     ctx.setLineDash([px(1.2), px(5)]);
     ctx.lineCap = 'butt';
-    for (const { d, p } of list) {
-      place(d);
-      ctx.stroke(p.rail);
-    }
+    for (const p of list) ctx.stroke(p.rail);
     ctx.setLineDash([]);
     ctx.lineCap = 'round';
   }
