@@ -1533,5 +1533,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
     return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks };
   }
 
-  return { of };
+  // Forget a district's blocks (a worker that has handed them on keeps none).
+  const forget = (d) => cache.delete(d.key);
+  return { of, forget };
 }

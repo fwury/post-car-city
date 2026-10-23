@@ -548,6 +548,7 @@ export function createWorld(seed) {
   return {
     seed, cores, growth, boulevards,
     blocks: (d) => blocks.of(d),
+    forgetBlocks: (d) => blocks.forget(d),
     // Stage 5: the stream, trail and woods of a stretch of greenway.
     greenway: (geo) => greenways.of(geo),
     // Stage 5: the district's halves of the rail and metro lines, and stops.

@@ -30,6 +30,8 @@ self.onmessage = (e) => {
         planned: b.planned,
         housed: b.programme.housed,
       };
+      // The page keeps them; this worker need not.
+      world.forgetBlocks(d);
       self.postMessage({ id, result });
       return;
     }

@@ -119,11 +119,12 @@ export class Renderer {
     // Mid zoom: the vector map drawn into tiles once, then just copied while
     // panning. Tiles are built a few per frame; until one is, its parent or
     // children stand in, or the map is drawn live underneath.
-    this.vectorTiles = new TileManager({ build: (tile) => this.renderVectorTile(tile), baseSize: 32, minScreenPx: 256, maxEntries: 40 });
+    this.vectorTiles = new TileManager({ build: (tile) => this.renderVectorTile(tile), baseSize: 32, minScreenPx: 256, maxEntries: 28 });
   }
 
   renderVectorTile(tile) {
-    const res = Math.min(1024, Math.round(512 * this.dpr));
+    // (Twice the CSS size at most: a phone's 3x screen needs no more.)
+    const res = Math.round(512 * Math.min(2, this.dpr));
     const canvas = makeCanvas(res, res);
     const ctx = canvas.getContext('2d', { alpha: false });
     ctx.fillStyle = palette.land;

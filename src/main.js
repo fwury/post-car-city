@@ -32,8 +32,8 @@ const markDirty = () => { dirty = true; };
 const pool = createTilePool(Math.max(1, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)));
 // Stage 4 blocks, worked out in their own workers as districts come into
 // view at close zoom (or here, if workers are missing).
-const BLOCK_CACHE = 20;
-const blockPool = createTilePool(Math.max(2, Math.min(4, (navigator.hardwareConcurrency || 4) - 1)));
+const BLOCK_CACHE = 12;
+const blockPool = createTilePool(Math.max(1, Math.min(3, (navigator.hardwareConcurrency || 4) - 1)));
 const blockCache = new Map();
 function blocksFor(d) {
   const k = d.key;
@@ -65,7 +65,7 @@ const noiseTiles = new TileManager({ build: createNoiseTileBuilder(() => state.s
 const districtTiles = new TileManager({
   build: createDistrictTileBuilder({ pool, getWorld, getLayers: () => state.layers }),
   concurrency: pool ? 8 : 1,
-  maxEntries: 96,
+  maxEntries: 64,
   onReady: markDirty,
   onEvict: (data) => data.canvas.close?.(),
 });
