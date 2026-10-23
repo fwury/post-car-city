@@ -13,7 +13,7 @@
 import { hash, toUnit } from '../core/hash.js';
 import { rngFor } from '../core/rng.js';
 import { LruCache } from './cache.js';
-import { polygonArea } from '../util/geom.js';
+import { polygonArea, simplify } from '../util/geom.js';
 import { distToLine } from './boulevards.js';
 import { isDistrictKey } from './growth.js';
 
@@ -26,6 +26,7 @@ const ROAD_CLEAR = 17.6 + 16; // metres from a boulevard centreline
 const CORE_CLEAR = 35; // metres from a district core
 const FINGER_STEP = 55;
 const BUCKET = 80;
+const EDGE_TOL = 38; // metres: how far a park's straight sides may stray from its soft outline
 
 export function createParks(seed, { baseOf, label, parcel, greenwayWidth, boulevardDistance, network }) {
   const nearCache = new LruCache(40000);
@@ -272,7 +273,8 @@ export function createParks(seed, { baseOf, label, parcel, greenwayWidth, boulev
     const R = Math.sqrt(target / Math.PI);
     const seeds = fieldSeeds(j, rng, R);
     const maxR = R * 2.1;
-    const hard = limits(j, obstacles(j, maxR * 1.6), maxR * 1.5);
+    const obs = obstacles(j, maxR * 1.6);
+    const hard = limits(j, obs, maxR * 1.5);
     let scale = 1;
     let shape = outline(j, seeds, scale, hard, maxR);
     for (let it = 0; it < 1; it++) {
@@ -280,10 +282,59 @@ export function createParks(seed, { baseOf, label, parcel, greenwayWidth, boulev
       scale *= Math.min(1.6, Math.max(0.6, Math.sqrt(target / a)));
       shape = outline(j, seeds, scale, hard, maxR);
     }
+    shape = streetEdged(shape, obs);
     const area = polygonArea(shape);
     p = area < MIN_AREA_HA * 1e4 ? null : { key: j.key, x: j.x, y: j.y, area, shape, districts: j.labels };
     shapes.set(j.key, p);
     return p;
+  }
+
+  // A park is bounded by streets, so its outline is a few long straight
+  // sides meeting at corners (the soft outline simplified), not a blob.
+  // Where a straight side would cut across a boulevard or a core, the
+  // outline keeps the corner that holds it back.
+  function streetEdged(ring, obs) {
+    const n = ring.length;
+    // Split the ring at its first point and the point farthest from it.
+    let far = 0;
+    for (let i = 1; i < n; i++) if (Math.hypot(ring[i][0] - ring[0][0], ring[i][1] - ring[0][1]) > Math.hypot(ring[far][0] - ring[0][0], ring[far][1] - ring[0][1])) far = i;
+    const idx = (half) => half.map((p) => ring.indexOf(p));
+    const keep = new Set([...idx(simplify(ring.slice(0, far + 1), EDGE_TOL)), ...idx(simplify(ring.slice(far).concat([ring[0]]), EDGE_TOL))]);
+    keep.delete(-1);
+    const clear = (a, b) => {
+      const L = Math.hypot(b[0] - a[0], b[1] - a[1]);
+      const k = Math.ceil(L / 8);
+      for (let i = 1; i < k; i++) if (obs.gap(a[0] + ((b[0] - a[0]) * i) / k, a[1] + ((b[1] - a[1]) * i) / k) < 0) return false;
+      return true;
+    };
+    for (let pass = 0; pass < 8; pass++) {
+      const ks = [...keep].sort((x, y) => x - y);
+      let added = false;
+      for (let t = 0; t < ks.length; t++) {
+        const i0 = ks[t];
+        const i1 = ks[(t + 1) % ks.length];
+        if (clear(ring[i0], ring[i1])) continue;
+        // Keep the original point that stands farthest off this side.
+        const span = (i1 - i0 + n) % n;
+        let best = -1;
+        let bd = -1;
+        for (let m = 1; m < span; m++) {
+          const i = (i0 + m) % n;
+          const a = ring[i0];
+          const b = ring[i1];
+          const L = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+          const dd = Math.abs((b[0] - a[0]) * (a[1] - ring[i][1]) - (a[0] - ring[i][0]) * (b[1] - a[1])) / L;
+          if (dd > bd) [bd, best] = [dd, i];
+        }
+        if (best >= 0) {
+          keep.add(best);
+          added = true;
+        }
+      }
+      if (!added) break;
+    }
+    const out = [...keep].sort((x, y) => x - y).map((i) => ring[i]);
+    return out.length >= 4 ? out : ring;
   }
 
   // Parks around a district.
