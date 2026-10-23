@@ -5,8 +5,10 @@
 import { createNoise, createWarp } from '../core/noise.js';
 import { drawDistricts, drawDistrictOutlines, renderDistrictTile } from './districtLayer.js';
 import { palette, fonts } from './styles.js';
+import { TileManager } from './tiles.js';
 
 export const VECTOR_MIN_ZOOM = 0.1; // below this, districts are drawn from tiles (rendered in workers)
+export const LIVE_MIN_ZOOM = 2; // from here in, drawn live; between, from tiles drawn here and kept
 const STATION_MIN_ZOOM = 0.02;
 const NICE = [1, 2, 5];
 
@@ -113,6 +115,32 @@ export class Renderer {
     this.lastDrawMs = 0;
     this.visibleTiles = [];
     this.mode = 'tiles';
+    // Mid zoom: the vector map drawn into tiles once, then just copied while
+    // panning. Tiles are built a few per frame; until one is, its parent or
+    // children stand in, or the map is drawn live underneath.
+    this.vectorTiles = new TileManager({ build: (tile) => this.renderVectorTile(tile), baseSize: 32, minScreenPx: 256, maxEntries: 40 });
+  }
+
+  renderVectorTile(tile) {
+    const res = Math.min(1024, Math.round(512 * this.dpr));
+    const canvas = makeCanvas(res, res);
+    const ctx = canvas.getContext('2d', { alpha: false });
+    ctx.fillStyle = palette.land;
+    ctx.fillRect(0, 0, res, res);
+    const s = res / tile.size;
+    const view = { x0: tile.x0, y0: tile.y0, s, w: res, h: res, zoom: s / this.dpr, pr: this.dpr, blocks: this.blocksFor };
+    const items = drawDistricts(ctx, view, this.getWorld(), this.state.layers);
+    if (this.state.layers.outlines) drawDistrictOutlines(ctx, view, items);
+    return { canvas, res };
+  }
+
+  // Forget drawn tiles over a rectangle, e.g. once a district's blocks arrive.
+  invalidate(x0, y0, x1, y1) {
+    this.vectorTiles.invalidate(x0, y0, x1, y1);
+  }
+
+  clearVectorTiles() {
+    this.vectorTiles.clear();
   }
 
   resize() {
@@ -156,6 +184,14 @@ export class Renderer {
     if (camera.zoom < VECTOR_MIN_ZOOM) {
       this.mode = 'tiles';
       this.drawTileLayer(this.districtTiles, dvis, true);
+    } else if (camera.zoom < LIVE_MIN_ZOOM) {
+      this.mode = 'vector tiles';
+      this.vectorTiles.beginFrame();
+      const vis = this.vectorTiles.visible(camera);
+      // Anything not covered by a tile or a stand-in is drawn live first.
+      const covered = vis.every((t) => this.vectorTiles.peek(t) || this.vectorTiles.ancestor(t) || this.vectorTiles.children(t).length === 4);
+      if (!covered) this.drawLive(L);
+      this.drawTileLayer(this.vectorTiles, vis, true);
     } else {
       this.mode = 'vector';
       const b = camera.bounds();
@@ -175,6 +211,15 @@ export class Renderer {
     if (L.tiles) this.drawTileOutlines(dvis);
     this.drawScaleBar();
     this.lastDrawMs = performance.now() - t0;
+  }
+
+  drawLive(L) {
+    const { camera } = this;
+    const b = camera.bounds();
+    const view = { x0: b.x0, y0: b.y0, s: camera.zoom * this.dpr, w: this.canvas.width, h: this.canvas.height, zoom: camera.zoom, pr: this.dpr, blocks: this.blocksFor };
+    const items = drawDistricts(this.ctx, view, this.getWorld(), L);
+    if (L.outlines) drawDistrictOutlines(this.ctx, view, items);
+    this.resetTransform();
   }
 
   tileRect(tile) {

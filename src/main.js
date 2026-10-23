@@ -48,6 +48,9 @@ function blocksFor(d) {
     (b) => {
       if (state.seed !== seedAt) return;
       blockCache.set(k, b);
+      // Tiles drawn before this district's blocks came in are redrawn.
+      const bb = d.bbox;
+      renderer.invalidate(bb.x0, bb.y0, bb.x1, bb.y1);
       dirty = true;
     },
     () => blockCache.delete(k),
@@ -85,6 +88,7 @@ setupControls({
     state.seed = seedFromText(text);
     world = createWorld(state.seed);
     blockCache.clear();
+    renderer.clearVectorTiles();
     noiseTiles.clear();
     districtTiles.clear();
     dirty = true;
@@ -92,6 +96,7 @@ setupControls({
   },
   onLayers(name) {
     if (MAP_LAYERS.includes(name)) districtTiles.clear();
+    renderer.clearVectorTiles();
     dirty = true;
   },
 });
@@ -118,6 +123,7 @@ function frame(now) {
     dirty = false;
     renderer.draw();
     districtTiles.pump(TILE_BUDGET_MS);
+    if (renderer.vectorTiles.queue.size && renderer.vectorTiles.pump(TILE_BUDGET_MS) > 0) dirty = true;
     if (state.layers.noise && noiseTiles.pump(TILE_BUDGET_MS) > 0) dirty = true;
     if (noiseTiles.queue.size > 0 && state.layers.noise) dirty = true;
   }

@@ -25,12 +25,10 @@ function addPoly(path, pts, ox, oy) {
   path.closePath();
 }
 
-function pathsFor(d, b) {
-  let p = cache.get(b);
-  if (p) return p;
+function buildPaths(d, chunk) {
   const [ox, oy] = d.origin;
   const P = () => new Path2D();
-  p = {
+  const p = {
     built: P(), podium: P(), open: P(), garden: P(), green: P(), square: P(), school: P(), edge: P(),
     plotLines: P(), passages: P(), courtPath: P(), courtGreen: P(), spokes: P(), hubs: P(),
     dedicated: new Map(), dots: new Map(),
@@ -41,16 +39,14 @@ function pathsFor(d, b) {
   };
   // Streets by kind and width.
   p.streets = new Map();
-  for (const s of b.streets) {
-    const k = `${s.kind}:${s.width}`;
-    if (!p.streets.has(k)) p.streets.set(k, { kind: s.kind, width: s.width, path: new Path2D() });
+  for (const { kind, width, a, c } of chunk.segs) {
+    const k = `${kind}:${width}`;
+    if (!p.streets.has(k)) p.streets.set(k, { kind, width, path: new Path2D() });
     const path = p.streets.get(k).path;
-    for (const [a, c] of s.segs) {
-      path.moveTo(a[0] - ox, a[1] - oy);
-      path.lineTo(c[0] - ox, c[1] - oy);
-    }
+    path.moveTo(a[0] - ox, a[1] - oy);
+    path.lineTo(c[0] - ox, c[1] - oy);
   }
-  for (const k of b.blocks) {
+  for (const k of chunk.blocks) {
     if (!k.pts) continue;
     const add = (path, pts) => pts && pts.length > 2 && addPoly(path, pts, ox, oy);
     if (k.plots) {
@@ -127,7 +123,6 @@ function pathsFor(d, b) {
     }
     add(p.edge, k.pts);
   }
-  cache.set(b, p);
   return p;
 }
 
@@ -147,6 +142,46 @@ export function hoodLinePath(d, b) {
   return p;
 }
 
+
+// A district's blocks and streets in square chunks, each drawn only when in
+// view and turned into paths only the first time it is.
+const CHUNK = 250; // metres
+function chunksFor(d, b) {
+  let list = cache.get(b);
+  if (list) return list;
+  const map = new Map();
+  const chunkAt = (x, y) => {
+    const k = `${Math.floor(x / CHUNK)},${Math.floor(y / CHUNK)}`;
+    if (!map.has(k)) map.set(k, { blocks: [], segs: [], x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity, p: null });
+    return map.get(k);
+  };
+  const grow = (ch, x0, y0, x1, y1) => {
+    ch.x0 = Math.min(ch.x0, x0);
+    ch.y0 = Math.min(ch.y0, y0);
+    ch.x1 = Math.max(ch.x1, x1);
+    ch.y1 = Math.max(ch.y1, y1);
+  };
+  for (const k of b.blocks) {
+    if (!k.pts) continue;
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    for (const [x, y] of k.pts) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+    const ch = chunkAt((x0 + x1) / 2, (y0 + y1) / 2);
+    ch.blocks.push(k);
+    grow(ch, x0, y0, x1, y1);
+  }
+  for (const st of b.streets) {
+    for (const [a, c] of st.segs) {
+      const ch = chunkAt((a[0] + c[0]) / 2, (a[1] + c[1]) / 2);
+      ch.segs.push({ kind: st.kind, width: st.width, a, c });
+      const r = st.width;
+      grow(ch, Math.min(a[0], c[0]) - r, Math.min(a[1], c[1]) - r, Math.max(a[0], c[0]) + r, Math.max(a[1], c[1]) + r);
+    }
+  }
+  list = [...map.values()];
+  cache.set(b, list);
+  return list;
+}
+
 // Called inside drawDistricts, after the neighbourhood tints and before the
 // main streets, for districts in view.
 export function drawBlocks(ctx, view, world, items, place) {
@@ -154,10 +189,21 @@ export function drawBlocks(ctx, view, world, items, place) {
   if (zoom < BLOCK_MIN_ZOOM) return;
   const px = (cssPx) => (cssPx * pr) / s;
   // Blocks may still be on their way from a worker; those districts wait.
+  // Only the chunks in view (with a margin for wide strokes).
+  const m = 20;
+  const vx0 = view.x0 - m;
+  const vy0 = view.y0 - m;
+  const vx1 = view.x0 + view.w / s + m;
+  const vy1 = view.y0 + view.h / s + m;
   const list = [];
   for (const { d } of items) {
     const b = view.blocks ? view.blocks(d) : world.blocks(d);
-    if (b) list.push({ d, p: pathsFor(d, b) });
+    if (!b) continue;
+    for (const ch of chunksFor(d, b)) {
+      if (ch.x1 < vx0 || ch.x0 > vx1 || ch.y1 < vy0 || ch.y0 > vy1) continue;
+      if (!ch.p) ch.p = buildPaths(d, ch);
+      list.push({ d, p: ch.p });
+    }
   }
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';

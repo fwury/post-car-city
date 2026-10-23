@@ -145,6 +145,17 @@ export class TileManager {
     return built;
   }
 
+  // Drop cached tiles overlapping a rectangle (their contents changed).
+  invalidate(x0, y0, x1, y1) {
+    for (const [key, data] of [...this.cache]) {
+      const [level, tx, ty] = key.split(':').map(Number);
+      const t = this.tile(level, tx, ty);
+      if (t.x0 > x1 || t.x0 + t.size < x0 || t.y0 > y1 || t.y0 + t.size < y0) continue;
+      this.cache.delete(key);
+      if (this.onEvict) this.onEvict(data);
+    }
+  }
+
   get pending() {
     return this.concurrency > 0 ? this.inflight.size : this.queue.size;
   }

@@ -83,7 +83,9 @@ export function createHud(el) {
         ['Zoom', `${z.toPrecision(3)} px/m, 1 px = ${1 / z < 10 ? `${(1 / z).toPrecision(2)} m` : formatDistance(1 / z)}`],
         ['Drawing', z < VECTOR_MIN_ZOOM
           ? `tiles, level ${level} (${formatDistance(tiles.baseSize * 2 ** level)}), ${tiles.cache.size} cached, ${tiles.pending} building`
-          : 'vectors'],
+          : renderer.mode === 'vector tiles'
+            ? `vector tiles, ${renderer.vectorTiles.cache.size} cached, ${renderer.vectorTiles.pending} to draw`
+            : 'vectors, live'],
         ['Frame', `${Math.round(fps)} fps, draw ${renderer.lastDrawMs.toFixed(1)} ms`],
       ];
       el.innerHTML = rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('');
