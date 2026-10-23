@@ -241,32 +241,39 @@ export function layoutNeighbourhoodPark(P, rng) {
 // footprint.
 export function layoutSchool(P, rng, secondary) {
   const s = new Site(P, rng, 4);
+  const edge = (c) => {
+    let best = Infinity;
+    for (let i = 0; i < P.length; i++) best = Math.min(best, segDist(c, P[i], P[(i + 1) % P.length]));
+    return best;
+  };
+  // The building: the biggest of a few sizes that fits, nearest the edge.
+  const building = (sizes) => {
+    for (const [l, w] of sizes) {
+      const f = s.place('school', l, w, { grid: true, gap: 3, score: edge });
+      if (f) {
+        s.features.pop();
+        return f.pts;
+      }
+    }
+    return null;
+  };
+  let pts = null;
   if (secondary) {
     const t = s.place('track', 174, 92, { grid: true, gap: 2 });
     if (t) {
       const ax = axesOf(t.pts);
       t.pts = oval(ax.c, ax.u, 84.4, 45);
       s.features.push({ kind: 'trackField', pts: oval(ax.c, ax.u, 84.4, 36.5) });
-    } else s.place('pitch', 100, 64, { grid: true }) || s.place('pitch', 80, 50, { grid: true });
-  } else s.place('pitch', 60, 40, { grid: true });
-  // The building: the biggest of a few sizes that fits, nearest the edge.
-  const edge = (c) => {
-    let best = Infinity;
-    for (let i = 0; i < P.length; i++) best = Math.min(best, segDist(c, P[i], P[(i + 1) % P.length]));
-    return best;
-  };
-  let building = null;
-  for (const [l, w] of secondary ? [[110, 34], [90, 30], [70, 28], [55, 24]] : [[75, 26], [60, 22], [45, 20]]) {
-    const f = s.place('school', l, w, { tries: 120, gap: 3, score: edge });
-    if (f) {
-      building = f.pts;
-      s.features.pop();
-      break;
     }
+    pts = building([[110, 34], [90, 30], [70, 28], [55, 24], [42, 22]]);
+    if (!t) s.place('pitch', 100, 64, { grid: true }) || s.place('pitch', 80, 50, { grid: true });
+    s.place('court', 28, 15);
+  } else {
+    pts = building([[75, 26], [60, 22], [45, 20], [34, 18]]);
+    s.place('pitch', 60, 40, { grid: true }) || s.place('pitch', 44, 30, { grid: true });
+    s.place('playground', 30, 24);
   }
-  if (secondary) s.place('court', 28, 15);
-  else s.place('playground', 30, 24);
-  return { ...s.result(), building };
+  return { ...s.result(), building: pts };
 }
 
 function segDist(q, a, b) {

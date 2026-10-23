@@ -1464,6 +1464,25 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
     // crossing for people walking and cycling).
     for (const lp of linearParks) {
       lp.links = [];
+      // An end in a primary greenway: a path on to its trail.
+      if (greenway) {
+        for (const q of [lp.centre[0], lp.centre[lp.centre.length - 1]]) {
+          let best = null;
+          for (const c of d.chains) {
+            const T = greenway(c.geo).trail;
+            for (let i = 0; i < T.length - 1; i++) {
+              const a = T[i];
+              const ab = sub(T[i + 1], a);
+              const l2 = dot(ab, ab);
+              const t = l2 ? Math.max(0, Math.min(1, dot(sub(q, a), ab) / l2)) : 0;
+              const f = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+              const r = len(sub(f, q));
+              if (!best || r < best.r) best = { p: f, r };
+            }
+          }
+          if (best && best.r < greenwayWidth(q[0], q[1])) greenLinks.push([q, best.p]);
+        }
+      }
       const near = (q) => {
         let best = null;
         for (let i = 0; i < lp.centre.length - 1; i++) {

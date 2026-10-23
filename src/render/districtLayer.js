@@ -162,6 +162,18 @@ export function drawDistricts(ctx, view, world, layers) {
     }
   }
 
+  // Linear parks along neighbourhood boundaries (under the streets and
+  // the primary greenways they run into): green, a trail down the middle, paths in from
+  // the streets.
+  if (layers.green) {
+    for (const { d } of items) {
+      const b = view.blocks ? view.blocks(d) : null;
+      if (!b || !b.linearParks || !b.linearParks.length) continue;
+      place(d);
+      drawLinearParks(ctx, b.linearParks, d.origin, zoom, px);
+    }
+  }
+
   const drawBuildings = layers.blocks ? drawBlocks(ctx, view, world, items, place, layers) : null;
 
   const net = layers.streets ? world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s) : null;
@@ -256,14 +268,6 @@ export function drawDistricts(ctx, view, world, layers) {
     for (const { d, p } of items) {
       place(d);
       ctx.fill(p.parks);
-    }
-    // Linear parks along neighbourhood boundaries: green, a trail down the
-    // middle, paths in from the streets.
-    for (const { d } of items) {
-      const b = view.blocks ? view.blocks(d) : null;
-      if (!b || !b.linearParks || !b.linearParks.length) continue;
-      place(d);
-      drawLinearParks(ctx, b.linearParks, d.origin, zoom, px);
     }
     // What is in the district parks, once a district's blocks are in.
     const lays = [];
