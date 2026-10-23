@@ -181,9 +181,10 @@ test('plots fill their blocks, front their streets, and are sound shapes', () =>
   for (const d of districts.slice(0, 2)) {
     for (const k of blocksOf(d).blocks) {
       if (!k.plots || !['perimeter', 'rowhouse', 'podium'].includes(k.use)) continue;
-      // Plots and courtyard together are the block.
+      // Plots and courtyard together are the block (less the odd yard, where
+      // a lobe of the block is too narrow for the courtyard to reach).
       const sum = k.plots.reduce((s, p) => s + polygonArea(p.pts), 0) + (k.inner ? polygonArea(k.inner) : 0);
-      assert.ok(Math.abs(sum - k.area) < k.area * 0.03, `a ${k.use} block in ${d.key} is ${((100 * sum) / k.area).toFixed(0)}% plots`);
+      assert.ok(Math.abs(sum - k.area) < k.area * 0.05, `a ${k.use} block in ${d.key} is ${((100 * sum) / k.area).toFixed(0)}% plots`);
       for (const p of k.plots) {
         plots++;
         if (p.kind !== 'passage' && minCorner(p.pts) < 30) sharp++;

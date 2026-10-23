@@ -30,7 +30,7 @@ import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
 import { planarFaces } from '../util/planar.js';
 import { insetWithSources, selfCrosses as selfCrossing } from '../util/offset.js';
-import { plotsOfBlock } from './plots.js';
+import { plotsOfBlock, rectness, TERRACE_RECT } from './plots.js';
 import { assignProgramme } from './programme.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
@@ -61,6 +61,11 @@ const STEP = 10; // metres between points of a new street
 const CAMPUS_SHARE = 0.45; // of a campus neighbourhood's land, the campus itself
 const FORCED_MIN = 60; // metres: narrowest side of a park or school split off a site
 const SQUARE_MIN = 62; // metres, centreline: narrowest a square's block may be
+const SPLAY_BELOW = (55 * Math.PI) / 180; // a building line corner sharper than this is splayed
+const SPLAY = 9; // metres back from the point, each way
+const AWKWARD_AREA = 0.45e4; // m²: a block this small ...
+const AWKWARD_RECT = 0.62; // ... and this far from rectangular is a green
+const OVERSIZE = 1.5; // a block this many times its usual area must split, one way or another
 const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
 const SQUARE_FORMS = { corner: 0.3, against: 0.35 }; // shares of squares by form; the rest stand on their own
 const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school takes
@@ -178,6 +183,40 @@ function clean(node) {
     T.pop();
   }
   return { ...node, pts: P, tags: T };
+}
+
+// Cut the point off every sharp corner of a building line, square to the
+// corner's bisector, as splayed street corners are: the corner building gets
+// a short face of its own instead of a point.
+function splay(res) {
+  if (!res) return res;
+  const P = res.pts;
+  const n = P.length;
+  const sign = Math.sign(signedArea(P)) || 1;
+  const pts = [];
+  const src = [];
+  for (let i = 0; i < n; i++) {
+    const a = P[(i - 1 + n) % n];
+    const v = P[i];
+    const b = P[(i + 1) % n];
+    const u1 = sub(a, v);
+    const u2 = sub(b, v);
+    const l1 = len(u1);
+    const l2 = len(u2);
+    const convex = (cross(sub(v, a), sub(b, v)) * sign) > 0;
+    const angle = l1 > 0 && l2 > 0 ? Math.acos(Math.max(-1, Math.min(1, dot(u1, u2) / (l1 * l2)))) : Math.PI;
+    if (!convex || angle >= SPLAY_BELOW) {
+      pts.push(v);
+      src.push(res.src[i]);
+      continue;
+    }
+    const c = Math.min(SPLAY, l1 * 0.3, l2 * 0.3);
+    pts.push([v[0] + (u1[0] / l1) * c, v[1] + (u1[1] / l1) * c]);
+    src.push(-1);
+    pts.push([v[0] + (u2[0] / l2) * c, v[1] + (u2[1] / l2) * c]);
+    src.push(res.src[i]);
+  }
+  return { pts, src };
 }
 
 // Join polylines that meet end to start into longer ones.
@@ -900,12 +939,21 @@ export function createBlocks(seed, { greenwayWidth }) {
           }
           continue;
         }
-        const size = BLOCK_SIZES[zone];
+        // A rowhouse block too irregular for terraces is built as flats round
+        // a courtyard, so it is split to a perimeter block's size.
+        const sizeZone = zone === 'rowhouse' && rectness(node.pts) < TERRACE_RECT ? 'perimeter' : zone;
+        const size = BLOCK_SIZES[sizeZone];
         if (ax.L <= size.long && ax.W <= size.short) {
           leaves.push({ ...node, ax, zone });
           continue;
         }
-        const kids = split(node, ax, zone);
+        let kids = split(node, ax, sizeZone);
+        // A block well over size that will not split the usual way is split
+        // anyway, either way across, so long as both sides stay usable: no
+        // block is left several times the size of its neighbours.
+        if (!kids && ax.area > size.long * size.short * OVERSIZE) {
+          for (const along of [false, true]) if (!kids) kids = split(node, ax, sizeZone, { force: true, along });
+        }
         if (kids) next.push(...kids);
         else leaves.push({ ...node, ax, zone, stuck: true });
       }
@@ -1071,7 +1119,7 @@ export function createBlocks(seed, { greenwayWidth }) {
         if (!streets.has(k)) streets.set(k, { tag: t, kind, width: kind === 'pedestrian' ? PEDESTRIAN : t.kind === 'pedestrian' ? LOCAL : t.w, segs: [] });
         streets.get(k).segs.push([P[i], P[(i + 1) % n]]);
       }
-      const res = insetWithSources(P, dist);
+      const res = splay(insetWithSources(P, dist));
       const net = res ? res.pts : null;
       const area = net ? polygonArea(net) : 0;
       // What each edge of the building line faces.
@@ -1097,7 +1145,10 @@ export function createBlocks(seed, { greenwayWidth }) {
       }
       // A rowhouse block on a main street is built up as a mixed-use block.
       const front = lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard');
-      const use = lf.use ?? (area < REMNANT ? 'green' : lf.zone === 'rowhouse' && front ? 'perimeter' : lf.zone);
+      // A small block of awkward shape (a triangle, say) is left as a green:
+      // no plots cut from it would make sensible buildings.
+      const awkward = net && area < AWKWARD_AREA && rectness(net) < AWKWARD_RECT;
+      const use = lf.use ?? (area < REMNANT || awkward ? 'green' : lf.zone === 'rowhouse' && front ? 'perimeter' : lf.zone);
       const b = { pts: net, centreline: P, dist, use, area, stuck: !!lf.stuck, raw: polygonArea(P), hood: lf.hood ?? (hoodAt(lf.ax.c) || {}).id, front: lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard') };
       if (lf.form) b.form = lf.form;
       if (!net) b.use = 'green';

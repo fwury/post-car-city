@@ -15,8 +15,7 @@ const ROWHOUSE_DEPTH = 10;
 const CAMPUS_DEPTH = 18;
 // A local street's pavement each side: its clearway and furnishing zones.
 const PAVEMENT = STREET_TYPES.localStreet.side.reduce((a, [, w]) => a + w, 0);
-const COURT_SPOKE = 3; // metres: a path across a courtyard
-const COURT_HUB = 6; // metres: radius of the small square in the middle
+const COURT_SPOKE = 2.5; // metres: a path across a courtyard
 
 const cache = new WeakMap();
 
@@ -70,24 +69,24 @@ function pathsFor(d, b) {
         }
       }
     }
-    switch (k.use) {
+    // (A rowhouse block built as flats has a courtyard like a perimeter block.)
+    switch (k.court ? 'perimeter' : k.use) {
       case 'perimeter':
       case 'campus': {
         add(p.built, k.pts);
         const inner = k.inner || insetUniform(k.pts, k.use === 'campus' ? CAMPUS_DEPTH : PERIMETER_DEPTH);
         if (k.court && k.court.green) {
-          // A public courtyard: a path round it, green in the middle, paths
-          // across from the gaps to a small square.
+          // A public courtyard: a path round it, a garden in the middle with
+          // paths through it.
           add(p.courtPath, inner);
           add(p.courtGreen, k.court.green);
-          for (const [a, c] of k.court.spokes) {
-            p.spokes.moveTo(a[0] - ox, a[1] - oy);
-            p.spokes.lineTo(c[0] - ox, c[1] - oy);
+          for (const line of k.court.paths) {
+            p.spokes.moveTo(line[0][0] - ox, line[0][1] - oy);
+            for (let i = 1; i < line.length; i++) p.spokes.lineTo(line[i][0] - ox, line[i][1] - oy);
           }
-          if (k.court.hub) {
-            const [hx, hy] = [k.court.hub[0] - ox, k.court.hub[1] - oy];
-            p.hubs.moveTo(hx + COURT_HUB, hy);
-            p.hubs.arc(hx, hy, COURT_HUB, 0, Math.PI * 2);
+          for (const { p: q, r } of k.court.nodes) {
+            p.hubs.moveTo(q[0] - ox + r, q[1] - oy);
+            p.hubs.arc(q[0] - ox, q[1] - oy, r, 0, Math.PI * 2);
           }
         } else add(k.use === 'campus' ? p.green : p.open, inner);
         break;
