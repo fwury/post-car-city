@@ -6,6 +6,7 @@ import { createWorld } from '../src/world/districts.js';
 import { axesOf } from '../src/world/blocks.js';
 import { distToLine } from '../src/world/boulevards.js';
 import { polygonArea } from '../src/util/geom.js';
+import { ALLEY } from '../src/world/plots.js';
 
 const SEED = seedFromText('1');
 const world = createWorld(SEED);
@@ -181,9 +182,13 @@ test('plots fill their blocks, front their streets, and are sound shapes', () =>
   for (const d of districts.slice(0, 2)) {
     for (const k of blocksOf(d).blocks) {
       if (!k.plots || !['perimeter', 'rowhouse', 'podium'].includes(k.use)) continue;
-      // Plots and courtyard together are the block.
-      const sum = k.plots.reduce((s, p) => s + polygonArea(p.pts), 0) + (k.inner ? polygonArea(k.inner) : 0);
-      assert.ok(Math.abs(sum - k.area) < k.area * 0.03, `a ${k.use} block in ${d.key} is ${((100 * sum) / k.area).toFixed(0)}% plots`);
+      // Plots and courtyard together are the block (less the odd yard, where
+      // a lobe of the block is too narrow for the courtyard to reach).
+      // (and the footpath down a rowhouse block's middle).
+      let alley = 0;
+      for (let i = 1; k.alley && i < k.alley.length; i++) alley += Math.hypot(k.alley[i][0] - k.alley[i - 1][0], k.alley[i][1] - k.alley[i - 1][1]) * ALLEY;
+      const sum = k.plots.reduce((s, p) => s + polygonArea(p.pts), 0) + (k.inner ? polygonArea(k.inner) : 0) + alley;
+      assert.ok(Math.abs(sum - k.area) < k.area * 0.05, `a ${k.use} block in ${d.key} is ${((100 * sum) / k.area).toFixed(0)}% plots`);
       for (const p of k.plots) {
         plots++;
         if (p.kind !== 'passage' && minCorner(p.pts) < 30) sharp++;
@@ -196,4 +201,104 @@ test('plots fill their blocks, front their streets, and are sound shapes', () =>
   // Terraced houses about 5 to 8 m wide; flats over shops and blocks of flats wider.
   assert.ok(median(widths.rowhouse) > 5 && median(widths.rowhouse) < 8, `houses ${median(widths.rowhouse).toFixed(1)} m wide`);
   assert.ok(median(widths.perimeter) > 11 && median(widths.perimeter) < 24, `perimeter plots ${median(widths.perimeter).toFixed(1)} m wide`);
+});
+
+test('perimeter blocks are several buildings, with a gap on every street', () => {
+  let n = 0;
+  let miss = 0;
+  for (const d of districts.slice(0, 2)) {
+    for (const b of blocksOf(d).blocks) {
+      if (b.use !== 'perimeter' || !b.inner || !b.plots) continue;
+      const gaps = b.plots.filter((p) => p.kind === 'passage');
+      assert.ok(gaps.length >= 2, `${d.key}: a perimeter block with ${gaps.length} gaps`);
+      for (const g of gaps) assert.ok(g.front >= 4, `${d.key}: a gap ${g.front.toFixed(1)} m wide`);
+      // Each street the block fronts for 40 m or more has a gap.
+      const run = new Map();
+      for (let i = 0; i < b.pts.length; i++) {
+        const q = b.pts[(i + 1) % b.pts.length];
+        const l = Math.hypot(q[0] - b.pts[i][0], q[1] - b.pts[i][1]);
+        run.set(b.fronts[i], (run.get(b.fronts[i]) || 0) + l);
+      }
+      const faced = new Set(gaps.map((g) => g.faces));
+      for (const [f, l] of run) {
+        if (l < 40 || f === 'park' || f === 'greenway') continue;
+        n++;
+        if (!faced.has(f)) miss++;
+      }
+    }
+  }
+  assert.ok(miss <= n * 0.01, `${miss} of ${n} street frontages of 40 m or more have no gap`);
+});
+
+test('plots in a rectangular block are cut square', () => {
+  const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
+  const rectness = (N) => {
+    let best = Infinity;
+    for (let i = 0; i < N.length; i++) {
+      const e = sub(N[(i + 1) % N.length], N[i]);
+      const l = Math.hypot(...e);
+      if (l < 1) continue;
+      const u = [e[0] / l, e[1] / l];
+      let [a, b, c, e2] = [Infinity, -Infinity, Infinity, -Infinity];
+      for (const p of N) {
+        const x = p[0] * u[0] + p[1] * u[1];
+        const y = -p[0] * u[1] + p[1] * u[0];
+        [a, b, c, e2] = [Math.min(a, x), Math.max(b, x), Math.min(c, y), Math.max(e2, y)];
+      }
+      best = Math.min(best, (b - a) * (e2 - c));
+    }
+    return Math.abs(polygonArea(N)) / best;
+  };
+  let n = 0;
+  let bad = 0;
+  for (const d of districts.slice(0, 2)) {
+    for (const b of blocksOf(d).blocks) {
+      if (!b.plots || b.plots.length < 2 || rectness(b.pts) < 0.9) continue;
+      for (const p of b.plots) {
+        if (p.corner || p.kind === 'passage') continue;
+        n++;
+        for (let i = 0; i < p.pts.length; i++) {
+          const a = sub(p.pts[i], p.pts[(i - 1 + p.pts.length) % p.pts.length]);
+          const c = sub(p.pts[(i + 1) % p.pts.length], p.pts[i]);
+          const t = (Math.abs(Math.atan2(a[0] * c[1] - a[1] * c[0], a[0] * c[0] + a[1] * c[1])) * 180) / Math.PI;
+          if (t > 30 && t < 150 && Math.abs(90 - t) > 12) {
+            bad++;
+            break;
+          }
+        }
+      }
+    }
+  }
+  assert.ok(bad <= n * 0.01, `${bad} of ${n} plots in rectangular blocks cut aslant`);
+});
+
+test('rowhouse neighbourhoods are rowhouses, with footpaths behind the gardens', () => {
+  for (const d of districts.slice(0, 2)) {
+    const b = blocksOf(d);
+    for (const h of d.stage3.hoods) {
+      const mine = b.blocks.filter((k) => k.hood === h.id);
+      const row = mine.filter((k) => k.use === 'rowhouse');
+      if (h.character === 'rowhouses') {
+        // Off the main streets, rowhouses.
+        const off = mine.filter((k) => (k.use === 'perimeter' || k.use === 'rowhouse') && !k.front);
+        assert.ok(row.length >= off.length * 0.9, `${h.key}: ${row.length} of ${off.length} blocks off the main streets are rowhouses`);
+        assert.ok(row.filter((k) => k.alley).length >= row.length * 0.7, `${h.key}: few rowhouse blocks have a footpath down the middle`);
+      } else assert.equal(row.length, 0, `${h.key}: rowhouses in a ${h.character} neighbourhood`);
+    }
+  }
+});
+
+test('a building is one height', () => {
+  for (const d of districts.slice(0, 2)) {
+    const by = new Map();
+    for (const k of blocksOf(d).blocks) {
+      for (const p of k.plots || []) {
+        if (!p.group || !p.bldg || p.bldg.tower) continue;
+        if (!by.has(p.group)) by.set(p.group, new Set());
+        by.get(p.group).add(p.bldg.h.toFixed(2));
+      }
+    }
+    const mixed = [...by.values()].filter((s) => s.size > 1).length;
+    assert.equal(mixed, 0, `${d.key}: ${mixed} buildings with more than one height`);
+  }
 });

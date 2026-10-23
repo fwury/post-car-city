@@ -9,9 +9,15 @@ export const palette = {
   natural: '#a9d59a', // primary greenways, district parks
   green: '#cde9bd', // parkettes, neighbourhood parks, courtyards (later stages)
   water: '#9fcff2',
+  metro: '#8a5cc2',
+  railFill: '#959ca2',
+  railEdge: '#5f676e',
+  railTrack: '#5f666c',
   waterEdge: '#86bfe8',
   road: '#a7adb3',
   roadCasing: '#8c939a',
+  tunnel: '#dfe3e5', // a street under a greenway
+  tunnelCasing: '#8c939a',
   pedestrian: '#e2e4e6',
   tram: '#d65a4e',
   bike: '#3e8a52',
@@ -31,6 +37,18 @@ export const palette = {
   school: '#f1e3c8',
   localStreet: '#ffffff',
   localCasing: '#dcd9d3',
+  pavement: '#f2f0ec',
+  selection: '#0a7aff',
+  water: '#9fcff2',
+  metro: '#8a5cc2',
+  railFill: '#959ca2',
+  railEdge: '#5f676e',
+  railTrack: '#5f666c',
+  streamBank: '#8fc39a',
+  trail: '#f3eee4',
+  trailEdge: '#cfd9c1',
+  woods: '#93c784',
+  yard: '#ebe7df', // the ground round buildings: yards, light wells, forecourts
   pedestrianStreet: '#e9dfcc',
   // Dedicated buildings, by what they are for.
   dedicated: {

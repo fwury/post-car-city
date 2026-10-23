@@ -69,7 +69,7 @@ test('each neighbourhood houses about 15 000 people, at its own density', () => 
   const areas = all.map((h) => h.area).sort((a, b) => a - b);
   assert.ok(areas[Math.floor(areas.length * 0.95)] / areas[Math.floor(areas.length * 0.05)] > 1.8, 'neighbourhoods are all much the same size');
   const kinds = new Set(all.map((h) => h.character));
-  for (const k of ['core', 'perimeter blocks', 'mixed', 'rowhouses', 'campus']) assert.ok(kinds.has(k), `no ${k} neighbourhood`);
+  for (const k of ['core', 'perimeter blocks', 'rowhouses', 'campus']) assert.ok(kinds.has(k), `no ${k} neighbourhood`);
   const dense = all.filter((h) => h.character === 'perimeter blocks');
   const low = all.filter((h) => h.character === 'rowhouses');
   const mean = (l) => l.reduce((s, h) => s + h.area, 0) / l.length;

@@ -54,6 +54,7 @@ export const GATEWAY_TWO = 2600; // a shared greenway this long gets two gateway
 const EDGE_END = 400; // crossings keep this far from the ends of a greenway stretch
 const EDGE_CLEAR = 380; // and this far from a boulevard crossing
 const CELL = 50;
+export const ROWHOUSE_DENSITY = 18500; // people per km²: a neighbourhood less dense than this is rowhouses
 const SMOOTH_TOL = 32; // metres of raster staircase removed before smoothing
 const OUTSIDE = -1;
 const LABELS = 64; // more than the neighbourhoods a district can have (edge keys are corner * LABELS + label)
@@ -561,8 +562,8 @@ export function createNeighbourhoods(seed, { boulevards }) {
       h.campus = centres[h.id] === campus;
       // People per km² of the neighbourhood's land, and the housing that implies.
       h.density = h.area > 0 ? Math.round(pop[h.id] / (h.area / 1e6)) : 0;
-      const net = h.campus ? h.density / (1 - CAMPUS_SHARE) : h.density;
-      h.character = h.core ? 'core' : h.campus ? 'campus' : net > 24000 ? 'perimeter blocks' : net > 15000 ? 'mixed' : 'rowhouses';
+      // One form of housing to a neighbourhood: the less dense are rowhouses.
+      h.character = h.core ? 'core' : h.campus ? 'campus' : h.density < ROWHOUSE_DENSITY ? 'rowhouses' : 'perimeter blocks';
     }
     // The rasters later stages read: residents per m² and neighbourhood per cell.
     const raster = { x0, y0, W, H, cell: CELL, dens, label };

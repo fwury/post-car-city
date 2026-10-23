@@ -1,11 +1,14 @@
 // Seed input, layer toggles, zoom buttons and URL sync (seed, x, y, zoom).
 
 const DEFAULT_VIEW = { seed: '1', x: 0, y: 0, zoom: 0.03 };
-const LAYERS_KEY = 'post-car-city:layers:v4';
+const LAYERS_KEY = 'post-car-city:layers:v5';
 export const MAP_LAYERS = ['cores', 'streets', 'green', 'outlines', 'neighbourhoods', 'blocks'];
 export const DEFAULT_LAYERS = {
   cores: true, streets: true, green: true, transit: true, neighbourhoods: true, blocks: true,
   outlines: false, noise: false, grid: false, tiles: false, hud: true,
+  // Buildings: heights as shadows (2d) or extruded (3d); roofs and walls in
+  // their materials, or plain.
+  heights: '2d', materials: true,
 };
 
 export function readUrlState() {
@@ -95,6 +98,17 @@ export function setupControls({ state, camera, onSeed, onLayers }) {
     box.checked = Boolean(state.layers[name]);
     box.addEventListener('change', () => {
       state.layers[name] = box.checked;
+      saveLayers(state.layers);
+      onLayers(name);
+    });
+  }
+
+  for (const radio of document.querySelectorAll('input[data-choice]')) {
+    const name = radio.dataset.choice;
+    radio.checked = state.layers[name] === radio.value;
+    radio.addEventListener('change', () => {
+      if (!radio.checked) return;
+      state.layers[name] = radio.value;
       saveLayers(state.layers);
       onLayers(name);
     });

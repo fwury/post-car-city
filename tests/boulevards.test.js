@@ -99,15 +99,7 @@ test('boulevards bend, but never tighter than the minimum radius', () => {
   assert.ok(mean > 35, `boulevards turn only ${mean.toFixed(0)} degrees on average`);
 });
 
-test('some cores have a large roundabout, most do not', () => {
+test('roundabouts are kept for roads outside the city', () => {
   const ds = world.districtsInRect(-10000, -10000, 30000, 30000);
-  const r = ds.filter((d) => d.network.roundabout).length;
-  assert.ok(r > ds.length * 0.08 && r < ds.length * 0.45, `${r} roundabouts in ${ds.length} districts`);
-  for (const d of ds) {
-    const rb = d.network.roundabout;
-    if (!rb) continue;
-    const arms = d.network.lines.filter((l) => l.kind === 'arm');
-    assert.equal(arms.length, 3);
-    for (const a of arms) assert.ok(Math.abs(Math.hypot(a.points[0][0] - rb.x, a.points[0][1] - rb.y) - rb.r) < 1e-6);
-  }
+  assert.equal(ds.filter((d) => d.network.roundabout).length, 0);
 });

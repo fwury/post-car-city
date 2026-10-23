@@ -19,6 +19,9 @@ import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
 import { createBoulevards, distToPieces } from './boulevards.js';
 import { createParks } from './parks.js';
+import { createGreenways } from './greenway.js';
+import { createTransit } from './transit.js';
+import { createNames } from './names.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
 export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
@@ -124,6 +127,9 @@ export function createWorld(seed) {
     return warpFine(p[0], p[1], p);
   };
   const widthNoise = createNoise(seed, 'greenway-width');
+  const greenways = createGreenways(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y) });
+  const names = createNames(seed);
+  const transit = createTransit({ baseOf: (k) => baseOf(k), network: (b) => boulevards.network(b) });
 
   const bases = new LruCache(12000);
   const districts = new LruCache(12000);
@@ -537,11 +543,17 @@ export function createWorld(seed) {
   }
 
   // Stage 4: local streets and blocks, worked out only when wanted.
-  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y) });
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo) });
 
   return {
     seed, cores, growth, boulevards,
     blocks: (d) => blocks.of(d),
+    // Stage 5: the stream, trail and woods of a stretch of greenway.
+    greenway: (geo) => greenways.of(geo),
+    // Stage 5: the district's halves of the rail and metro lines, and stops.
+    transit: (d) => transit.of(d),
+    // Stage 5: names of districts, neighbourhoods and streets.
+    names,
     district, base, lod, districtsInRect, boulevardsInRect, boulevardDistance, districtAt, greenwayWidth,
     // Stage 3: neighbourhoods and main streets of a district.
     neighbourhoods: (d) => d.stage3,

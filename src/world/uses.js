@@ -30,6 +30,7 @@ export const USES = {
   synagogue: { label: 'Synagogue', cat: 'worship', floor: 'dedicated' },
   mosque: { label: 'Mosque', cat: 'worship', floor: 'dedicated' },
   temple: { label: 'Temple (Hindu, Sikh or Buddhist)', cat: 'worship', floor: 'dedicated' },
+  cathedral: { label: 'Cathedral', cat: 'worship', floor: 'dedicated' },
   elementarySchool: { label: 'Elementary school', cat: 'education', floor: 'dedicated' },
   secondarySchool: { label: 'Secondary school', cat: 'education', floor: 'dedicated' },
   market: { label: 'Public square and market', cat: 'civic', floor: 'open' },
@@ -153,6 +154,7 @@ export const USES = {
   bikeParking: { label: 'Bicycle parking', cat: 'transport', floor: 'ground' },
   districtPlaza: { label: 'District plaza', cat: 'civic', floor: 'open' },
   skatingRink: { label: 'Skating rink', cat: 'recreation', floor: 'dedicated' },
+  stadium: { label: 'Stadium and concert venue', cat: 'recreation', floor: 'dedicated' },
 };
 
 // The daily list: every home within EVERYDAY_REACH of one of each.

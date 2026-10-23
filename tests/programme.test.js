@@ -9,7 +9,7 @@ const world = createWorld(seedFromText('1'));
 const districts = world.districtsInRect(3000, 3000, 5500, 5500).slice(0, 2);
 const plotsOf = (d) => world.blocks(d).blocks.flatMap((b) => b.plots || []);
 const near = (a, b, r) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= r;
-const has = (p, use) => p.dedicated === use || p.ground === use || p.upper === use;
+const has = (p, use) => p.dedicated === use || p.ground === use || p.upper === use || p.also === use;
 const homes = (plots) => plots.filter((p) => p.dwellings > 0);
 
 test('every neighbourhood has its square, park, schools and civic buildings', () => {
@@ -90,10 +90,15 @@ test('subdistrict centres and the district core have their own', () => {
 
 test('the homes built house each neighbourhood about as many people as planned', () => {
   for (const d of districts) {
-    const housed = world.blocks(d).programme.housed;
+    const { programme, planned } = world.blocks(d);
+    // Moving the boundaries onto streets shifts land, and people, between
+    // neighbourhoods, but not in or out of the district.
+    const want = d.stage3.hoods.reduce((a, h) => a + h.population, 0);
+    const got = Object.values(planned).reduce((a, v) => a + v, 0);
+    assert.ok(Math.abs(got / want - 1) < 0.08, `${d.key}: planned for ${want} by stage 3, ${got} by block`);
     for (const h of d.stage3.hoods) {
-      const r = housed[h.id] / h.population;
-      assert.ok(r > 0.75 && r < 1.25, `${h.key}: planned for ${h.population}, housing ${housed[h.id]}`);
+      const r = programme.housed[h.id] / planned[h.id];
+      assert.ok(r > 0.75 && r < 1.25, `${h.key}: planned for ${planned[h.id]}, housing ${programme.housed[h.id]}`);
     }
   }
 });

@@ -33,8 +33,11 @@ const WORSHIP_PER_HOOD = 3;
 const ELEMENTARY_PER_HOOD = 2;
 const SCHOOL_BLOCK = [0.3e4, 1.3e4]; // m², net: a block an elementary school takes
 const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
+const CATHEDRAL_BLOCK = [0.45e4, 1.8e4];
+const STADIUM_SHARE = 0.6; // of districts, those with a stadium
+const STADIUM_BLOCK = [1.0e4, 4.5e4]; // m², a stadium's block // m², a cathedral's block, beside a square
 const REC_BLOCK = [0.5e4, 1.6e4];
-const PARKETTE_GAP = 240; // metres between parkettes in rowhouse areas (about four within 400 m)
+const PARKETTE_GAP = 210; // metres between parkettes in rowhouse areas (about four within 400 m)
 const SUBDISTRICT_HOODS = 3; // neighbourhoods to a subdistrict centre
 const QUIET_UNITS = 0.3; // share of off-main perimeter plots with a shop floor
 const CORNER_UNITS = 0.7; // ... of off-main perimeter corner plots
@@ -43,15 +46,19 @@ const CORNER_SHOPS = 0.45; // ... of rowhouse end plots
 // Buildings by plot class: usual storeys, their range, the depth of the
 // building from the street where the plot runs deeper (rowhouse gardens).
 const HEIGHTS = {
-  main: { base: 6, storeys: [4, 8] },
-  unit: { base: 5, storeys: [3, 7] },
-  unitShop: { base: 5, storeys: [3, 7] },
-  corner: { base: 5, storeys: [3, 7] },
-  podium: { base: 14, storeys: [5, 30] }, // a podium with a tower over it
-  house: { base: 3, storeys: [2, 4], depth: 10, house: true },
-  rowCorner: { base: 3, storeys: [2, 4], depth: 12, house: true },
-  cornerShop: { base: 3, storeys: [2, 4], depth: 12, house: true },
+  main: { base: 6, storeys: [4, 9] },
+  unit: { base: 5, storeys: [3, 8] },
+  unitShop: { base: 5, storeys: [3, 8] },
+  corner: { base: 5, storeys: [3, 8] },
+  podium: { base: 7, storeys: [4, 10] }, // the core's street wall
+  podiumTower: { base: 16, storeys: [8, 30], tower: true }, // a corner podium with a tower over it
+  house: { base: 3, storeys: [2, 5], depth: 10, house: true },
+  rowCorner: { base: 3, storeys: [2, 5], depth: 12, house: true },
+  cornerShop: { base: 3, storeys: [2, 5], depth: 12, house: true },
 };
+export const PODIUM_STOREYS = 5; // a tower's podium
+const TOWER_SHARE = 0.3; // of the core's corner plots, those with a tower
+export const TOWER_PLATE = 650; // m², a residential tower's floor
 const DWELLING = 85; // m² of floor to a home, walls and stairs included
 const NET_SHARE = 0.85; // of a floor, the share that is homes (the rest stairs, halls)
 const HOUSEHOLD = 2.1; // people to a flat
@@ -116,7 +123,7 @@ function join(A, B) {
   return signedArea(out) > 0 ? out : null;
 }
 
-export function assignProgramme(seed, d, blocks) {
+export function assignProgramme(seed, d, blocks, planned = null) {
   const rng = rngFor(seed, 'programme', ...keyInts(d.coreInfo));
   const hoods = d.stage3.hoods;
   const S = d.station;
@@ -171,6 +178,8 @@ export function assignProgramme(seed, d, blocks) {
   const byHood = (use) => new Map(blocks.filter((b) => b.use === use).map((b) => [b.hood, b]));
   const dedicateBlock = (b, use) => {
     b.use = use;
+    b.inner = null;
+    b.court = null;
     for (const p of b.plots || []) {
       p.cls = 'dedicated';
       p.dedicated = null;
@@ -204,6 +213,36 @@ export function assignProgramme(seed, d, blocks) {
     for (const b of chosen) dedicateBlock(b, 'elementarySchool');
   }
 
+  // ---- A cathedral ----
+  // One to a district: a whole block by the core's square (or the square
+  // nearest it), so it fronts open space.
+  {
+    const core = sqCentre.get(0) || S;
+    const squaresNear = squares.slice().sort((x, y) => len(sub(centroid(x.pts), core)) - len(sub(centroid(y.pts), core)));
+    const sq = squaresNear[0];
+    if (sq) {
+      const at = centroid(sq.pts);
+      const b = blocks
+        .filter((o) => (o.use === 'perimeter' || o.use === 'podium') && o.area >= CATHEDRAL_BLOCK[0] && o.area <= CATHEDRAL_BLOCK[1])
+        .map((o) => ({ o, r: len(sub(centroid(o.pts), at)) }))
+        .filter((x) => x.r < 260)
+        .sort((x, y) => x.r - y.r)[0];
+      if (b) dedicateBlock(b.o, 'cathedral');
+    }
+  }
+
+  // ---- A stadium ----
+  // In some districts (more than half), on a block of its own near the core.
+  if (toUnit(hash(seed, 'stadium', ...keyInts(d.coreInfo))) < STADIUM_SHARE) {
+    const b = blocks
+      .filter((o) => (o.use === 'perimeter' || o.use === 'podium' || o.use === 'rowhouse') && o.area >= STADIUM_BLOCK[0] && o.area <= STADIUM_BLOCK[1] && o.plots && !o.plots.some((p) => p.dedicated))
+      .map((o) => ({ o, r: len(sub(centroid(o.pts), S)) }))
+      .filter((x) => x.r > 250 && x.r < 1400)
+      // The biggest block, nearer the core the better.
+      .sort((x, y) => y.o.area - 12 * y.r - (x.o.area - 12 * x.r))[0];
+    if (b) dedicateBlock(b.o, 'stadium');
+  }
+
   // ---- Subdistrict centres ----
   const rest = hoods.filter((h) => !h.core);
   const nSub = Math.max(rest.length >= 2 ? 1 : 0, Math.round(rest.length / SUBDISTRICT_HOODS));
@@ -225,14 +264,32 @@ export function assignProgramme(seed, d, blocks) {
     else p[slot] = use;
   };
   // The free slot nearest a point among plots of the given classes.
+  // (Searched ring by ring of grid cells outward, stopping once no nearer
+  // plot can be left.)
   function nearest(q, classes, slot, reach, filter = () => true) {
+    const cx = Math.floor(q[0] / G);
+    const cy = Math.floor(q[1] / G);
     let best = null;
-    for (const p of near(q, reach)) {
-      if (!classes.includes(p.cls) || taken(p, slot) || !filter(p)) continue;
-      const r = len(sub(p.c, q));
-      if (!best || r < best.r) best = { r, p };
+    let bd = reach * reach;
+    for (let r = 0; r <= Math.ceil(reach / G) + 1; r++) {
+      if (best && (r - 1) * G > Math.sqrt(bd)) break;
+      for (let gx = cx - r; gx <= cx + r; gx++) {
+        const edge = gx === cx - r || gx === cx + r;
+        for (let gy = cy - r; gy <= cy + r; gy += edge ? 1 : 2 * r || 1) {
+          for (const p of grid.get(gx * 1e6 + gy) || []) {
+            if (!classes.includes(p.cls) || taken(p, slot) || !filter(p)) continue;
+            const dx = p.c[0] - q[0];
+            const dy = p.c[1] - q[1];
+            const d2 = dx * dx + dy * dy;
+            if (d2 <= bd && (!best || d2 < bd)) {
+              bd = d2;
+              best = p;
+            }
+          }
+        }
+      }
     }
-    return best ? best.p : null;
+    return best;
   }
   // A dedicated building: a plot big enough, or a plot joined with its neighbour.
   function dedicate(q, use, classes, reach, minArea) {
@@ -274,9 +331,12 @@ export function assignProgramme(seed, d, blocks) {
   const floorOf = (use) => (USES[use].floor === 'upper' ? 'upper' : USES[use].floor === 'dedicated' ? 'dedicated' : 'ground');
 
   // ---- Each neighbourhood's own ----
+  // (A neighbourhood with a park has its community centre built into it.)
+  const withPark = new Set(blocks.filter((b) => b.use === 'park').map((b) => b.hood));
   for (const h of hoods) {
     const q = sqCentre.get(h.id) || h.centre;
     for (const [use, count] of NEIGHBOURHOOD_LIST) {
+      if (use === 'communityCentre' && withPark.has(h.id)) continue;
       for (let k = 0; k < count; k++) {
         const slot = floorOf(use);
         if (slot === 'dedicated') {
@@ -424,33 +484,91 @@ export function assignProgramme(seed, d, blocks) {
   // ---- Homes ----
   // Storeys by building, then raised or lowered (within each kind's range)
   // until each neighbourhood houses about the people it was planned for.
+  // Each building rounds up or down by its own share, so heights vary from
+  // one to the next and the average can sit between whole storeys.
   const live = plots.filter((p) => p.cls !== 'merged' && !p.dedicated && HEIGHTS[p.cls]);
+  // Plots are built as buildings: a run of plots between two gaps round a
+  // courtyard is one building, as is each terrace of houses; a building has
+  // one height, whatever is on its ground floor.
+  const groups = new Map();
+  blocks.forEach((b, bi) => {
+    if (!b.plots) return;
+    let g = 0;
+    const ids = [];
+    for (const p of b.plots) {
+      let id = null;
+      if (p.cls === 'passage' || p.dedicated || !HEIGHTS[p.cls]) g++;
+      else if (p.row !== undefined) id = `${bi}:r${p.row}`;
+      else if (!b.inner) id = `${bi}:s${p.index}`;
+      else id = `${bi}:${g}`;
+      ids.push(id);
+    }
+    // Round a courtyard the last run joins the first (no gap between them).
+    if (b.inner && ids.length > 1 && ids[0] && ids[ids.length - 1] && ids[0] !== ids[ids.length - 1]) {
+      const last = ids[ids.length - 1];
+      for (let k = 0; k < ids.length; k++) if (ids[k] === last) ids[k] = ids[0];
+    }
+    b.plots.forEach((p, k) => {
+      p.group = ids[k];
+      if (!ids[k] || !live.includes(p)) return;
+      if (!groups.has(ids[k])) groups.set(ids[k], []);
+      groups.get(ids[k]).push(p);
+    });
+  });
+  const groupList = [...groups.values()];
+  for (const list of groupList) {
+    const q = list[0].c;
+    list.dither = toUnit(hash(seed, 'storeys', Math.floor(q[0] * 4), Math.floor(q[1] * 4)));
+    // Its range: what every plot in it allows; a tower site stays its own.
+    list.hood = list[0].hood;
+  }
+  // A corner of the core may carry a tower; its floors above the podium
+  // are a tower's floor plate, not the whole plot.
+  for (const p of live) p.towerSite = p.cls === 'podium' && p.corner && toUnit(hash(seed, 'tower', Math.floor(p.c[0]), Math.floor(p.c[1]))) < TOWER_SHARE;
+  const heightsOf = (p) => (p.towerSite ? HEIGHTS.podiumTower : HEIGHTS[p.cls]);
   const people = (p) => {
-    const H = HEIGHTS[p.cls];
+    const H = heightsOf(p);
     const footprint = H.depth ? Math.min(polygonArea(p.pts), p.front * H.depth || polygonArea(p.pts)) : polygonArea(p.pts);
     const homesFloors = Math.max(0, p.storeys - (p.ground ? 1 : 0) - (p.upper ? 1 : 0));
-    const dwellings = H.house ? 1 : Math.floor((footprint * homesFloors * NET_SHARE) / DWELLING);
+    const floorArea = H.tower
+      ? footprint * Math.max(0, (p.baseStoreys || PODIUM_STOREYS) - (p.ground ? 1 : 0) - (p.upper ? 1 : 0)) + Math.min(footprint, TOWER_PLATE) * Math.max(0, p.storeys - (p.baseStoreys || PODIUM_STOREYS))
+      : footprint * homesFloors;
+    // A house of three storeys or more is split into flats (a plex).
+    const dwellings = H.house ? Math.max(1, Math.min(3, p.storeys - (p.ground ? 1 : 0) - 1)) : Math.floor((floorArea * NET_SHARE) / DWELLING);
     p.dwellings = dwellings;
-    return dwellings * (H.house ? HOUSEHOLD_HOUSE : HOUSEHOLD);
+    return dwellings * (H.house ? (dwellings > 1 ? HOUSEHOLD : HOUSEHOLD_HOUSE) : HOUSEHOLD);
   };
   const built = new Map();
   for (const h of hoods) {
-    const mine = live.filter((p) => p.hood === h.id);
+    const mine = groupList.filter((list) => list.hood === h.id);
     let f = 1;
-    for (let round = 0; round < 6; round++) {
+    for (let round = 0; round < 12; round++) {
       let total = 0;
-      for (const p of mine) {
-        const H = HEIGHTS[p.cls];
-        p.storeys = Math.max(H.storeys[0], Math.min(H.storeys[1], Math.round(H.base * (H.house ? 1 : f))));
-        total += people(p);
+      for (const list of mine) {
+        // One height for the building: from its plots' usual heights, within
+        // the range all of them allow.
+        let base = 0;
+        let lo = 0;
+        let hi = 99;
+        for (const p of list) {
+          const H = heightsOf(p);
+          base += H.base / list.length;
+          lo = Math.max(lo, H.storeys[0]);
+          hi = Math.min(hi, H.storeys[1]);
+        }
+        const n = Math.max(lo, Math.min(Math.max(lo, hi), Math.floor(base * f + list.dither)));
+        for (const p of list) {
+          p.baseStoreys = n;
+          p.storeys = p.towerSite ? Math.max(HEIGHTS.podiumTower.storeys[0], Math.min(HEIGHTS.podiumTower.storeys[1], Math.floor(HEIGHTS.podiumTower.base * f + list.dither))) : n;
+          total += people(p);
+        }
       }
       built.set(h.id, total);
       if (!total) break;
-      const want = h.population / total;
+      const want = (planned ? planned[h.id] : h.population) / total;
       if (Math.abs(want - 1) < 0.03) break;
       f *= want;
     }
   }
-
   return { subdistricts: subs.map((h) => h.id), parkettes: parkettes.length, housed: Object.fromEntries(built) };
 }
