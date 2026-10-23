@@ -52,9 +52,9 @@ const HEIGHTS = {
   corner: { base: 5, storeys: [3, 8] },
   podium: { base: 7, storeys: [4, 10] }, // the core's street wall
   podiumTower: { base: 16, storeys: [8, 30], tower: true }, // a corner podium with a tower over it
-  house: { base: 3, storeys: [2, 4], depth: 10, house: true },
-  rowCorner: { base: 3, storeys: [2, 4], depth: 12, house: true },
-  cornerShop: { base: 3, storeys: [2, 4], depth: 12, house: true },
+  house: { base: 3, storeys: [2, 5], depth: 10, house: true },
+  rowCorner: { base: 3, storeys: [2, 5], depth: 12, house: true },
+  cornerShop: { base: 3, storeys: [2, 5], depth: 12, house: true },
 };
 export const PODIUM_STOREYS = 5; // a tower's podium
 const TOWER_SHARE = 0.3; // of the core's corner plots, those with a tower
@@ -487,7 +487,41 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   // Each building rounds up or down by its own share, so heights vary from
   // one to the next and the average can sit between whole storeys.
   const live = plots.filter((p) => p.cls !== 'merged' && !p.dedicated && HEIGHTS[p.cls]);
-  for (const p of live) p.dither = toUnit(hash(seed, 'storeys', Math.floor(p.c[0] * 4), Math.floor(p.c[1] * 4)));
+  // Plots are built as buildings: a run of plots between two gaps round a
+  // courtyard is one building, as is each terrace of houses; a building has
+  // one height, whatever is on its ground floor.
+  const groups = new Map();
+  blocks.forEach((b, bi) => {
+    if (!b.plots) return;
+    let g = 0;
+    const ids = [];
+    for (const p of b.plots) {
+      let id = null;
+      if (p.cls === 'passage' || p.dedicated || !HEIGHTS[p.cls]) g++;
+      else if (p.row !== undefined) id = `${bi}:r${p.row}`;
+      else if (!b.inner) id = `${bi}:s${p.index}`;
+      else id = `${bi}:${g}`;
+      ids.push(id);
+    }
+    // Round a courtyard the last run joins the first (no gap between them).
+    if (b.inner && ids.length > 1 && ids[0] && ids[ids.length - 1] && ids[0] !== ids[ids.length - 1]) {
+      const last = ids[ids.length - 1];
+      for (let k = 0; k < ids.length; k++) if (ids[k] === last) ids[k] = ids[0];
+    }
+    b.plots.forEach((p, k) => {
+      p.group = ids[k];
+      if (!ids[k] || !live.includes(p)) return;
+      if (!groups.has(ids[k])) groups.set(ids[k], []);
+      groups.get(ids[k]).push(p);
+    });
+  });
+  const groupList = [...groups.values()];
+  for (const list of groupList) {
+    const q = list[0].c;
+    list.dither = toUnit(hash(seed, 'storeys', Math.floor(q[0] * 4), Math.floor(q[1] * 4)));
+    // Its range: what every plot in it allows; a tower site stays its own.
+    list.hood = list[0].hood;
+  }
   // A corner of the core may carry a tower; its floors above the podium
   // are a tower's floor plate, not the whole plot.
   for (const p of live) p.towerSite = p.cls === 'podium' && p.corner && toUnit(hash(seed, 'tower', Math.floor(p.c[0]), Math.floor(p.c[1]))) < TOWER_SHARE;
@@ -497,22 +531,37 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     const footprint = H.depth ? Math.min(polygonArea(p.pts), p.front * H.depth || polygonArea(p.pts)) : polygonArea(p.pts);
     const homesFloors = Math.max(0, p.storeys - (p.ground ? 1 : 0) - (p.upper ? 1 : 0));
     const floorArea = H.tower
-      ? footprint * Math.max(0, PODIUM_STOREYS - (p.ground ? 1 : 0) - (p.upper ? 1 : 0)) + Math.min(footprint, TOWER_PLATE) * Math.max(0, p.storeys - PODIUM_STOREYS)
+      ? footprint * Math.max(0, (p.baseStoreys || PODIUM_STOREYS) - (p.ground ? 1 : 0) - (p.upper ? 1 : 0)) + Math.min(footprint, TOWER_PLATE) * Math.max(0, p.storeys - (p.baseStoreys || PODIUM_STOREYS))
       : footprint * homesFloors;
-    const dwellings = H.house ? 1 : Math.floor((floorArea * NET_SHARE) / DWELLING);
+    // A house of three storeys or more is split into flats (a plex).
+    const dwellings = H.house ? Math.max(1, Math.min(3, p.storeys - (p.ground ? 1 : 0) - 1)) : Math.floor((floorArea * NET_SHARE) / DWELLING);
     p.dwellings = dwellings;
-    return dwellings * (H.house ? HOUSEHOLD_HOUSE : HOUSEHOLD);
+    return dwellings * (H.house ? (dwellings > 1 ? HOUSEHOLD : HOUSEHOLD_HOUSE) : HOUSEHOLD);
   };
   const built = new Map();
   for (const h of hoods) {
-    const mine = live.filter((p) => p.hood === h.id);
+    const mine = groupList.filter((list) => list.hood === h.id);
     let f = 1;
-    for (let round = 0; round < 10; round++) {
+    for (let round = 0; round < 12; round++) {
       let total = 0;
-      for (const p of mine) {
-        const H = heightsOf(p);
-        p.storeys = Math.max(H.storeys[0], Math.min(H.storeys[1], H.house ? H.base : Math.floor(H.base * f + p.dither)));
-        total += people(p);
+      for (const list of mine) {
+        // One height for the building: from its plots' usual heights, within
+        // the range all of them allow.
+        let base = 0;
+        let lo = 0;
+        let hi = 99;
+        for (const p of list) {
+          const H = heightsOf(p);
+          base += H.base / list.length;
+          lo = Math.max(lo, H.storeys[0]);
+          hi = Math.min(hi, H.storeys[1]);
+        }
+        const n = Math.max(lo, Math.min(Math.max(lo, hi), Math.floor(base * f + list.dither)));
+        for (const p of list) {
+          p.baseStoreys = n;
+          p.storeys = p.towerSite ? Math.max(HEIGHTS.podiumTower.storeys[0], Math.min(HEIGHTS.podiumTower.storeys[1], Math.floor(HEIGHTS.podiumTower.base * f + list.dither))) : n;
+          total += people(p);
+        }
       }
       built.set(h.id, total);
       if (!total) break;
@@ -521,7 +570,5 @@ export function assignProgramme(seed, d, blocks, planned = null) {
       f *= want;
     }
   }
-
-  for (const p of live) delete p.dither;
   return { subdistricts: subs.map((h) => h.id), parkettes: parkettes.length, housed: Object.fromEntries(built) };
 }

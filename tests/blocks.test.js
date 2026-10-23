@@ -6,6 +6,7 @@ import { createWorld } from '../src/world/districts.js';
 import { axesOf } from '../src/world/blocks.js';
 import { distToLine } from '../src/world/boulevards.js';
 import { polygonArea } from '../src/util/geom.js';
+import { ALLEY } from '../src/world/plots.js';
 
 const SEED = seedFromText('1');
 const world = createWorld(SEED);
@@ -183,7 +184,10 @@ test('plots fill their blocks, front their streets, and are sound shapes', () =>
       if (!k.plots || !['perimeter', 'rowhouse', 'podium'].includes(k.use)) continue;
       // Plots and courtyard together are the block (less the odd yard, where
       // a lobe of the block is too narrow for the courtyard to reach).
-      const sum = k.plots.reduce((s, p) => s + polygonArea(p.pts), 0) + (k.inner ? polygonArea(k.inner) : 0);
+      // (and the footpath down a rowhouse block's middle).
+      let alley = 0;
+      for (let i = 1; k.alley && i < k.alley.length; i++) alley += Math.hypot(k.alley[i][0] - k.alley[i - 1][0], k.alley[i][1] - k.alley[i - 1][1]) * ALLEY;
+      const sum = k.plots.reduce((s, p) => s + polygonArea(p.pts), 0) + (k.inner ? polygonArea(k.inner) : 0) + alley;
       assert.ok(Math.abs(sum - k.area) < k.area * 0.05, `a ${k.use} block in ${d.key} is ${((100 * sum) / k.area).toFixed(0)}% plots`);
       for (const p of k.plots) {
         plots++;
@@ -266,4 +270,35 @@ test('plots in a rectangular block are cut square', () => {
     }
   }
   assert.ok(bad <= n * 0.01, `${bad} of ${n} plots in rectangular blocks cut aslant`);
+});
+
+test('rowhouse neighbourhoods are rowhouses, with footpaths behind the gardens', () => {
+  for (const d of districts.slice(0, 2)) {
+    const b = blocksOf(d);
+    for (const h of d.stage3.hoods) {
+      const mine = b.blocks.filter((k) => k.hood === h.id);
+      const row = mine.filter((k) => k.use === 'rowhouse');
+      if (h.character === 'rowhouses') {
+        // Off the main streets, rowhouses.
+        const off = mine.filter((k) => (k.use === 'perimeter' || k.use === 'rowhouse') && !k.front);
+        assert.ok(row.length >= off.length * 0.9, `${h.key}: ${row.length} of ${off.length} blocks off the main streets are rowhouses`);
+        assert.ok(row.filter((k) => k.alley).length >= row.length * 0.7, `${h.key}: few rowhouse blocks have a footpath down the middle`);
+      } else assert.equal(row.length, 0, `${h.key}: rowhouses in a ${h.character} neighbourhood`);
+    }
+  }
+});
+
+test('a building is one height', () => {
+  for (const d of districts.slice(0, 2)) {
+    const by = new Map();
+    for (const k of blocksOf(d).blocks) {
+      for (const p of k.plots || []) {
+        if (!p.group || !p.bldg || p.bldg.tower) continue;
+        if (!by.has(p.group)) by.set(p.group, new Set());
+        by.get(p.group).add(p.bldg.h.toFixed(2));
+      }
+    }
+    const mixed = [...by.values()].filter((s) => s.size > 1).length;
+    assert.equal(mixed, 0, `${d.key}: ${mixed} buildings with more than one height`);
+  }
 });

@@ -50,7 +50,7 @@ const PARKSIDE = LOCAL; // the street along a greenway or park edge
 // never split into a piece narrower than `min` (or shorter than `minLong`).
 export const BLOCK_SIZES = {
   perimeter: { long: 175, short: 140, min: 80 },
-  rowhouse: { long: 280, short: 92, min: 60, minLong: 130 },
+  rowhouse: { long: 210, short: 96, min: 62, minLong: 120 },
   podium: { long: 165, short: 135, min: 80 },
   campus: { long: 270, short: 220, min: 110 },
 };
@@ -526,7 +526,9 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
           let best = b.hood;
           let bl = by.get(b.hood) || 0;
           for (const [h, l] of [...by].sort((x, y) => x[0] - y[0])) if (l > bl) [best, bl] = [h, l];
-          if (best !== b.hood && bl > total * 0.6) {
+          // (Never into a neighbourhood built in another form.)
+          const fits = (b.use === 'rowhouse') === (hoods[best] && formOf(hoods[best]) === 'rowhouse') || (b.use !== 'rowhouse' && b.front);
+          if (best !== b.hood && bl > total * 0.6 && fits) {
             b.hood = best;
             moved++;
           }
@@ -781,20 +783,16 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
       if (!junctions.has(t.id)) junctions.set(t.id, []);
       junctions.get(t.id).push(p);
     };
+    // Rowhouse neighbourhoods are the less dense ones.
+    const formOf = (h) => (h.character === 'rowhouses' ? 'rowhouse' : 'perimeter');
     const zoneOf = (node, ax) => {
       const h = hoodAt(ax.c);
       // A campus takes the middle of its neighbourhood; homes round it.
       if (h && h.campus && len(sub(ax.c, h.centre)) < Math.sqrt((CAMPUS_SHARE * h.area) / Math.PI)) return 'campus';
       if (h && h.core && len(sub(ax.c, d.station)) < d.coreReach * 1.25) return 'podium';
-      const dn = densityAt(ax.c);
-      if (dn >= 22000) return 'perimeter';
-      if (dn < 15500) return 'rowhouse';
-      return toNoise(ax.c) < (dn - 15500) / 6500 ? 'perimeter' : 'rowhouse';
-    };
-    // A fixed, smooth-enough choice between forms in mixed areas.
-    const toNoise = (p) => {
-      const n = cellOf(p[0], p[1]);
-      return n >= 0 ? ((R.label[n] * 9301 + Math.floor(p[0] / 220) * 49297 + Math.floor(p[1] / 220) * 233280) % 1000) / 1000 : 0.5;
+      // A neighbourhood is built in one form throughout: rowhouses or
+      // perimeter blocks (its main streets mixed use either way).
+      return h ? formOf(h) : 'perimeter';
     };
 
     // Distance along the boundary from point e (on edge i, param t) to the
@@ -1200,9 +1198,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
           }
           continue;
         }
-        // A rowhouse block too irregular for terraces is built as flats round
-        // a courtyard, so it is split to a perimeter block's size.
-        const sizeZone = zone === 'rowhouse' && rectness(node.pts) < TERRACE_RECT ? 'perimeter' : zone;
+        const sizeZone = zone;
         const size = BLOCK_SIZES[sizeZone];
         if (ax.L <= size.long && ax.W <= size.short) {
           leaves.push({ ...node, ax, zone });
@@ -1418,6 +1414,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
         b.plots = pl.plots;
         b.inner = pl.inner;
         b.court = pl.court;
+        if (pl.alley) b.alley = pl.alley;
         b.fronts = fronts;
       }
       blocks.push(b);

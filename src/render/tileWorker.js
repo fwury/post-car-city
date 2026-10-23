@@ -16,9 +16,9 @@ self.onmessage = (e) => {
       const d = world.districtsInRect(x - 1, y - 1, x + 1, y + 1).find((q) => q.key === e.data.key);
       const b = world.blocks(d);
       const result = {
-        blocks: b.blocks.map(({ pts, centreline, use, hood, front, inner, court, layout, plots }) => ({
-          pts, centreline, use, hood, front, inner, court, layout,
-          plots: plots && plots.map(({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c, bldg, layout: pl, also }) => ({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c, bldg, layout: pl, also })),
+        blocks: b.blocks.map(({ pts, centreline, use, hood, front, inner, court, alley, layout, plots }) => ({
+          pts, centreline, use, hood, front, inner, court, alley, layout,
+          plots: plots && plots.map(({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c, bldg, layout: pl, also, group }) => ({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c, bldg, layout: pl, also, group })),
         })),
         streets: b.streets,
         hoodLines: b.hoodLines,

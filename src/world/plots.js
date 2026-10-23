@@ -33,7 +33,8 @@ const GAP_RUN = GAP[0]; // every frontage between corner buildings gets a gap
 const GAP_EVERY = 55; // and one more for about every this many metres
 const TIDY = 1.2; // metres: points of a plot closer than this are one
 const SPIKE = (25 * Math.PI) / 180; // a turn this sharp beside a short edge is a sliver
-export const TERRACE_RECT = 0.8; // how nearly rectangular a block must be for terraces down a spine
+export const ALLEY = 5; // metres: the footpath down the middle of a rowhouse block, behind the gardens
+export const TERRACE_RECT = 0.55; // how nearly rectangular a block must be for terraces down a spine
 const MAX_HOUSE = 1400; // m²: the largest plot a house (end of terrace included) may take
 const COURT_RING = 3.5; // metres: the path round a courtyard, along the backs of the buildings
 const BACK_STRIP = 2; // metres either side of the middle of a rowhouse block left as a shared strip
@@ -613,6 +614,16 @@ function onRing(N, p) {
   return best && best.d < 0.5 ? best : null;
 }
 
+// A polyline moved d metres to its left (d < 0: its right).
+function shiftLine(P, d) {
+  return P.map((q, i) => {
+    const a = P[Math.max(0, i - 1)];
+    const b = P[Math.min(P.length - 1, i + 1)];
+    const t = unit(sub(b, a));
+    return [q[0] - t[1] * d, q[1] + t[0] * d];
+  });
+}
+
 // Rowhouse plots: the block split down its spine, each half cut into a
 // terrace of houses running back to the spine, with an end house at each
 // end turning the corner onto the side street.
@@ -627,7 +638,17 @@ function terraces(N, fronts, widthOf) {
   const plots = [];
   // Half one runs round from the spine's end to its start; half two from
   // its start to its end. Each frontage, with the spine as its back.
-  for (const [from, to, back] of [[he, hs, M.slice().reverse()], [hs, he, M]]) {
+  for (const [row, [from, to, spineHalf]] of [[he, hs, M.slice().reverse()], [hs, he, M]].entries()) {
+    // The back of the gardens: the spine moved half an alley's width towards
+    // this half's frontage, so a footpath runs between the two terraces.
+    let probe = null;
+    for (let k = (from.i + 1) % n, guard = 0; guard <= n; k = (k + 1) % n, guard++) {
+      probe = N[k];
+      if (guard >= 1) break;
+    }
+    const sd = sub(spineHalf[spineHalf.length - 1], spineHalf[0]);
+    const side = Math.sign(cross(sd, sub(probe, spineHalf[0]))) || 1;
+    const back = shiftLine(spineHalf, (side * ALLEY) / 2);
     const F = [back[0]];
     const ff = [];
     for (let k = (from.i + 1) % n, guard = 0; guard <= n; k = (k + 1) % n, guard++) {
@@ -645,13 +666,20 @@ function terraces(N, fronts, widthOf) {
     const cumB = lineParams(B);
     // The frontage from the block's first corner to its last: everything but
     // the half short sides at each end, which the end houses take.
-    const turns = [];
-    for (let k = 1; k < F.length - 1; k++) {
-      const a = unit(sub(F[k], F[k - 1]));
-      const b = unit(sub(F[k + 1], F[k]));
-      if (Math.abs(Math.atan2(cross(a, b), dot(a, b))) > 0.5) turns.push(k);
+    // The long side: the stretch of frontage running along the spine (the
+    // short sides, across it, are the end houses').
+    const along = unit(sub(back[back.length - 1], back[0]));
+    let ra = -1;
+    let rb = -1;
+    for (let k = 1; k < F.length - 2; k++) {
+      const dseg = sub(F[k + 1], F[k]);
+      if (len(dseg) < 0.5) continue;
+      if (Math.abs(dot(unit(dseg), along)) > 0.8) {
+        if (ra < 0) ra = k;
+        rb = k + 1;
+      }
     }
-    const run = turns.length >= 2 ? { a: turns[0], b: turns[turns.length - 1] } : turns.length === 1 ? { a: turns[0], b: F.length - 1 } : { a: 0, b: F.length - 1 };
+    const run = ra >= 0 ? { a: ra, b: rb } : { a: 0, b: F.length - 1 };
     run.l = cumF[run.b] - cumF[run.a];
     if (run.l < 20) return fail('run');
     // What the terrace faces: the street along the middle of its frontage.
@@ -696,7 +724,17 @@ function terraces(N, fronts, widthOf) {
       // last one (on a curve, or where the block narrows), it meets the
       // spine where its share of the way along says instead.
       if (!hit || hit.s >= prev.qs - 0.3) {
-        const qs = cumB[B.length - 1] * (1 - (c - s0 + (s0 - cumF[0])) / (cumF[F.length - 1] || 1));
+        // The nearest point of the back, else the share of the way along.
+        let qs = null;
+        let bd = Infinity;
+        for (let j = 0; j < B.length - 1; j++) {
+          const ab = sub(B[j + 1], B[j]);
+          const l2 = dot(ab, ab);
+          const t = l2 ? Math.max(0, Math.min(1, dot(sub(p, B[j]), ab) / l2)) : 0;
+          const r = len(sub([B[j][0] + ab[0] * t, B[j][1] + ab[1] * t], p));
+          if (r < bd) [bd, qs] = [r, cumB[j] + (cumB[j + 1] - cumB[j]) * t];
+        }
+        if (qs === null || qs >= prev.qs - 0.3) qs = cumB[B.length - 1] * (1 - (c - s0 + (s0 - cumF[0])) / (cumF[F.length - 1] || 1));
         if (qs >= prev.qs - 0.3 || qs <= 0.3) continue;
         let k = 0;
         while (k < B.length - 2 && cumB[k + 1] < qs) k++;
@@ -716,10 +754,14 @@ function terraces(N, fronts, widthOf) {
       if (k > 0) pts.push(a.q);
       const area = polygonArea(pts);
       if (area < 20) continue;
-      plots.push({ pts, area, front: b.s - a.s, corner: k === 0 || k === placed.length - 2, faces: front, frontA: a.p, frontB: b.p });
+      // (Tidied: the alley's ends leave slivers at the block's corners.)
+      const tidy = tidyRing(pts);
+      plots.push({ pts: tidy, area: polygonArea(tidy), front: b.s - a.s, corner: k === 0 || k === placed.length - 2, faces: front, frontA: a.p, frontB: b.p, row });
     }
   }
-  return plots.length ? plots : fail('none');
+  if (!plots.length) return fail('none');
+  plots.alley = M;
+  return plots;
 }
 
 // Plots of one block. `fronts[i]` is the kind of street edge i of the
@@ -758,7 +800,7 @@ function plotsOf(N, fronts, use, W, rng) {
     if (use === 'rowhouse' && rectness(N) >= TERRACE_RECT) {
       const t = terraces(N, fronts, widthOf);
       const ok = t && t.every((p) => !selfCrosses(p.pts) && p.area <= MAX_HOUSE);
-      if (ok) return { plots: t.map((p) => ({ ...p, kind: 'rowhouse' })), inner: null, depth: null };
+      if (ok) return { plots: t.map((p) => ({ ...p, kind: 'rowhouse' })), inner: null, depth: null, alley: t.alley };
     }
     let depth;
     let I = null;
@@ -780,7 +822,7 @@ function plotsOf(N, fronts, use, W, rng) {
     // A block whose courtyard would be a light well is built solid.
     if (I && polygonArea(I) < polygonArea(N) * MIN_COURT) I = null;
     if (I) {
-      const plots = band(N, fronts, I, depth, widthOf, {
+      let plots = band(N, fronts, I, depth, widthOf, {
         passages: use !== 'rowhouse',
         gapWidth: () => GAP[0] + (GAP[1] - GAP[0]) * rng.next(),
         minArea: type.minArea,
@@ -789,6 +831,10 @@ function plotsOf(N, fronts, use, W, rng) {
       // Rowhouses round an irregular block that would not cut into houses
       // of a sensible size are built as small blocks of flats instead.
       if (use === 'rowhouse' && (!plots || plots.some((p) => !p.passage && p.area > MAX_HOUSE))) return plotsOf(N, fronts, 'perimeter', W, rng);
+      // Plots that overlap (cuts crossing where the block narrows) are not
+      // kept: the block is cut straight across instead.
+      const total = plots ? plots.reduce((a, p) => a + p.area, 0) + polygonArea(I) : 0;
+      if (plots && total > polygonArea(N) * 1.03) plots = null;
       if (plots) {
         const court = use === 'rowhouse' ? null : courtyard(I, plots.filter((p) => p.passage).map((p) => p.door), rng);
         return { plots: plots.map(({ ok, door, ...p }) => ({ ...p, kind: p.passage ? 'passage' : use, faces: fronts[p.edge] })), inner: I, court, depth };

@@ -9,6 +9,7 @@ import { STREET_TYPES } from '../world/streetTypes.js';
 import { BUILDING_MIN_ZOOM, paths2D, items3D, drawBuildings } from './buildingLayer.js';
 import { DETAIL_MIN_ZOOM, drawSection, localTrees, drawTrees } from './streetDetail.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
+import { ALLEY } from '../world/plots.js';
 
 export const BLOCK_MIN_ZOOM = 0.25;
 export const PLOT_MIN_ZOOM = 1;
@@ -33,7 +34,7 @@ function buildPaths(d, chunk) {
   const P = () => new Path2D();
   const p = {
     built: P(), rowBand: P(), podium: P(), open: P(), garden: P(), green: P(), square: P(), school: P(), edge: P(),
-    plotLines: P(), passages: P(), courtPath: P(), courtGreen: P(), spokes: P(), hubs: P(),
+    plotLines: P(), passages: P(), courtPath: P(), courtGreen: P(), spokes: P(), hubs: P(), alleys: P(),
     dedicated: new Map(), dots: new Map(),
   };
   const dedicatedPath = (cat) => {
@@ -101,6 +102,10 @@ function buildPaths(d, chunk) {
           p.rowBand.addPath(band);
         }
         if (k.inner) add(p.open, k.inner);
+        if (k.alley) {
+          p.alleys.moveTo(k.alley[0][0] - ox, k.alley[0][1] - oy);
+          for (let i = 1; i < k.alley.length; i++) p.alleys.lineTo(k.alley[i][0] - ox, k.alley[i][1] - oy);
+        }
         break;
       }
       case 'podium':
@@ -300,6 +305,17 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
     ctx.fill(p.passages);
     ctx.stroke(p.spokes);
   }
+  // The footpaths behind the gardens down the middle of rowhouse blocks.
+  ctx.lineCap = 'butt';
+  for (const [colour, w] of [[palette.localCasing, ALLEY + px(1)], [palette.pedestrianStreet, ALLEY]]) {
+    ctx.strokeStyle = colour;
+    ctx.lineWidth = w;
+    for (const { d, p } of list) {
+      place(d);
+      ctx.stroke(p.alleys);
+    }
+  }
+  ctx.lineCap = 'round';
   if (detail) {
     for (const { d, ch } of list) {
       place(d);

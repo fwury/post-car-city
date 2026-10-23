@@ -11,7 +11,7 @@
 // hospitals and towers are modern; churches, the cathedral and civic
 // buildings are landmarks of their own.
 
-import { hash, toUnit } from '../core/hash.js';
+import { hash, hashString, toUnit } from '../core/hash.js';
 import { keyInts } from './cores.js';
 import { insetUniform } from '../util/offset.js';
 import { polygonArea } from '../util/geom.js';
@@ -177,7 +177,43 @@ export function assignBuildings(seed, d, blocks) {
     const st = STYLES[style];
     const floor = extra.floor || st.floor;
     const h = storeys * floor + (extra.shop ? GROUND_EXTRA : 0);
-    return { pts, storeys, h, style, wall: shade(st.walls, 4, ...k), roofColour: shade(st.roofs, 5, ...k), roof: st.roof, ridge: ridgeOf(pts, st.roof), ...extra };
+    const out = { pts, storeys, h, style, wall: shade(st.walls, 4, ...k), roofColour: shade(st.roofs, 5, ...k), roof: st.roof, ridge: ridgeOf(pts, st.roof), ...extra };
+    if (extra.ridge === undefined) out.ridge = ridgeOf(pts, st.roof);
+    return out;
+  };
+
+  // What a building (a group of plots) shares: whether it has a shop floor.
+  const shopIn = new Set();
+  const groupSize = new Map();
+  for (const b of blocks) {
+    for (const p of b.plots || []) {
+      if (!p.group) continue;
+      if (p.ground) shopIn.add(p.group);
+      groupSize.set(p.group, (groupSize.get(p.group) || 0) + 1);
+    }
+  }
+  // A ridge along the street, halfway back across a building's depth.
+  const ridgeAlong = (pts, a, b, roof) => {
+    if (roof === 'flat' || !a) return undefined;
+    const t = sub(b, a);
+    const l = len(t) || 1;
+    const u0 = [t[0] / l, t[1] / l];
+    let n = [-u0[1], u0[0]];
+    const c = centroid(pts);
+    if (dot(sub(c, a), n) < 0) n = [-n[0], -n[1]];
+    let [s0, s1, d0, d1] = [Infinity, -Infinity, Infinity, -Infinity];
+    for (const q of pts) {
+      const v = sub(q, a);
+      s0 = Math.min(s0, dot(v, u0));
+      s1 = Math.max(s1, dot(v, u0));
+      d0 = Math.min(d0, dot(v, n));
+      d1 = Math.max(d1, dot(v, n));
+    }
+    const dm = (d0 + d1) / 2;
+    const inset = roof === 'pitched' ? 0 : Math.min((d1 - d0) / 2, (s1 - s0) / 2);
+    if (s1 - s0 - 2 * inset < 1) return null;
+    const at = (s) => [a[0] + u0[0] * s + n[0] * dm, a[1] + u0[1] * s + n[1] * dm];
+    return [at(s0 + inset), at(s1 - inset)];
   };
 
   let bi = 0;
@@ -200,7 +236,9 @@ export function assignBuildings(seed, d, blocks) {
         return;
       }
       if (p.cls === 'open' && !(own && own.floor === 'dedicated')) return;
-      let style = u(7, ...k) < 0.25 ? weighted(hs, u(8, ...k)) : blockStyle;
+      // A building's plots share its style and colours.
+      const gk = p.group ? [hashString(p.group)] : k;
+      let style = u(7, ...gk) < 0.25 ? weighted(hs, u(8, ...gk)) : blockStyle;
 
       // ---- Buildings of their own ----
       if (p.cls === 'dedicated' || (own && own.floor === 'dedicated')) {
@@ -263,24 +301,28 @@ export function assignBuildings(seed, d, blocks) {
       }
 
       const storeys = p.storeys || 3;
-      const shop = !!p.ground;
+      const shop = p.group ? shopIn.has(p.group) : !!p.ground;
+      const ridge = (pts) => ridgeAlong(pts, p.frontA, p.frontB, STYLES[style].roof);
       // ---- Rowhouses: front gardens, a house, a back garden ----
       if (p.kind === 'rowhouse' || ['house', 'rowCorner', 'cornerShop'].includes(p.cls)) {
-        if (!['georgian', 'victorian', 'neoclassical', 'artDeco'].includes(style)) style = u(13, ...k) < 0.6 ? 'victorian' : 'georgian';
-        const garden = p.cls === 'cornerShop' ? 0 : 1.5 + u(14, bi) * 2.5; // one builder, one garden depth along a terrace
-        const depth = (p.cls === 'house' ? 9 : 11) + u(15, ...k) * 2.5;
+        if (!['georgian', 'victorian', 'neoclassical', 'artDeco'].includes(style)) style = u(13, ...gk) < 0.6 ? 'victorian' : 'georgian';
+        // One builder, one terrace: the same garden and depth all along.
+        const garden = p.cls === 'cornerShop' ? 0 : 1.5 + u(14, ...gk) * 2.5;
+        const depth = (p.cls === 'house' ? 9 : 11) + u(15, ...gk) * 2.5;
         const pts = (p.frontA && band(p.pts, p.frontA, p.frontB, garden, garden + depth)) || p.pts;
-        p.bldg = make(pts, storeys, style, k, { shop });
+        p.bldg = make(pts, storeys, style, gk, { shop, ridge: ridge(pts) });
         return;
       }
       // ---- The core: a street wall of podiums, towers rising from the
       // corners, now and then behind a forecourt ----
       if (p.cls === 'podium' || p.kind === 'podium') {
-        style = pick(['modern', 'modern', 'artDeco', 'beauxArts', 'artNouveau'], 16, ...k);
+        style = pick(['modern', 'modern', 'artDeco', 'beauxArts', 'artNouveau'], 16, ...gk);
         let pts = p.pts;
         if (p.frontA && !p.corner) pts = band(p.pts, p.frontA, p.frontB, 0, p.depth || 1e3) || p.pts;
-        if (p.towerSite && storeys > PODIUM_STOREYS + 1) {
-          const bl = make(pts, PODIUM_STOREYS, style, k, { shop });
+        // (The podium stands as high as the rest of its building.)
+        const podium = p.baseStoreys || PODIUM_STOREYS;
+        if (p.towerSite && storeys > podium + 1) {
+          const bl = make(pts, podium, style, gk, { shop });
           // The tower: a square-ish floor plate set back from the street on
           // the podium, so the street keeps its human scale.
           const forecourt = u(17, ...k) < 0.3 ? 4 + u(18, ...k) * 4 : 0;
@@ -289,11 +331,11 @@ export function assignBuildings(seed, d, blocks) {
           const l = Math.min(ax.L, side * 1.25);
           const w = Math.min(ax.W, TOWER_PLATE / l);
           if (w > 12 && l > 12) bl.tower = make(rect(ax.c, ax.u, l, w), storeys, 'tower', [...k, 1]);
-          else Object.assign(bl, make(pts, Math.min(storeys, 10), style, k, { shop }));
+          else Object.assign(bl, make(pts, podium, style, gk, { shop }));
           p.bldg = bl;
           return;
         }
-        p.bldg = make(pts, Math.min(storeys, 10), style, k, { shop });
+        p.bldg = make(pts, Math.min(storeys, 10), style, gk, { shop });
         return;
       }
       // ---- Flats round a courtyard, and flats over shops ----
@@ -301,10 +343,13 @@ export function assignBuildings(seed, d, blocks) {
       if (p.frontA && !p.corner) {
         const main = p.cls === 'main' || p.cls === 'unitShop';
         const back = p.depth ? p.depth - (u(19, ...k) < 0.35 ? 1.5 + u(20, ...k) * 3 : 0) : 1e3;
-        const setback = main ? 0 : u(21, ...k) < 0.2 ? 1 + u(22, ...k) * 1.5 : 0;
+        // (A building of several plots keeps one front; one that stands on
+        // its own plot may step back a little.)
+        const alone = !p.group || groupSize.get(p.group) === 1;
+        const setback = main || !alone ? 0 : u(21, ...k) < 0.2 ? 1 + u(22, ...k) * 1.5 : 0;
         pts = band(p.pts, p.frontA, p.frontB, setback, back) || p.pts;
       }
-      p.bldg = make(pts, storeys, style, k, { shop });
+      p.bldg = make(pts, storeys, style, gk, { shop, ridge: p.corner ? undefined : ridge(pts) });
     });
   }
 }
