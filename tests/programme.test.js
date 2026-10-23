@@ -9,7 +9,7 @@ const world = createWorld(seedFromText('1'));
 const districts = world.districtsInRect(3000, 3000, 5500, 5500).slice(0, 2);
 const plotsOf = (d) => world.blocks(d).blocks.flatMap((b) => b.plots || []);
 const near = (a, b, r) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= r;
-const has = (p, use) => p.dedicated === use || p.ground === use || p.upper === use;
+const has = (p, use) => p.dedicated === use || p.ground === use || p.upper === use || p.also === use;
 const homes = (plots) => plots.filter((p) => p.dwellings > 0);
 
 test('every neighbourhood has its square, park, schools and civic buildings', () => {

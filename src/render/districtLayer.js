@@ -19,6 +19,7 @@ const GREENWAY_DETAIL_ZOOM = 0.15; // streams from here; trails, paths and woods
 const STOP_MIN_ZOOM = 0.25; // tram stops as markers from here (to scale from DETAIL_MIN_ZOOM)
 import { palette } from './styles.js';
 import { TRAIL_WIDTH } from '../world/greenway.js';
+import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
 import { DETAIL_MIN_ZOOM, drawSection, streetExtras, drawRails, drawTrees, drawJunctions, drawStops } from './streetDetail.js';
 
@@ -253,6 +254,13 @@ export function drawDistricts(ctx, view, world, layers) {
       place(d);
       ctx.fill(p.parks);
     }
+    // What is in the district parks, once a district's blocks are in.
+    const lays = [];
+    for (const { d } of items) {
+      const b = view.blocks ? view.blocks(d) : null;
+      for (const dp of (b && b.districtParks) || []) lays.push({ d, p: layoutPaths(dp.layout, d.origin[0], d.origin[1]) });
+    }
+    drawLayouts(ctx, lays, place, zoom, px);
   }
 
   // Boulevards and main streets carry on under the greenways: drawn again

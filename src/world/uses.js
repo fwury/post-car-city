@@ -154,6 +154,7 @@ export const USES = {
   bikeParking: { label: 'Bicycle parking', cat: 'transport', floor: 'ground' },
   districtPlaza: { label: 'District plaza', cat: 'civic', floor: 'open' },
   skatingRink: { label: 'Skating rink', cat: 'recreation', floor: 'dedicated' },
+  stadium: { label: 'Stadium and concert venue', cat: 'recreation', floor: 'dedicated' },
 };
 
 // The daily list: every home within EVERYDAY_REACH of one of each.

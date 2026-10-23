@@ -33,7 +33,9 @@ const WORSHIP_PER_HOOD = 3;
 const ELEMENTARY_PER_HOOD = 2;
 const SCHOOL_BLOCK = [0.3e4, 1.3e4]; // m², net: a block an elementary school takes
 const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
-const CATHEDRAL_BLOCK = [0.45e4, 1.8e4]; // m², a cathedral's block, beside a square
+const CATHEDRAL_BLOCK = [0.45e4, 1.8e4];
+const STADIUM_SHARE = 0.6; // of districts, those with a stadium
+const STADIUM_BLOCK = [1.0e4, 4.5e4]; // m², a stadium's block // m², a cathedral's block, beside a square
 const REC_BLOCK = [0.5e4, 1.6e4];
 const PARKETTE_GAP = 210; // metres between parkettes in rowhouse areas (about four within 400 m)
 const SUBDISTRICT_HOODS = 3; // neighbourhoods to a subdistrict centre
@@ -229,6 +231,18 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     }
   }
 
+  // ---- A stadium ----
+  // In some districts (more than half), on a block of its own near the core.
+  if (toUnit(hash(seed, 'stadium', ...keyInts(d.coreInfo))) < STADIUM_SHARE) {
+    const b = blocks
+      .filter((o) => (o.use === 'perimeter' || o.use === 'podium' || o.use === 'rowhouse') && o.area >= STADIUM_BLOCK[0] && o.area <= STADIUM_BLOCK[1] && o.plots && !o.plots.some((p) => p.dedicated))
+      .map((o) => ({ o, r: len(sub(centroid(o.pts), S)) }))
+      .filter((x) => x.r > 250 && x.r < 1400)
+      // The biggest block, nearer the core the better.
+      .sort((x, y) => y.o.area - 12 * y.r - (x.o.area - 12 * x.r))[0];
+    if (b) dedicateBlock(b.o, 'stadium');
+  }
+
   // ---- Subdistrict centres ----
   const rest = hoods.filter((h) => !h.core);
   const nSub = Math.max(rest.length >= 2 ? 1 : 0, Math.round(rest.length / SUBDISTRICT_HOODS));
@@ -317,9 +331,12 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   const floorOf = (use) => (USES[use].floor === 'upper' ? 'upper' : USES[use].floor === 'dedicated' ? 'dedicated' : 'ground');
 
   // ---- Each neighbourhood's own ----
+  // (A neighbourhood with a park has its community centre built into it.)
+  const withPark = new Set(blocks.filter((b) => b.use === 'park').map((b) => b.hood));
   for (const h of hoods) {
     const q = sqCentre.get(h.id) || h.centre;
     for (const [use, count] of NEIGHBOURHOOD_LIST) {
+      if (use === 'communityCentre' && withPark.has(h.id)) continue;
       for (let k = 0; k < count; k++) {
         const slot = floorOf(use);
         if (slot === 'dedicated') {

@@ -24,7 +24,7 @@
 // secondary school, side by side.
 
 import { rngFor } from '../core/rng.js';
-import { hash, toUnit } from '../core/hash.js';
+import { hash, hashString, toUnit } from '../core/hash.js';
 import { keyInts } from './cores.js';
 import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
@@ -34,6 +34,8 @@ import { plotsOfBlock, rectness, TERRACE_RECT } from './plots.js';
 import { assignProgramme } from './programme.js';
 import { assignBuildings } from './buildings.js';
 import { tramStops } from './tram.js';
+import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
+import { createNoise } from '../core/noise.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
 import { distToLine } from './boulevards.js';
@@ -246,6 +248,7 @@ function joinRuns(runs) {
 }
 
 export function createBlocks(seed, { greenwayWidth, greenway }) {
+  const parkWoods = createNoise(seed, 'park-woods');
   const cache = new LruCache(64);
 
   function of(d) {
@@ -1286,10 +1289,36 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
     // And what stands on it.
     assignBuildings(seed, d, blocks);
     const tram = tramStops(d, blocks);
+    // What is in the parks, and the schools' grounds.
+    const parkRng = rngFor(seed, 'park-layout', ...keyInts(d.coreInfo));
+    // Schools first: a secondary school whose grounds have no room for its
+    // track has it in the park next door.
+    const trackIn = new Set();
+    for (const b of blocks) {
+      if (!b.plots || !b.plots.length || (b.use !== 'school' && b.use !== 'elementarySchool')) continue;
+      const q = b.plots[0];
+      b.layout = layoutSchool(b.pts, q.bldg && q.bldg.pts, parkRng, b.use === 'school');
+      if (b.use === 'school' && !b.layout.features.some((f) => f.kind === 'track')) trackIn.add(b.hood);
+    }
+    for (const b of blocks) {
+      if (!b.plots || !b.plots.length) continue;
+      if (b.use === 'park') {
+        b.layout = layoutNeighbourhoodPark(b.pts, parkRng, { track: trackIn.has(b.hood) });
+        if (b.layout.centre) {
+          b.plots[0].bldg = communityCentre(b.layout.centre);
+          b.plots[0].also = 'communityCentre';
+        }
+      }
+      for (const q of b.plots) if (q.dedicated === 'parkette' && q.pts.length > 2) q.layout = layoutParkette(q.pts, parkRng);
+      // A stadium's pitch.
+      if (b.use === 'stadium' && b.plots[0].bldg && b.plots[0].bldg.pitch) b.layout = { features: [{ kind: 'pitch', pts: b.plots[0].bldg.pitch }], paths: [], trees: [] };
+    }
+    // District parks, laid out the same way by every district they touch.
+    const districtParks = d.parks.map((pk) => ({ key: pk.key, layout: layoutDistrictPark(pk.shape, rngFor(seed, 'district-park', hashString(pk.key)), (q) => parkWoods.fbm(q[0] / 300, q[1] / 300, 2) > 0.08) }));
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
-    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks };
+    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks };
   }
 
   return { of };

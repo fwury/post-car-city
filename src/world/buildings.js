@@ -80,7 +80,7 @@ function band(P, a, b, s0, s1) {
 }
 
 // A polygon's long axis, its centre, and its extent along and across it.
-function axesOf(P) {
+export function axesOf(P) {
   const u = longAxis(P);
   const v = [-u[1], u[0]];
   const c = centroid(P);
@@ -96,7 +96,7 @@ function axesOf(P) {
 }
 
 // A rectangle centred on c, length l along u, width w.
-function rect(c, u, l, w) {
+export function rect(c, u, l, w) {
   const v = [-u[1], u[0]];
   const p = (a, b) => [c[0] + u[0] * a + v[0] * b, c[1] + u[1] * a + v[1] * b];
   return [p(-l / 2, -w / 2), p(l / 2, -w / 2), p(l / 2, w / 2), p(-l / 2, w / 2)];
@@ -113,6 +113,35 @@ function cross(c, u, l, w, tl) {
     p(-l / 2, -w / 2), p(t0, -w / 2), p(t0, -tl / 2), p(t1, -tl / 2), p(t1, -w / 2), p(l / 2, -w / 2),
     p(l / 2, w / 2), p(t1, w / 2), p(t1, tl / 2), p(t0, tl / 2), p(t0, w / 2), p(-l / 2, w / 2),
   ];
+}
+
+// A stadium's outline: an oval, a rectangle with rounded corners, or a
+// horseshoe (a rounded rectangle open at one end).
+function stadiumShape(c, u, L, W, form) {
+  const v = [-u[1], u[0]];
+  const at = (x, y) => [c[0] + u[0] * x + v[0] * y, c[1] + u[1] * x + v[1] * y];
+  const out = [];
+  if (form === 'oval') {
+    for (let k = 0; k < 48; k++) {
+      const a = (k / 48) * Math.PI * 2;
+      out.push(at((Math.cos(a) * L) / 2, (Math.sin(a) * W) / 2));
+    }
+    return out;
+  }
+  const r = Math.min(L, W) * (form === 'horseshoe' ? 0.5 : 0.22);
+  const corners = [[L / 2 - r, W / 2 - r, 0], [-L / 2 + r, W / 2 - r, 1], [-L / 2 + r, -W / 2 + r, 2], [L / 2 - r, -W / 2 + r, 3]];
+  for (const [x, y, q] of corners) {
+    if (form === 'horseshoe' && (q === 0 || q === 3)) {
+      // The open end: square corners.
+      out.push(at(q === 0 ? L / 2 : L / 2, q === 0 ? W / 2 : -W / 2));
+      continue;
+    }
+    for (let k = 0; k <= 8; k++) {
+      const a = (q * Math.PI) / 2 + (k / 8) * (Math.PI / 2);
+      out.push(at(x + Math.cos(a) * r, y + Math.sin(a) * r));
+    }
+  }
+  return out;
 }
 
 // The ridge of a pitched or hipped roof: along the footprint's long axis.
@@ -180,6 +209,23 @@ export function assignBuildings(seed, d, blocks) {
         const whole = p.pts === b.pts;
         let pts = p.pts;
         const extra = { landmark: p.dedicated };
+        if (p.dedicated === 'stadium') {
+          // Stands round a pitch: an oval, a rounded rectangle or a horseshoe,
+          // its stands as deep and as tall as the stadium is big.
+          const ax = axesOf(insetUniform(p.pts, 8) || p.pts);
+          const form = pick(['oval', 'rounded', 'horseshoe'], 24, bi);
+          const L = Math.min(ax.L, 230);
+          const W = Math.min(ax.W, 170);
+          const depth = 20 + u(25, bi) * 16;
+          if (L > 100 && W > 72) {
+            const outer = stadiumShape(ax.c, ax.u, L, W, form);
+            const inner = stadiumShape(ax.c, ax.u, L - 2 * depth, W - 2 * depth, form === 'horseshoe' ? 'rounded' : form);
+            p.bldg = make(outer, 1, 'modern', k, { hole: inner, landmark: 'stadium', floor: 22 + u(26, bi) * 16 });
+            p.bldg.ridge = null;
+            p.bldg.pitch = rect(ax.c, ax.u, Math.min(105, L - 2 * depth - 8), Math.min(68, W - 2 * depth - 8));
+            return;
+          }
+        }
         if (p.dedicated === 'cathedral') {
           // A cross plan in its close, the west front facing the square.
           const ax = axesOf(insetUniform(p.pts, 10) || p.pts);

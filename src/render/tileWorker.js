@@ -16,15 +16,16 @@ self.onmessage = (e) => {
       const d = world.districtsInRect(x - 1, y - 1, x + 1, y + 1).find((q) => q.key === e.data.key);
       const b = world.blocks(d);
       const result = {
-        blocks: b.blocks.map(({ pts, centreline, use, hood, front, inner, court, plots }) => ({
-          pts, centreline, use, hood, front, inner, court,
-          plots: plots && plots.map(({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c, bldg }) => ({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c, bldg })),
+        blocks: b.blocks.map(({ pts, centreline, use, hood, front, inner, court, layout, plots }) => ({
+          pts, centreline, use, hood, front, inner, court, layout,
+          plots: plots && plots.map(({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c, bldg, layout: pl, also }) => ({ pts: q, kind, cls, ground, upper, dedicated, storeys, dwellings, corner, c, bldg, layout: pl, also })),
         })),
         streets: b.streets,
         hoodLines: b.hoodLines,
         tramStops: b.tramStops,
         junctions: b.junctions,
         greenLinks: b.greenLinks,
+        districtParks: b.districtParks,
         planned: b.planned,
         housed: b.programme.housed,
       };

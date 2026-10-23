@@ -8,6 +8,7 @@ import { USES } from '../world/uses.js';
 import { STREET_TYPES } from '../world/streetTypes.js';
 import { BUILDING_MIN_ZOOM, paths2D, items3D, drawBuildings } from './buildingLayer.js';
 import { DETAIL_MIN_ZOOM, drawSection, localTrees, drawTrees } from './streetDetail.js';
+import { layoutPaths, drawLayouts } from './parkLayer.js';
 
 export const BLOCK_MIN_ZOOM = 0.25;
 export const PLOT_MIN_ZOOM = 1;
@@ -274,6 +275,21 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
       ctx.fillStyle = cat === 'park' ? palette.green : palette.dedicated[cat] || palette.building;
       ctx.fill(path);
     }
+  }
+  // What is in parks, parkettes and school grounds.
+  {
+    const lays = [];
+    for (const { d, ch } of list) {
+      if (!ch.layouts) {
+        ch.layouts = [];
+        for (const k of ch.blocks) {
+          if (k.layout) ch.layouts.push(k.layout);
+          for (const q of k.plots || []) if (q.layout) ch.layouts.push(q.layout);
+        }
+      }
+      for (const l of ch.layouts) lays.push({ d, p: layoutPaths(l, d.origin[0], d.origin[1]) });
+    }
+    drawLayouts(ctx, lays, place, zoom, px);
   }
   // Gaps between buildings and the paths across courtyards.
   ctx.fillStyle = palette.pedestrianStreet;
