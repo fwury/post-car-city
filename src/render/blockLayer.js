@@ -15,7 +15,7 @@ export const BLOCK_MIN_ZOOM = 0.25;
 export const PLOT_MIN_ZOOM = 1;
 export const USE_MIN_ZOOM = 1.6; // shop-floor dots from here in
 const PERIMETER_DEPTH = 14; // metres of building along a perimeter block's streets
-const ROWHOUSE_DEPTH = 10;
+const ROWHOUSE_DEPTH = 19; // front garden and house
 const CAMPUS_DEPTH = 18;
 // A local street's pavement each side: its clearway and furnishing zones.
 const PAVEMENT = STREET_TYPES.localStreet.side.reduce((a, [, w]) => a + w, 0);

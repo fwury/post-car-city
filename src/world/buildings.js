@@ -317,8 +317,10 @@ export function assignBuildings(seed, d, blocks) {
       if (p.kind === 'rowhouse' || ['house', 'rowCorner', 'cornerShop'].includes(p.cls)) {
         if (!['georgian', 'victorian', 'neoclassical', 'artDeco'].includes(style)) style = u(13, ...gk) < 0.6 ? 'victorian' : 'georgian';
         // One builder, one terrace: the same garden and depth all along.
-        const garden = p.cls === 'cornerShop' ? 0 : 1.5 + u(14, ...gk) * 2.5;
-        const depth = (p.cls === 'house' ? 9 : 11) + u(15, ...gk) * 2.5;
+        // Toronto proportions: a front garden of 3 to 5 m, a house 14 to 17 m
+        // deep (much longer than it is wide), a short backyard to the lane.
+        const garden = p.cls === 'cornerShop' ? 0 : 3 + u(14, ...gk) * 2;
+        const depth = 14 + u(15, ...gk) * 3;
         const pts = (p.frontA && band(p.pts, p.frontA, p.frontB, garden, garden + depth)) || p.pts;
         p.bldg = make(pts, storeys, style, gk, { shop, ridge: ridge(pts) });
         return;

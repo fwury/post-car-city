@@ -49,7 +49,7 @@ const PARKSIDE = LOCAL; // the street along a greenway or park edge
 // never split into a piece narrower than `min` (or shorter than `minLong`).
 export const BLOCK_SIZES = {
   perimeter: { long: 175, short: 140, min: 80 },
-  rowhouse: { long: 210, short: 96, min: 62, minLong: 120 },
+  rowhouse: { long: 200, short: 86, min: 56, minLong: 110 },
   podium: { long: 165, short: 135, min: 80 },
   campus: { long: 270, short: 220, min: 110 },
 };
@@ -73,6 +73,8 @@ const GREEN_LINK_GAP = 140; // metres between local streets' paths into a greenw
 const LINEAR_PARK_RUN = [220, 1000]; // metres: a secondary greenway's length, main street to main street
 const LINEAR_PARK_SHARE = 0.5; // of such stretches of boundary, those made linear parks
 const LINEAR_PARK_WIDTH = [28, 40]; // metres
+const ROW_AWKWARD_AREA = 0.9e4; // m²: a rowhouse block bigger than this that is far from rectangular is split again ...
+const TERRACE_RECT_GOOD = 0.78; // ... (rectangular enough, by this measure); a smaller one is a green
 const OVERSIZE = 1.5; // a block this many times its usual area must split, one way or another
 const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
 const SQUARE_FORMS = { corner: 0.3, against: 0.35 }; // shares of squares by form; the rest stand on their own
@@ -1198,7 +1200,10 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
         }
         const sizeZone = zone;
         const size = BLOCK_SIZES[sizeZone];
-        if (ax.L <= size.long && ax.W <= size.short) {
+        // (A rowhouse block must also be near enough rectangular for its
+        // terraces; one that is not is split again, if it is big enough.)
+        const awkwardRow = zone === 'rowhouse' && ax.area > ROW_AWKWARD_AREA && rectness(node.pts) < TERRACE_RECT_GOOD;
+        if (ax.L <= size.long && ax.W <= size.short && !awkwardRow) {
           leaves.push({ ...node, ax, zone });
           continue;
         }
@@ -1402,13 +1407,19 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
       const front = lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard');
       // A small block of awkward shape (a triangle, say) is left as a green:
       // no plots cut from it would make sensible buildings.
-      const awkward = net && area < AWKWARD_AREA && rectness(net) < AWKWARD_RECT;
+      const awkward = net && ((area < AWKWARD_AREA && rectness(net) < AWKWARD_RECT) || (lf.zone === 'rowhouse' && !lf.use && area < ROW_AWKWARD_AREA && rectness(net) < TERRACE_RECT_GOOD - 0.1));
       const use = lf.use ?? (area < REMNANT || awkward ? 'green' : lf.zone === 'rowhouse' && front ? 'perimeter' : lf.zone);
       const b = { pts: net, centreline: P, dist, use, area, stuck: !!lf.stuck, raw: polygonArea(P), hood: lf.hood ?? (hoodAt(lf.ax.c) || {}).id, front: lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard') };
       if (lf.form) b.form = lf.form;
       if (!net) b.use = 'green';
       else {
-        const pl = plotsOfBlock(net, fronts, b.use, axes(net).W, rng);
+        let pl = plotsOfBlock(net, fronts, b.use, axes(net).W, rng);
+        // A rowhouse block that would take neither terraces nor a ring of
+        // houses (cut into long strips instead) is left as a green.
+        if (b.use === 'rowhouse' && !pl.alley && !pl.inner) {
+          b.use = 'green';
+          pl = plotsOfBlock(net, fronts, 'green', 0, rng);
+        }
         b.plots = pl.plots;
         b.inner = pl.inner;
         b.court = pl.court;

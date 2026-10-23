@@ -631,6 +631,13 @@ function terraces(N, fronts, widthOf) {
     const sd = sub(spineHalf[spineHalf.length - 1], spineHalf[0]);
     const side = Math.sign(cross(sd, sub(probe, spineHalf[0]))) || 1;
     const back = shiftLine(spineHalf, (side * ALLEY) / 2);
+    // Its ends run on (or are cut back) to meet the block's edge exactly.
+    const cumN = ringParams(N);
+    for (const [e, f] of [[0, 1], [back.length - 1, back.length - 2]]) {
+      const dir = unit(sub(back[e], back[f]));
+      const hit = rayToRing(back[f], dir, 400, N, cumN);
+      if (hit) back[e] = hit.q;
+    }
     const F = [back[0]];
     const ff = [];
     for (let k = (from.i + 1) % n, guard = 0; guard <= n; k = (k + 1) % n, guard++) {
@@ -726,20 +733,44 @@ function terraces(N, fronts, widthOf) {
       placed.push({ s: c, p, q: hit.q, qs: hit.s });
     }
     placed.push({ s: cumF[F.length - 1], p: F[F.length - 1], q: B[0], qs: 0 });
-    for (let k = 0; k + 1 < placed.length; k++) {
-      const a = placed[k];
-      const b = placed[k + 1];
-      const pts = [a.p, ...lineBetween(F, cumF, a.s, b.s), b.p];
-      if (k + 1 < placed.length - 1) pts.push(b.q);
-      // Back along the spine, from b's cut to a's.
-      pts.push(...lineBetween(B, cumB, b.qs, a.qs));
-      if (k > 0) pts.push(a.q);
-      const area = polygonArea(pts);
-      if (area < 20) continue;
-      // (Tidied: the alley's ends leave slivers at the block's corners.)
-      const tidy = tidyRing(pts);
-      plots.push({ pts: tidy, area: polygonArea(tidy), front: b.s - a.s, corner: k === 0 || k === placed.length - 2, faces: front, frontA: a.p, frontB: b.p, row });
+    // The long frontage's ends: a corner house faces the long street, its
+    // front measured from the corner, not round the short side.
+    const cornerA = F[run.a];
+    const cornerB = F[run.b];
+    const build = (list) => {
+      const out = [];
+      for (let k = 0; k + 1 < list.length; k++) {
+        const a = list[k];
+        const b = list[k + 1];
+        const pts = [a.p, ...lineBetween(F, cumF, a.s, b.s), b.p];
+        if (k + 1 < list.length - 1) pts.push(b.q);
+        // Back along the spine, from b's cut to a's.
+        pts.push(...lineBetween(B, cumB, b.qs, a.qs));
+        if (k > 0) pts.push(a.q);
+        // (Tidied: the alley's ends leave slivers at the block's corners.)
+        const tidy = tidyRing(pts);
+        const first = k === 0;
+        const last = k + 1 === list.length - 1;
+        out.push({
+          pts: tidy, area: polygonArea(tidy), front: b.s - a.s, corner: first || last, faces: front, row,
+          frontA: first ? cornerA : a.p, frontB: last ? cornerB : b.p,
+          bad: tidy.length < 3 || selfCrosses(tidy) || (polygonArea(tidy) > MAX_HOUSE && list.length > 3),
+        });
+      }
+      return out;
+    };
+    // A house that comes out crossing itself (or far too big, at an awkward
+    // end) joins the house next to it: the cut between them goes.
+    let list = placed;
+    let built = build(list);
+    for (let round = 0; round < 6 && built.some((p) => p.bad) && list.length > 3; round++) {
+      const k = built.findIndex((p) => p.bad);
+      const drop = k === built.length - 1 ? k : k + 1;
+      if (drop <= 0 || drop >= list.length - 1) break;
+      list = list.filter((_, i) => i !== drop);
+      built = build(list);
     }
+    for (const p of built) if (p.area >= 20) plots.push(p);
   }
   if (!plots.length) return fail('none');
   plots.alley = M;
@@ -781,8 +812,8 @@ function plotsOf(N, fronts, use, W, rng) {
     // there far bigger than its neighbours means the spine went wrong.
     if (use === 'rowhouse' && rectness(N) >= TERRACE_RECT) {
       const t = terraces(N, fronts, widthOf);
-      const ok = t && t.every((p) => !selfCrosses(p.pts) && p.area <= MAX_HOUSE);
-      if (ok) return { plots: t.map((p) => ({ ...p, kind: 'rowhouse' })), inner: null, depth: null, alley: t.alley };
+      const ok = t && t.every((p) => !p.bad);
+      if (ok) return { plots: t.map(({ bad, ...p }) => ({ ...p, kind: 'rowhouse' })), inner: null, depth: null, alley: t.alley };
     }
     let depth;
     let I = null;

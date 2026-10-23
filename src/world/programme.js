@@ -52,9 +52,9 @@ const HEIGHTS = {
   corner: { base: 5, storeys: [3, 8] },
   podium: { base: 7, storeys: [4, 10] }, // the core's street wall
   podiumTower: { base: 16, storeys: [8, 30], tower: true }, // a corner podium with a tower over it
-  house: { base: 3, storeys: [2, 5], depth: 10, house: true },
-  rowCorner: { base: 3, storeys: [2, 5], depth: 12, house: true },
-  cornerShop: { base: 3, storeys: [2, 5], depth: 12, house: true },
+  house: { base: 3, storeys: [2, 5], depth: 15, house: true },
+  rowCorner: { base: 3, storeys: [2, 5], depth: 15, house: true },
+  cornerShop: { base: 3, storeys: [2, 5], depth: 15, house: true },
 };
 export const PODIUM_STOREYS = 5; // a tower's podium
 const TOWER_SHARE = 0.3; // of the core's corner plots, those with a tower
