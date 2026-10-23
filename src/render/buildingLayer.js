@@ -47,6 +47,7 @@ function buildingsOf(chunk) {
       if (!b || !b.pts || b.pts.length < 3) continue;
       out.push({ b, base: 0, top: b.h });
       if (b.tower) out.push({ b: b.tower, base: b.h, top: b.tower.h, onTop: true });
+      if (b.annex) out.push({ b: b.annex, base: 0, top: b.annex.h });
     }
   }
   return out;
