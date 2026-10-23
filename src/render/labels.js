@@ -106,7 +106,7 @@ export function drawLabels(ctx, camera, world, blocksFor) {
   if (z >= 0.15) {
     const font = `600 ${z >= 1 ? 12 : 11}px ${FONT}`;
     for (const d of districts) {
-      for (const l of d.stage3.lines) onLine(world.names.street('main', l.crossing || l.key).short, l.points, font, palette.ink);
+      for (const l of d.stage3.lines) onLine((world.names.mainStreet(d, l) || world.names.street('main', l.crossing || l.key)).short, l.points, font, palette.ink);
       for (const l of d.network.lines) {
         if (l.kind === 'roundabout') continue;
         onLine(world.names.street('boulevard', l.key.split(':').pop()).short, l.points, font, palette.ink);
