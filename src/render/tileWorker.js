@@ -26,6 +26,7 @@ self.onmessage = (e) => {
         junctions: b.junctions,
         greenLinks: b.greenLinks,
         districtParks: b.districtParks,
+        linearParks: b.linearParks,
         planned: b.planned,
         housed: b.programme.housed,
       };

@@ -36,7 +36,7 @@ import { assignBuildings } from './buildings.js';
 import { tramStops } from './tram.js';
 import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
 import { createNoise } from '../core/noise.js';
-import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin } from '../util/geom.js';
+import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
 import { distToLine } from './boulevards.js';
 
@@ -70,6 +70,9 @@ const SPLAY = 9; // metres back from the point, each way
 const AWKWARD_AREA = 0.45e4; // m²: a block this small ...
 const AWKWARD_RECT = 0.62; // ... and this far from rectangular is a green
 const GREEN_LINK_GAP = 140; // metres between local streets' paths into a greenway
+const LINEAR_PARK_RUN = [220, 1000]; // metres: a secondary greenway's length, main street to main street
+const LINEAR_PARK_SHARE = 0.5; // of such stretches of boundary, those made linear parks
+const LINEAR_PARK_WIDTH = [28, 40]; // metres
 const OVERSIZE = 1.5; // a block this many times its usual area must split, one way or another
 const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
 const SQUARE_FORMS = { corner: 0.3, against: 0.35 }; // shares of squares by form; the rest stand on their own
@@ -543,6 +546,123 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
       return { planned, hoodLines: joinRuns(hoodLines) };
     }
 
+    function secondaryGreenways(mains) {
+      const segHitT = (a, b, c, e) => {
+        const r = sub(b, a);
+        const q = sub(e, c);
+        const den = cross(r, q);
+        if (Math.abs(den) < 1e-9) return null;
+        const t = cross(sub(c, a), q) / den;
+        const u2 = cross(sub(c, a), r) / den;
+        return t >= 0 && t <= 1 && u2 >= 0 && u2 <= 1 ? t : null;
+      };
+      const atEdge = (q) => d.rings.some((r) => r.some((v, i) => distToLine(q[0], q[1], [v, r[(i + 1) % r.length]]) < greenwayWidth(q[0], q[1]) / 2 + 40));
+      const slice = (P, cum, s0, s1) => {
+        const pts = [];
+        for (let i = 0; i < P.length; i++) if (cum[i] >= s0 && cum[i] <= s1) pts.push(P[i]);
+        return pts;
+      };
+      // Each stretch of boundary: where main streets cross it, and whether
+      // its ends meet the greenway.
+      const runs = []; // whole stretches, anchor to anchor
+      const arms = new Map(); // point where boundaries meet -> stretches from it to an anchor
+      const key = (q) => `${Math.round(q[0])},${Math.round(q[1])}`;
+      for (const c of st.chains) {
+        if (c.a < 0 || c.b < 0 || hoods[c.a].core || hoods[c.b].core) continue;
+        // The traced boundary has the raster's stairs: simplified, then
+        // smoothed into an easy curve.
+        let P = simplify(c.points, 12);
+        if (P.length < 2) continue;
+        for (let k = 0; k < 3; k++) P = chaikin(P, false);
+        P = resample(P, 8);
+        const cum = [0];
+        for (let i = 1; i < P.length; i++) cum.push(cum[i - 1] + len(sub(P[i], P[i - 1])));
+        const total = cum[cum.length - 1];
+        const cuts = [];
+        for (const m of mains) {
+          for (let i = 0; i < P.length - 1; i++) {
+            for (let j = 0; j < m.pts.length - 1; j++) {
+              const t = segHitT(P[i], P[i + 1], m.pts[j], m.pts[j + 1]);
+              if (t !== null) cuts.push(cum[i] + (cum[i + 1] - cum[i]) * t);
+            }
+          }
+        }
+        const edge0 = atEdge(P[0]);
+        const edge1 = atEdge(P[P.length - 1]);
+        if (edge0) cuts.push(0);
+        if (edge1) cuts.push(total);
+        cuts.sort((x, y) => x - y);
+        const id = `${c.a}:${c.b}`;
+        for (let k = 0; k + 1 < cuts.length; k++) runs.push({ pts: slice(P, cum, cuts[k] - 1, cuts[k + 1] + 1), id: `${id}:${k}`, hoods: [c.a, c.b] });
+        // From a meeting point inwards to the first anchor.
+        if (cuts.length) {
+          if (!edge0) {
+            const arm = slice(P, cum, 0, cuts[0] + 1);
+            if (!arms.has(key(P[0]))) arms.set(key(P[0]), []);
+            arms.get(key(P[0])).push({ pts: arm, id: `${id}:s`, hoods: [c.a, c.b] });
+          }
+          if (!edge1) {
+            const arm = slice(P, cum, cuts[cuts.length - 1] - 1, total).reverse();
+            if (!arms.has(key(P[P.length - 1]))) arms.set(key(P[P.length - 1]), []);
+            arms.get(key(P[P.length - 1])).push({ pts: arm, id: `${id}:e`, hoods: [c.a, c.b] });
+          }
+        }
+      }
+      // Through a meeting point: two arms that leave it in about opposite
+      // directions make one stretch.
+      for (const [k, list] of [...arms].sort((x, y) => (x[0] < y[0] ? -1 : 1))) {
+        let best = null;
+        for (let i = 0; i < list.length; i++) {
+          for (let j = i + 1; j < list.length; j++) {
+            const A = list[i].pts;
+            const B = list[j].pts;
+            if (A.length < 3 || B.length < 3) continue;
+            const da = unit(sub(A[Math.min(4, A.length - 1)], A[0]));
+            const db = unit(sub(B[Math.min(4, B.length - 1)], B[0]));
+            const straight = -dot(da, db);
+            if (straight > 0.5 && (!best || straight > best.straight)) best = { straight, pts: A.slice().reverse().concat(B.slice(1)), id: `${k}`, hoods: list[i].hoods };
+          }
+        }
+        if (best) runs.push(best);
+      }
+      const out = [];
+      const used = [];
+      for (const r of runs) {
+        let L = 0;
+        for (let i = 1; i < r.pts.length; i++) L += len(sub(r.pts[i], r.pts[i - 1]));
+        if (L < LINEAR_PARK_RUN[0] || L > LINEAR_PARK_RUN[1] * 1.6) continue;
+        if (toUnit(hash(seed, 'linear-park', ...keyInts(d.coreInfo), hashString(r.id))) > LINEAR_PARK_SHARE) continue;
+        // Run 12 m on into whatever it ends at.
+        const P = r.pts.slice();
+        for (const end of [0, 1]) {
+          const a = end ? P[P.length - 1] : P[0];
+          const b = end ? P[P.length - 2] : P[1];
+          const dir = unit(sub(a, b));
+          const q = [a[0] + dir[0] * 12, a[1] + dir[1] * 12];
+          if (end) P.push(q);
+          else P.unshift(q);
+        }
+        const W = LINEAR_PARK_WIDTH[0] + toUnit(hash(seed, 'linear-park-w', hashString(r.id))) * (LINEAR_PARK_WIDTH[1] - LINEAR_PARK_WIDTH[0]);
+        const left = [];
+        const right = [];
+        for (let i = 0; i < P.length; i++) {
+          const a = P[Math.max(0, i - 1)];
+          const b = P[Math.min(P.length - 1, i + 1)];
+          const t = unit(sub(b, a));
+          const n = [-t[1], t[0]];
+          left.push([P[i][0] + (n[0] * W) / 2, P[i][1] + (n[1] * W) / 2]);
+          right.push([P[i][0] - (n[0] * W) / 2, P[i][1] - (n[1] * W) / 2]);
+        }
+        const poly = orientPositive(left.concat(right.reverse()));
+        if (selfCrossing(poly)) continue;
+        // Not on top of another.
+        if (used.some((o) => P.some((q) => pointInPolygon(q[0], q[1], o)))) continue;
+        used.push(poly);
+        out.push({ pts: poly, centre: P, width: W, hoods: r.hoods });
+      }
+      return out;
+    }
+
     // ---- Superblocks ----
     let nextStreet = 1;
     const street = (kind, w, extra = {}) => ({ id: nextStreet++, kind, w, ...extra });
@@ -565,12 +685,19 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
     // cleanly where the land narrows to a neck.
     for (const loop of parksideLines(d)) lines.push({ pts: loop, closed: true, tag: street('greenway', PARKSIDE) });
     for (const pk of d.parks) lines.push({ pts: pk.shape, closed: true, tag: street('park', PARKSIDE * 2, { park: pk.key }) });
+    // Secondary greenways: linear parks along some stretches of the
+    // boundaries between neighbourhoods, each from one main street to the
+    // next, so they part the neighbourhoods cleanly. Streets run along their
+    // sides; local streets meet them rather than crossing.
+    const linearParks = secondaryGreenways(mains);
+    for (const lp of linearParks) lines.push({ pts: lp.pts, closed: true, tag: street('park', PARKSIDE * 2, { linear: true }) });
     const { faces } = planarFaces(lines);
     const onLand = (p) => {
       let inside = false;
       for (const r of d.rings) if (pointInPolygon(p[0], p[1], r)) inside = !inside;
       if (!inside) return false;
       if (d.parks.some((pk) => pointInPolygon(p[0], p[1], pk.shape))) return false;
+      if (linearParks.some((lp) => pointInPolygon(p[0], p[1], lp.pts))) return false;
       if (roundabouts.some((r) => pointInPolygon(p[0], p[1], r))) return false;
       return true;
     };
@@ -1283,6 +1410,40 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
     // Paths into the greenways, from local streets that meet them and from
     // the pavements of streets that pass under them.
     const greenLinks = greenway ? linksToGreenways(leaves) : [];
+    // A linear park's trail runs down its middle; where a local street meets
+    // the park, a path joins it to the trail (paired across the park, a
+    // crossing for people walking and cycling).
+    for (const lp of linearParks) {
+      lp.links = [];
+      const near = (q) => {
+        let best = null;
+        for (let i = 0; i < lp.centre.length - 1; i++) {
+          const a = lp.centre[i];
+          const ab = sub(lp.centre[i + 1], a);
+          const l2 = dot(ab, ab);
+          const t = l2 ? Math.max(0, Math.min(1, dot(sub(q, a), ab) / l2)) : 0;
+          const f = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+          const r = len(sub(f, q));
+          if (!best || r < best.r) best = { p: f, r };
+        }
+        return best;
+      };
+      const seen = [];
+      for (const lf of leaves) {
+        const n = lf.pts.length;
+        for (let i = 0; i < n; i++) {
+          const a = lf.tags[(i - 1 + n) % n];
+          const b = lf.tags[i];
+          const meets = (a.kind === 'local' && b.linear) || (a.linear && b.kind === 'local');
+          if (!meets) continue;
+          const q = lf.pts[i];
+          if (seen.some((o) => len(sub(o, q)) < 8)) continue;
+          seen.push(q);
+          const c = near(q);
+          if (c && c.r < lp.width / 2 + PARKSIDE * 2 + 6) lp.links.push([q, c.p]);
+        }
+      }
+    }
 
     // What every plot is for.
     const programme = assignProgramme(seed, d, blocks, planned);
@@ -1318,7 +1479,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
-    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks };
+    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks };
   }
 
   return { of };
