@@ -94,6 +94,20 @@ export const USES = {
   photo: { label: 'Photography studio', cat: 'service', floor: 'upper' },
   print: { label: 'Print shop', cat: 'service', floor: 'ground' },
   law: { label: 'Law firm', cat: 'office', floor: 'upper' },
+  architects: { label: 'Architects', cat: 'office', floor: 'upper' },
+  engineering: { label: 'Engineering consultancy', cat: 'office', floor: 'upper' },
+  consulting: { label: 'Management consultancy', cat: 'office', floor: 'upper' },
+  software: { label: 'Software company', cat: 'office', floor: 'upper' },
+  design: { label: 'Design studio', cat: 'office', floor: 'upper' },
+  marketing: { label: 'Advertising agency', cat: 'office', floor: 'upper' },
+  recruitment: { label: 'Recruitment agency', cat: 'office', floor: 'upper' },
+  coworking: { label: 'Coworking space', cat: 'office', floor: 'upper' },
+  insuranceOffice: { label: 'Insurance company', cat: 'office', floor: 'upper' },
+  bankOffice: { label: 'Bank offices', cat: 'office', floor: 'upper' },
+  publisher: { label: 'Publisher', cat: 'office', floor: 'upper' },
+  charityOffice: { label: 'Charity head office', cat: 'office', floor: 'upper' },
+  mediaCompany: { label: 'Media company', cat: 'office', floor: 'upper' },
+  researchLab: { label: 'Research lab', cat: 'office', floor: 'upper' },
   accounting: { label: 'Accountants', cat: 'office', floor: 'upper' },
   realEstate: { label: 'Real estate office', cat: 'office', floor: 'ground' },
   insurance: { label: 'Insurance office', cat: 'office', floor: 'ground' },
@@ -188,6 +202,13 @@ export const UPSTAIRS_MIX = [
   ['office', 20], ['law', 1.5], ['accounting', 1.5], ['dentalSpecialist', 1], ['specialistClinic', 1.2], ['alliedHealth', 1.5],
   ['spa', 0.6], ['photo', 0.6], ['recordingStudio', 0.3], ['proStudio', 0.4], ['languageSchool', 0.5], ['musicSchool', 0.4],
   ['fencing', 0.2], ['tutor', 1], ['danceStudio', 0.8], ['martialArts', 0.6], ['gym', 0.6], ['dental', 0.8], ['physio', 0.6],
+];
+// The core's podiums: a floor of offices holds several firms.
+export const OFFICE_MIX = [
+  ['office', 6], ['law', 3], ['accounting', 3], ['architects', 1.5], ['engineering', 1.5], ['consulting', 2], ['software', 3],
+  ['design', 1.2], ['marketing', 1.5], ['recruitment', 1], ['coworking', 1.5], ['insuranceOffice', 1], ['bankOffice', 1],
+  ['publisher', 0.6], ['charityOffice', 0.6], ['mediaCompany', 0.8], ['researchLab', 0.5], ['specialistClinic', 1.2],
+  ['dentalSpecialist', 0.8], ['alliedHealth', 1], ['languageSchool', 0.6], ['tutor', 0.6], ['gym', 0.4], ['spa', 0.4],
 ];
 // Corner units off the main streets: quiet uses only.
 export const CORNER_MIX = [
