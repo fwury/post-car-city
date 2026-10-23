@@ -154,7 +154,7 @@ export function drawDistricts(ctx, view, world, layers) {
     }
   }
 
-  if (layers.blocks) drawBlocks(ctx, view, world, items, place);
+  const drawBuildings = layers.blocks ? drawBlocks(ctx, view, world, items, place, layers) : null;
 
   const net = layers.streets ? world.boulevardsInRect(x0, y0, x0 + view.w / s, y0 + view.h / s) : null;
   const lines = net ? net.lines.map((b) => ({ b, path: boulevardPath(b) })) : [];
@@ -262,6 +262,8 @@ export function drawDistricts(ctx, view, world, layers) {
       }
     }
   }
+
+  if (drawBuildings) drawBuildings();
 
   if (layers.neighbourhoods) {
     ctx.strokeStyle = palette.hoodLine;

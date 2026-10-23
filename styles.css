@@ -131,6 +131,28 @@ button:focus-visible, input:focus-visible, summary:focus-visible {
 }
 .swatch.round { border-radius: 4px; }
 
+/* A two-way switch, like a segmented control. */
+.segmented {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  padding: 2px;
+  border-radius: 8px;
+  background: rgba(118, 118, 128, 0.12);
+}
+.layers .segmented label { justify-content: center; gap: 0; }
+.segmented input { position: absolute; opacity: 0; pointer-events: none; }
+.segmented span {
+  width: 100%;
+  text-align: center;
+  padding: 4px 0;
+  border-radius: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--ink-soft);
+}
+.segmented input:checked + span { background: #fff; color: var(--ink); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12); }
+.segmented input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+
 .debug { margin-top: 12px; border-top: 1px solid var(--line); padding-top: 10px; }
 .debug > summary { cursor: pointer; font-size: 12px; font-weight: 600; color: var(--ink-soft); }
 .debug .layers { border-top: 0; margin-top: 4px; padding-top: 6px; }
@@ -190,4 +212,38 @@ button:focus-visible, input:focus-visible, summary:focus-visible {
 @media (max-width: 600px) {
   .hud { bottom: 64px; right: 72px; font-size: 10px; }
   .zoom { bottom: 64px; }
+}
+
+/* The card for a clicked building. */
+.card {
+  position: fixed;
+  right: 16px;
+  top: 16px;
+  width: 280px;
+  max-width: calc(100vw - 32px);
+  padding: 14px 16px 12px;
+  border-radius: 14px;
+  background: var(--panel);
+  -webkit-backdrop-filter: blur(20px);
+  backdrop-filter: blur(20px);
+  box-shadow: var(--shadow);
+}
+.card-head { display: flex; align-items: start; justify-content: space-between; gap: 8px; }
+.card h2 { margin: 0 0 8px; font-size: 16px; font-weight: 600; letter-spacing: -0.01em; }
+.card-close {
+  width: 26px;
+  height: 26px;
+  padding: 0;
+  border-radius: 13px;
+  background: rgba(118, 118, 128, 0.14);
+  color: var(--ink-soft);
+  font-size: 17px;
+  line-height: 26px;
+}
+.card dl { margin: 0; display: grid; gap: 5px; }
+.card dl div { display: grid; grid-template-columns: 96px 1fr; gap: 8px; font-size: 13px; }
+.card dt { color: var(--ink-soft); }
+.card dd { margin: 0; }
+@media (max-width: 600px) {
+  .card { top: auto; bottom: 16px; left: 16px; right: 16px; width: auto; }
 }

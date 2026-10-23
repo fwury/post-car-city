@@ -33,6 +33,7 @@ const WORSHIP_PER_HOOD = 3;
 const ELEMENTARY_PER_HOOD = 2;
 const SCHOOL_BLOCK = [0.3e4, 1.3e4]; // m², net: a block an elementary school takes
 const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
+const CATHEDRAL_BLOCK = [0.45e4, 1.8e4]; // m², a cathedral's block, beside a square
 const REC_BLOCK = [0.5e4, 1.6e4];
 const PARKETTE_GAP = 210; // metres between parkettes in rowhouse areas (about four within 400 m)
 const SUBDISTRICT_HOODS = 3; // neighbourhoods to a subdistrict centre
@@ -47,11 +48,15 @@ const HEIGHTS = {
   unit: { base: 5, storeys: [3, 8] },
   unitShop: { base: 5, storeys: [3, 8] },
   corner: { base: 5, storeys: [3, 8] },
-  podium: { base: 14, storeys: [4, 30] }, // a podium with a tower over it
+  podium: { base: 7, storeys: [4, 10] }, // the core's street wall
+  podiumTower: { base: 16, storeys: [8, 30], tower: true }, // a corner podium with a tower over it
   house: { base: 3, storeys: [2, 4], depth: 10, house: true },
   rowCorner: { base: 3, storeys: [2, 4], depth: 12, house: true },
   cornerShop: { base: 3, storeys: [2, 4], depth: 12, house: true },
 };
+export const PODIUM_STOREYS = 5; // a tower's podium
+const TOWER_SHARE = 0.3; // of the core's corner plots, those with a tower
+export const TOWER_PLATE = 650; // m², a residential tower's floor
 const DWELLING = 85; // m² of floor to a home, walls and stairs included
 const NET_SHARE = 0.85; // of a floor, the share that is homes (the rest stairs, halls)
 const HOUSEHOLD = 2.1; // people to a flat
@@ -171,6 +176,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   const byHood = (use) => new Map(blocks.filter((b) => b.use === use).map((b) => [b.hood, b]));
   const dedicateBlock = (b, use) => {
     b.use = use;
+    b.inner = null;
+    b.court = null;
     for (const p of b.plots || []) {
       p.cls = 'dedicated';
       p.dedicated = null;
@@ -202,6 +209,24 @@ export function assignProgramme(seed, d, blocks, planned = null) {
       if (best) chosen.push(best.b);
     }
     for (const b of chosen) dedicateBlock(b, 'elementarySchool');
+  }
+
+  // ---- A cathedral ----
+  // One to a district: a whole block by the core's square (or the square
+  // nearest it), so it fronts open space.
+  {
+    const core = sqCentre.get(0) || S;
+    const squaresNear = squares.slice().sort((x, y) => len(sub(centroid(x.pts), core)) - len(sub(centroid(y.pts), core)));
+    const sq = squaresNear[0];
+    if (sq) {
+      const at = centroid(sq.pts);
+      const b = blocks
+        .filter((o) => (o.use === 'perimeter' || o.use === 'podium') && o.area >= CATHEDRAL_BLOCK[0] && o.area <= CATHEDRAL_BLOCK[1])
+        .map((o) => ({ o, r: len(sub(centroid(o.pts), at)) }))
+        .filter((x) => x.r < 260)
+        .sort((x, y) => x.r - y.r)[0];
+      if (b) dedicateBlock(b.o, 'cathedral');
+    }
   }
 
   // ---- Subdistrict centres ----
@@ -446,11 +471,18 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   // one to the next and the average can sit between whole storeys.
   const live = plots.filter((p) => p.cls !== 'merged' && !p.dedicated && HEIGHTS[p.cls]);
   for (const p of live) p.dither = toUnit(hash(seed, 'storeys', Math.floor(p.c[0] * 4), Math.floor(p.c[1] * 4)));
+  // A corner of the core may carry a tower; its floors above the podium
+  // are a tower's floor plate, not the whole plot.
+  for (const p of live) p.towerSite = p.cls === 'podium' && p.corner && toUnit(hash(seed, 'tower', Math.floor(p.c[0]), Math.floor(p.c[1]))) < TOWER_SHARE;
+  const heightsOf = (p) => (p.towerSite ? HEIGHTS.podiumTower : HEIGHTS[p.cls]);
   const people = (p) => {
-    const H = HEIGHTS[p.cls];
+    const H = heightsOf(p);
     const footprint = H.depth ? Math.min(polygonArea(p.pts), p.front * H.depth || polygonArea(p.pts)) : polygonArea(p.pts);
     const homesFloors = Math.max(0, p.storeys - (p.ground ? 1 : 0) - (p.upper ? 1 : 0));
-    const dwellings = H.house ? 1 : Math.floor((footprint * homesFloors * NET_SHARE) / DWELLING);
+    const floorArea = H.tower
+      ? footprint * Math.max(0, PODIUM_STOREYS - (p.ground ? 1 : 0) - (p.upper ? 1 : 0)) + Math.min(footprint, TOWER_PLATE) * Math.max(0, p.storeys - PODIUM_STOREYS)
+      : footprint * homesFloors;
+    const dwellings = H.house ? 1 : Math.floor((floorArea * NET_SHARE) / DWELLING);
     p.dwellings = dwellings;
     return dwellings * (H.house ? HOUSEHOLD_HOUSE : HOUSEHOLD);
   };
@@ -461,7 +493,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     for (let round = 0; round < 10; round++) {
       let total = 0;
       for (const p of mine) {
-        const H = HEIGHTS[p.cls];
+        const H = heightsOf(p);
         p.storeys = Math.max(H.storeys[0], Math.min(H.storeys[1], H.house ? H.base : Math.floor(H.base * f + p.dither)));
         total += people(p);
       }

@@ -6,6 +6,7 @@ import { insetUniform } from '../util/offset.js';
 import { palette } from './styles.js';
 import { USES } from '../world/uses.js';
 import { STREET_TYPES } from '../world/streetTypes.js';
+import { BUILDING_MIN_ZOOM, paths2D, items3D, drawBuildings } from './buildingLayer.js';
 
 export const BLOCK_MIN_ZOOM = 0.25;
 export const PLOT_MIN_ZOOM = 0.7;
@@ -29,7 +30,7 @@ function buildPaths(d, chunk) {
   const [ox, oy] = d.origin;
   const P = () => new Path2D();
   const p = {
-    built: P(), podium: P(), open: P(), garden: P(), green: P(), square: P(), school: P(), edge: P(),
+    built: P(), rowBand: P(), podium: P(), open: P(), garden: P(), green: P(), square: P(), school: P(), edge: P(),
     plotLines: P(), passages: P(), courtPath: P(), courtGreen: P(), spokes: P(), hubs: P(),
     dedicated: new Map(), dots: new Map(),
   };
@@ -95,7 +96,7 @@ function buildPaths(d, chunk) {
           const band = new Path2D();
           addPoly(band, k.pts, ox, oy);
           addPoly(band, back, ox, oy);
-          p.built.addPath(band);
+          p.rowBand.addPath(band);
         }
         if (k.inner) add(p.open, k.inner);
         break;
@@ -184,13 +185,16 @@ function chunksFor(d, b) {
 
 // Called inside drawDistricts, after the neighbourhood tints and before the
 // main streets, for districts in view.
-export function drawBlocks(ctx, view, world, items, place) {
+export function drawBlocks(ctx, view, world, items, place, layers = {}) {
   const { zoom, pr, s } = view;
   if (zoom < BLOCK_MIN_ZOOM) return;
   const px = (cssPx) => (cssPx * pr) / s;
   // Blocks may still be on their way from a worker; those districts wait.
   // Only the chunks in view (with a margin for wide strokes).
-  const m = 20;
+  const buildings = zoom >= BUILDING_MIN_ZOOM;
+  const mode = layers.heights === '3d' ? '3d' : '2d';
+  // (In 3D, tall buildings south of the view lean into it.)
+  const m = buildings && mode === '3d' ? 90 : 20;
   const vx0 = view.x0 - m;
   const vy0 = view.y0 - m;
   const vx1 = view.x0 + view.w / s + m;
@@ -202,7 +206,7 @@ export function drawBlocks(ctx, view, world, items, place) {
     for (const ch of chunksFor(d, b)) {
       if (ch.x1 < vx0 || ch.x0 > vx1 || ch.y1 < vy0 || ch.y0 > vy1) continue;
       if (!ch.p) ch.p = buildPaths(d, ch);
-      list.push({ d, p: ch.p });
+      list.push({ d, p: ch.p, ch });
     }
   }
   ctx.lineCap = 'round';
@@ -233,10 +237,13 @@ export function drawBlocks(ctx, view, world, items, place) {
       }
     }
   }
+  // Close in, blocks show their ground (yards, forecourts) with the
+  // buildings drawn over it; farther out, the built band stands for them.
   for (const [key, colour] of [
     ['garden', palette.garden],
-    ['built', palette.building],
-    ['podium', palette.podium],
+    ['built', buildings ? palette.yard : palette.building],
+    ['rowBand', buildings ? null : palette.building],
+    ['podium', buildings ? palette.plaza : palette.podium],
     ['open', palette.courtyard],
     ['courtPath', palette.pedestrianStreet],
     ['courtGreen', palette.courtyard],
@@ -245,6 +252,7 @@ export function drawBlocks(ctx, view, world, items, place) {
     ['square', palette.plaza],
     ['school', palette.school],
   ]) {
+    if (!colour) continue;
     ctx.fillStyle = colour;
     for (const { d, p } of list) {
       place(d);
@@ -281,19 +289,32 @@ export function drawBlocks(ctx, view, world, items, place) {
     place(d);
     ctx.stroke(p.edge);
   }
-  if (zoom >= USE_MIN_ZOOM) {
-    const r = px(2.6);
-    for (const { d, p } of list) {
-      place(d);
-      for (const [cat, pts] of p.dots) {
-        ctx.fillStyle = palette.uses[cat] || palette.inkSoft;
-        ctx.beginPath();
-        for (const [x, y] of pts) {
-          ctx.moveTo(x + r, y);
-          ctx.arc(x, y, r, 0, Math.PI * 2);
-        }
-        ctx.fill();
+  if (zoom >= USE_MIN_ZOOM && !buildings) drawDots(ctx, list, place, px(2.6));
+  // Buildings go on top of everything on the ground (main streets and
+  // greens included), so the caller draws them last.
+  if (!buildings) return null;
+  return () => {
+    const blist = list.map(({ d, ch }) => {
+      if (mode === '3d') return { d, items: ch.b3d || (ch.b3d = items3D(d, ch)) };
+      return { d, p: ch.b2d || (ch.b2d = paths2D(d, ch)) };
+    });
+    drawBuildings(ctx, view, blist, place, mode, layers.materials !== false);
+    if (zoom >= USE_MIN_ZOOM) drawDots(ctx, list, place, px(2.6));
+  };
+}
+
+// A dot on each shop floor, coloured by what is sold there.
+function drawDots(ctx, list, place, r) {
+  for (const { d, p } of list) {
+    place(d);
+    for (const [cat, pts] of p.dots) {
+      ctx.fillStyle = palette.uses[cat] || palette.inkSoft;
+      ctx.beginPath();
+      for (const [x, y] of pts) {
+        ctx.moveTo(x + r, y);
+        ctx.arc(x, y, r, 0, Math.PI * 2);
       }
+      ctx.fill();
     }
   }
 }

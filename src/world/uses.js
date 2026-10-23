@@ -30,6 +30,7 @@ export const USES = {
   synagogue: { label: 'Synagogue', cat: 'worship', floor: 'dedicated' },
   mosque: { label: 'Mosque', cat: 'worship', floor: 'dedicated' },
   temple: { label: 'Temple (Hindu, Sikh or Buddhist)', cat: 'worship', floor: 'dedicated' },
+  cathedral: { label: 'Cathedral', cat: 'worship', floor: 'dedicated' },
   elementarySchool: { label: 'Elementary school', cat: 'education', floor: 'dedicated' },
   secondarySchool: { label: 'Secondary school', cat: 'education', floor: 'dedicated' },
   market: { label: 'Public square and market', cat: 'civic', floor: 'open' },

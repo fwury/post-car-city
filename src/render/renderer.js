@@ -201,6 +201,8 @@ export class Renderer {
       this.resetTransform();
     }
 
+    if (this.selected) this.drawSelection(this.selected, L.heights === '3d');
+
     if (L.noise) {
       ctx.globalAlpha = 0.55;
       this.drawTileLayer(this.noiseTiles, this.noiseTiles.visible(camera), false);
@@ -211,6 +213,26 @@ export class Renderer {
     if (L.tiles) this.drawTileOutlines(dvis);
     this.drawScaleBar();
     this.lastDrawMs = performance.now() - t0;
+  }
+
+  // The clicked building, outlined (at its roof, in 3D).
+  drawSelection(b, raised) {
+    const { ctx, camera } = this;
+    const parts = b.tower ? [b, b.tower] : [b];
+    ctx.lineWidth = 2.5;
+    ctx.strokeStyle = palette.selection;
+    ctx.lineJoin = 'round';
+    for (const part of parts) {
+      const h = raised ? part.h : 0;
+      ctx.beginPath();
+      part.pts.forEach(([x, y], i) => {
+        const [sx, sy] = camera.worldToScreen(x + 0.32 * h, y - 0.8 * h);
+        if (i) ctx.lineTo(sx, sy);
+        else ctx.moveTo(sx, sy);
+      });
+      ctx.closePath();
+      ctx.stroke();
+    }
   }
 
   drawLive(L) {

@@ -34,6 +34,8 @@ export const palette = {
   localStreet: '#ffffff',
   localCasing: '#dcd9d3',
   pavement: '#f2f0ec',
+  selection: '#0a7aff',
+  yard: '#ebe7df', // the ground round buildings: yards, light wells, forecourts
   pedestrianStreet: '#e9dfcc',
   // Dedicated buildings, by what they are for.
   dedicated: {

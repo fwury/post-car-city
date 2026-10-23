@@ -26,7 +26,7 @@ export const PLOT_TYPES = {
   perimeter: { depth: 14, width: [13, 24], minArea: 140 },
   mixed: { depth: 16, width: [10, 20], minArea: 130 },
   rowhouse: { depth: null, width: [5.2, 7.8], minArea: 90 },
-  podium: { depth: 24, width: [30, 55], minArea: 600 },
+  podium: { depth: 20, width: [16, 30], minArea: 260 },
 };
 const GAP = [4.5, 6.5]; // metres: the gap between two buildings, open through to the courtyard
 const GAP_RUN = GAP[0]; // every frontage between corner buildings gets a gap
@@ -246,7 +246,7 @@ function band(N, fronts, I, depth, widthOf, opts) {
       const ok = passage ? area > 10 && !selfCrosses(pts) : area >= opts.minArea && front >= opts.minFront && !selfCrosses(pts);
       // A corner plot has a corner of the block within its frontage.
       const corner = corners.some((c) => (((c.s - a.s) % totalN) + totalN) % totalN < front);
-      out.push({ pts, front, area, passage, corner, ok, edge: pointAt(N, cumN, (a.s + front / 2) % totalN).i, door: passage ? [(a.q[0] + b.q[0]) / 2, (a.q[1] + b.q[1]) / 2] : null });
+      out.push({ pts, front, area, passage, corner, ok, edge: pointAt(N, cumN, (a.s + front / 2) % totalN).i, door: passage ? [(a.q[0] + b.q[0]) / 2, (a.q[1] + b.q[1]) / 2] : null, frontA: a.p, frontB: b.p, depth });
     }
     // A plot too small or thin joins a neighbouring building (not a gap) by
     // dropping the cut between them; a bad gap is closed up.
@@ -387,7 +387,7 @@ function inside(P, q) {
 // The direction of a polygon's long sides: the long side of its smallest
 // enclosing rectangle that lies along one of its edges. (The two points
 // farthest apart lie across a diagonal, which would cut a rectangle aslant.)
-function longAxis(N) {
+export function longAxis(N) {
   let best = null;
   for (let i = 0; i < N.length; i++) {
     const e = sub(N[(i + 1) % N.length], N[i]);
@@ -488,7 +488,7 @@ function slices(N, widthOf, front, minArea, wide) {
 }
 
 // The part of polygon P with o + u * s0 <= x . u <= o + u * s1 (Sutherland-Hodgman).
-function clipSlab(P, o, u, s0, s1) {
+export function clipSlab(P, o, u, s0, s1) {
   const clip = (pts, keep) => {
     const out = [];
     for (let i = 0; i < pts.length; i++) {
@@ -716,7 +716,7 @@ function terraces(N, fronts, widthOf) {
       if (k > 0) pts.push(a.q);
       const area = polygonArea(pts);
       if (area < 20) continue;
-      plots.push({ pts, area, front: b.s - a.s, corner: k === 0 || k === placed.length - 2, faces: front });
+      plots.push({ pts, area, front: b.s - a.s, corner: k === 0 || k === placed.length - 2, faces: front, frontA: a.p, frontB: b.p });
     }
   }
   return plots.length ? plots : fail('none');
@@ -777,9 +777,8 @@ function plotsOf(N, fronts, use, W, rng) {
       I = null;
     }
     const type = PLOT_TYPES[use];
-    // Podium blocks are built across, a few big buildings; and a block whose
-    // courtyard would be a light well is built solid.
-    if (use === 'podium' || (I && polygonArea(I) < polygonArea(N) * MIN_COURT)) I = null;
+    // A block whose courtyard would be a light well is built solid.
+    if (I && polygonArea(I) < polygonArea(N) * MIN_COURT) I = null;
     if (I) {
       const plots = band(N, fronts, I, depth, widthOf, {
         passages: use !== 'rowhouse',

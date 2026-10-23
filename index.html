@@ -12,7 +12,7 @@
   <details class="panel" id="panel" open>
     <summary>
       <span class="title">Post-car city</span>
-      <span class="stage">Stage 4: blocks and plots</span>
+      <span class="stage">Stage 5: buildings</span>
     </summary>
 
     <form id="seed-form" class="seed">
@@ -32,6 +32,15 @@
       <label><input type="checkbox" data-layer="streets"><span class="swatch" style="--c: var(--road)"></span> Boulevards and main streets</label>
       <label><input type="checkbox" data-layer="blocks"><span class="swatch" style="--c: var(--building)"></span> Blocks and local streets</label>
       <label><input type="checkbox" data-layer="transit"><span class="swatch round" style="--c: var(--rail)"></span> Rail stations</label>
+    </fieldset>
+
+    <fieldset class="layers buildings">
+      <legend>Buildings</legend>
+      <div class="segmented" role="radiogroup" aria-label="Building heights">
+        <label><input type="radio" name="heights" value="2d" data-choice="heights"><span>2D</span></label>
+        <label><input type="radio" name="heights" value="3d" data-choice="heights"><span>3D</span></label>
+      </div>
+      <label><input type="checkbox" data-layer="materials"> Roofs and materials</label>
     </fieldset>
 
     <details class="debug">
@@ -54,6 +63,8 @@
   </div>
 
   <dl class="hud" id="hud" aria-live="off"></dl>
+
+  <section class="card" id="place-card" aria-live="polite" hidden></section>
 
   <script type="module" src="src/main.js"></script>
 </body>

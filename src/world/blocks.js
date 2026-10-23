@@ -32,6 +32,7 @@ import { planarFaces } from '../util/planar.js';
 import { insetWithSources, selfCrosses as selfCrossing } from '../util/offset.js';
 import { plotsOfBlock, rectness, TERRACE_RECT } from './plots.js';
 import { assignProgramme } from './programme.js';
+import { assignBuildings } from './buildings.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
 import { distToLine } from './boulevards.js';
@@ -1190,6 +1191,8 @@ export function createBlocks(seed, { greenwayWidth }) {
 
     // What every plot is for.
     const programme = assignProgramme(seed, d, blocks, planned);
+    // And what stands on it.
+    assignBuildings(seed, d, blocks);
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));

@@ -11,7 +11,9 @@ const PAN_KEYS = {
 export function attachInput(canvas, camera) {
   const pointers = new Map();
   const held = new Set();
-  const input = { hover: null };
+  // onTap(point) is called for a short press that did not move: a click.
+  const input = { hover: null, onTap: null };
+  let press = null;
 
   const local = (e) => {
     const r = canvas.getBoundingClientRect();
@@ -32,6 +34,7 @@ export function attachInput(canvas, camera) {
   canvas.addEventListener('pointerdown', (e) => {
     canvas.setPointerCapture(e.pointerId);
     pointers.set(e.pointerId, local(e));
+    press = pointers.size === 1 ? { p: local(e), t: performance.now() } : null;
     canvas.classList.add('dragging');
   });
 
@@ -58,6 +61,11 @@ export function attachInput(canvas, camera) {
   });
 
   const release = (e) => {
+    if (press && e.type === 'pointerup' && pointers.size === 1) {
+      const p = local(e);
+      if (Math.hypot(p[0] - press.p[0], p[1] - press.p[1]) < 6 && performance.now() - press.t < 500 && input.onTap) input.onTap(p);
+    }
+    press = null;
     pointers.delete(e.pointerId);
     if (pointers.size === 0) canvas.classList.remove('dragging');
   };
