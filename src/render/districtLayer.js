@@ -24,7 +24,7 @@ import { palette } from './styles.js';
 import { TRAIL_WIDTH } from '../world/greenway.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
-import { DETAIL_MIN_ZOOM, drawSection, streetExtras, drawRails, drawJunctions, drawStops, offsetLine } from './streetDetail.js';
+import { DETAIL_MIN_ZOOM, drawSections, carriageway, streetExtras, drawRails, drawJunctions, drawStops, offsetLine } from './streetDetail.js';
 
 export const LOD_STEPS = [
   [0.4, 25],
@@ -527,20 +527,17 @@ function drawGreenwayDetail(ctx, view, world, items, place, px) {
 function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
   const { x0, y0, s } = view;
   const blocksOf = (d) => (view.blocks ? view.blocks(d) : null);
-  for (const { d, h } of hoods) {
-    place(d);
-    drawSection(ctx, h.streets, 'mainStreet', px);
-  }
-  for (const { b, path } of lines) {
-    ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
-    drawSection(ctx, path, 'boulevard', px);
-  }
+  const items = [
+    ...hoods.map(({ d, h }) => ({ path: h.streets, type: 'mainStreet', place: () => place(d) })),
+    ...lines.map(({ b, path }) => ({ path, type: 'boulevard', place: () => ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s) })),
+  ];
+  drawSections(ctx, items, px);
   // Junctions, then rails.
   for (const { d } of hoods) {
     const b = blocksOf(d);
     if (!b || !b.junctions) continue;
     place(d);
-    drawJunctions(ctx, b.junctions, d.origin[0], d.origin[1], 8.5);
+    drawJunctions(ctx, b.junctions, d.origin[0], d.origin[1], carriageway('mainStreet'));
   }
   for (const { d } of hoods) {
     const b = blocksOf(d);

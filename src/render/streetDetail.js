@@ -95,6 +95,40 @@ export function drawSection(ctx, path, type, px) {
   ctx.lineCap = 'round';
 }
 
+// Several streets' cross-sections drawn together, layer by layer from the
+// outside in, so where streets meet their carriageways open into each other
+// instead of one street's pavement running across the other. items:
+// [{ path, type, place }] (place() sets the transform for that path).
+export function drawSections(ctx, items, px) {
+  ctx.lineCap = 'butt';
+  const layers = items.map((it) => sectionLayers(it.type));
+  const depth = Math.max(0, ...layers.map((l) => l.length));
+  for (let k = 0; k < depth; k++) {
+    for (const pass of ['kerb', 'fill']) {
+      items.forEach((it, i) => {
+        const L = layers[i][k];
+        if (!L || (pass === 'kerb' && !L.kerb)) return;
+        it.place();
+        ctx.strokeStyle = pass === 'kerb' ? KERB : COLOURS[L.el] || COLOURS.drive;
+        ctx.lineWidth = 2 * L.r + (pass === 'kerb' ? px(1) : 0);
+        ctx.stroke(it.path);
+      });
+    }
+  }
+  ctx.lineCap = 'round';
+}
+
+// The half-width of a street's carriageway: everything inside its pavements.
+export function carriageway(type) {
+  const T = STREET_TYPES[type];
+  let r = T.side.reduce((a, [, w]) => a + w, 0) + T.centre.reduce((a, [, w]) => a + w, 0) / 2;
+  for (const [el, w] of T.side) {
+    if (!PAVED.has(el)) break;
+    r -= w;
+  }
+  return r;
+}
+
 // A polyline moved d metres to its left (or right, d < 0).
 export function offsetLine(P, d) {
   const out = [];

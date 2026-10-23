@@ -1498,7 +1498,7 @@ export function createBlocks(seed, { greenwayWidth, greenway }) {
     const programme = assignProgramme(seed, d, blocks, planned);
     // And what stands on it.
     assignBuildings(seed, d, blocks);
-    const tram = tramStops(d, blocks);
+    const tram = tramStops(d, blocks, local);
     // What is in the parks, and the schools' grounds.
     const parkRng = rngFor(seed, 'park-layout', ...keyInts(d.coreInfo));
     // Schools first: a secondary school whose grounds have no room for its

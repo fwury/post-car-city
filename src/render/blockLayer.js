@@ -7,7 +7,7 @@ import { palette } from './styles.js';
 import { USES } from '../world/uses.js';
 import { STREET_TYPES } from '../world/streetTypes.js';
 import { BUILDING_MIN_ZOOM, paths2D, items3D, drawBuildings } from './buildingLayer.js';
-import { DETAIL_MIN_ZOOM, drawSection } from './streetDetail.js';
+import { DETAIL_MIN_ZOOM, drawSections } from './streetDetail.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { ALLEY } from '../world/plots.js';
 
@@ -223,10 +223,9 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
   // still, its whole cross-section.
   const detail = zoom >= DETAIL_MIN_ZOOM;
   if (detail) {
-    for (const { d, p } of list) {
-      place(d);
-      for (const st of p.streets.values()) drawSection(ctx, st.path, st.kind === 'pedestrian' ? 'pedestrianStreet' : 'localStreet', px);
-    }
+    const items = [];
+    for (const { d, p } of list) for (const st of p.streets.values()) items.push({ path: st.path, type: st.kind === 'pedestrian' ? 'pedestrianStreet' : 'localStreet', place: () => place(d) });
+    drawSections(ctx, items, px);
   }
   const passes = detail ? [] : zoom >= PLOT_MIN_ZOOM ? ['casing', 'pavement', 'fill'] : ['casing', 'fill'];
   for (const pass of passes) {

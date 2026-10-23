@@ -11,7 +11,8 @@
 const MIN_GAP = 280; // metres between stops along a street
 const MAX_GAP = 420;
 const END_CLEAR = 70; // metres from a street's end at a greenway
-const NEAR = 140; // a place this close to a street gets a stop beside it
+const NEAR = 140;
+const CLEAR = 36; // metres from a stop's middle to the nearest junction: half a platform and the crossing street // a place this close to a street gets a stop beside it
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const len = (v) => Math.hypot(v[0], v[1]);
@@ -47,7 +48,7 @@ function project(P, cum, q) {
 
 // Returns { stops, junctions }: junctions are where the streets cross or
 // meet, for drawing.
-export function tramStops(d, blocks) {
+export function tramStops(d, blocks, local = []) {
   const lines = [
     ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => ({ pts: l.points, kind: 'boulevard', ends: [true, true] })),
     ...d.stage3.lines.map((l) => ({ pts: l.points, kind: 'main', ends: [!!l.crossing, !!l.crossingEnd] })),
@@ -78,6 +79,33 @@ export function tramStops(d, blocks) {
       }
     }
   }
+  // Ends of a street that stop on or just short of another street.
+  for (let a = 0; a < lines.length; a++) {
+    for (const end of [0, lines[a].pts.length - 1]) {
+      const q = lines[a].pts[end];
+      for (let b = 0; b < lines.length; b++) {
+        if (b === a) continue;
+        const pr = project(lines[b].pts, lines[b].cum, q);
+        if (pr.r > 6) continue;
+        junctions[a].push(lines[a].cum[end]);
+        junctions[b].push(pr.s);
+        points.push(q);
+      }
+    }
+  }
+  // Where every street meets a tram street, stops keep clear: the tram
+  // streets' own junctions and the local streets meeting them.
+  const avoid = junctions.map((j) => j.slice());
+  for (const st of local) {
+    for (const [a, c] of st.segs) {
+      for (const q of [a, c]) {
+        lines.forEach((l, li) => {
+          const pr = project(l.pts, l.cum, q);
+          if (pr.r < 24) avoid[li].push(pr.s);
+        });
+      }
+    }
+  }
   // Places worth a stop.
   const places = [d.station];
   for (const b of blocks) {
@@ -97,11 +125,27 @@ export function tramStops(d, blocks) {
     const lo = l.ends[0] ? END_CLEAR : 0;
     const hi = l.ends[1] ? L - END_CLEAR : L;
     if (hi - lo < 60) return;
+    // The nearest place to s where a whole platform is clear of junctions.
+    const settle = (s0) => {
+      for (let k = 0; k <= 40; k++) {
+        for (const sgn of k ? [1, -1] : [1]) {
+          const s = s0 + sgn * k * 4;
+          if (s < lo || s > hi) continue;
+          if (avoid[li].every((a) => Math.abs(a - s) >= CLEAR)) return s;
+        }
+      }
+      return null;
+    };
     const cands = [];
-    for (const s of junctions[li]) if (s >= lo && s <= hi) cands.push({ s, w: 3 });
+    // A stop at a junction stands just past it.
+    for (const s of junctions[li]) {
+      const t = settle(s + CLEAR);
+      if (t !== null) cands.push({ s: t, w: 3 });
+    }
     for (const q of places) {
       const pr = project(l.pts, l.cum, q);
-      if (pr.r < NEAR && pr.s >= lo && pr.s <= hi) cands.push({ s: pr.s, w: q === d.station ? 4 : 2 });
+      const t = pr.r < NEAR ? settle(pr.s) : null;
+      if (t !== null) cands.push({ s: t, w: q === d.station ? 4 : 2 });
     }
     cands.sort((x, y) => y.w - x.w || x.s - y.s);
     const chosen = [];
@@ -119,7 +163,11 @@ export function tramStops(d, blocks) {
         if (s >= lo && s <= hi) all.push(s);
       }
     }
-    for (const s of all) {
+    const kept = [];
+    for (const s0 of all) {
+      const s = settle(s0);
+      if (s === null || kept.some((o) => Math.abs(o - s) < MIN_GAP / 2)) continue;
+      kept.push(s);
       const { p, dir } = at(l.pts, l.cum, s);
       stops.push({ p, dir, kind: l.kind });
     }
