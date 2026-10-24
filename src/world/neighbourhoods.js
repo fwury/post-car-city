@@ -46,6 +46,7 @@ const FORM_LOW = 0.55; // housing form: rowhouses and villas at the low end...
 const FORM_HIGH = 1.45; // ...mid-rise perimeter blocks at the high end
 const FORM_SCALE = 2500; // metres over which the form of housing changes
 const BOULEVARD_BOOST = 0.15; // a little denser along a boulevard
+const CAMPUS_METRO = 900; // metres from a metro station a campus is sought
 const CAMPUS_CHANCE = 0.35; // share of districts with a campus neighbourhood (university, hospital)
 const BALANCE_STEPS = 10;
 const LLOYD_STEPS = 6; // rounds of moving the free centres to the middle of their people // rounds of evening out populations after the main streets are in
@@ -352,7 +353,8 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     }
 
     // The campus, if any: one of the free centres with room round it (the
-    // more open half), picked by its place alone.
+    // more open half), near a metro station if one is, else picked by its
+    // place alone.
     let campus = null;
     if (hasCampus) {
       let best = -1;
@@ -362,7 +364,8 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       const enough = rooms.slice().sort((a, b) => a - b)[Math.floor(rooms.length / 2)] ?? 0;
       for (let k = fixed; k < count; k++) {
         if (room(k) < enough) continue;
-        const u = toUnit(hash(seed, 'campus-site', Math.floor(centres[k][0] / CELL), Math.floor(centres[k][1] / CELL)));
+        const byMetro = metroIn(d).some((st) => len(sub(st.p, centres[k])) < CAMPUS_METRO);
+        const u = (byMetro ? 1 : 0) + toUnit(hash(seed, 'campus-site', Math.floor(centres[k][0] / CELL), Math.floor(centres[k][1] / CELL)));
         if (u > best) {
           best = u;
           campus = centres[k];

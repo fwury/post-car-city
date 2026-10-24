@@ -13,7 +13,8 @@
 // worship (in about Toronto's mix), and the list of shops, food, services,
 // health, entertainment and arts along its main street out from the square.
 // About one neighbourhood in three is a subdistrict centre (library, fire
-// station, recreation centre, performing arts, cinema...), and the core takes
+// station, recreation centre, performing arts, cinema...), those with metro
+// stations first, and the core takes
 // the district's own (hotels, office towers, department store, courthouse,
 // hospitals nearby...). Then every home is put within about 400 m of each
 // everyday need (grocery, convenience store, café, bank, gym, daycare,
@@ -242,9 +243,13 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   const rest = hoods.filter((h) => !h.core);
   const nSub = Math.max(rest.length >= 2 ? 1 : 0, Math.round(rest.length / SUBDISTRICT_HOODS));
   const subs = [];
+  // (Neighbourhoods with a metro station first: a subdistrict's library
+  // and the rest are for people from round about.)
+  const byMetro = rest.filter((h) => h.metro && h.metro.length);
   while (subs.length < nSub) {
     let best = null;
-    for (const h of rest) {
+    const pool = byMetro.some((h) => !subs.includes(h)) ? byMetro : rest;
+    for (const h of pool) {
       if (subs.includes(h)) continue;
       const r = Math.min(len(sub(h.centre, S)), ...subs.map((o) => len(sub(o.centre, h.centre))));
       if (!best || r > best.r) best = { r, h };
