@@ -590,8 +590,9 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     // (Under a tower every floor above the shops is offices; otherwise one is.)
     const officeFloors = p.towerSite ? Math.max(1, (p.baseStoreys || PODIUM_STOREYS) - 1) : 1;
     const perFloor = Math.max(2, Math.min(6, Math.round(polygonArea(p.pts) / 450)));
-    p.offices = [];
-    for (let k = 0; k < officeFloors * perFloor; k++) p.offices.push(pick(OFFICE_MIX, r));
+    // (Whatever was put upstairs already, a gym or a clinic, stays among them.)
+    p.offices = p.upper ? [p.upper] : [];
+    while (p.offices.length < officeFloors * perFloor) p.offices.push(pick(OFFICE_MIX, r));
     p.upper = p.offices[0];
   }
   return { subdistricts: subs.map((h) => h.id), parkettes: parkettes.length, housed: Object.fromEntries(built) };

@@ -1481,7 +1481,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
           const b = lf.pts[(i + 1) % lf.pts.length];
           if (len(sub([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], c)) < PEDESTRIAN_ZONE) {
             pedestrianise(t, c);
-            t.reach = PEDESTRIAN_ZONE + 40;
+            t.reach = Infinity; // (the whole street, not cut short partway)
           }
         });
       }
