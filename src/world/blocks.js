@@ -1510,19 +1510,23 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     for (const h of hoods) {
       if (squareOf.has(h.id)) continue;
       let best = null;
-      for (const lf of leaves) {
-        // (On a campus, its own square.)
-        // (It needs a local street to turn into its pedestrian street.)
-        if (!lf.tags.some((t) => t.kind === 'local')) continue;
-        if (!(plain(lf) || (!lf.use && lf.zone === 'campus')) || lf.ax.area < SQUARE_AREA[0] * 0.7 || lf.ax.area > SQUARE_AREA[1] * 1.3 || lf.ax.W < SQUARE_MIN * 0.9) continue;
-        if (len(sub(lf.ax.c, h.centre)) > FALLBACK_REACH + 150) continue;
-        let r = Infinity;
-        lf.tags.forEach((t, i) => {
-          if (t.kind !== 'main' && t.kind !== 'boulevard') return;
-          r = Math.min(r, distToLine(h.centre[0], h.centre[1], [lf.pts[i], lf.pts[(i + 1) % lf.pts.length]]));
-        });
-        if (r > FALLBACK_REACH) continue;
-        if (!best || r < best.r) best = { r, lf };
+      // (Failing one of about the right size, a larger block will do.)
+      for (const most of [1.3, 1.8]) {
+        if (best) break;
+        for (const lf of leaves) {
+          // (On a campus, its own square.)
+          // (It needs a local street to turn into its pedestrian street.)
+          if (!lf.tags.some((t) => t.kind === 'local')) continue;
+          if (!(plain(lf) || (!lf.use && lf.zone === 'campus')) || lf.ax.area < SQUARE_AREA[0] * 0.7 || lf.ax.area > SQUARE_AREA[1] * most || lf.ax.W < SQUARE_MIN * 0.9) continue;
+          if (len(sub(lf.ax.c, h.centre)) > FALLBACK_REACH + 150) continue;
+          let r = Infinity;
+          lf.tags.forEach((t, i) => {
+            if (t.kind !== 'main' && t.kind !== 'boulevard') return;
+            r = Math.min(r, distToLine(h.centre[0], h.centre[1], [lf.pts[i], lf.pts[(i + 1) % lf.pts.length]]));
+          });
+          if (r > FALLBACK_REACH) continue;
+          if (!best || r < best.r) best = { r, lf };
+        }
       }
       if (best) {
         best.lf.use = 'square';

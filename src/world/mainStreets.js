@@ -47,6 +47,12 @@ const FILL_GAP = 220; // and may come this close beside a street running the sam
 const FILL_EDGE_GAP = 0; // and may front onto a greenway (held SLIDE_HOLD off it)
 const SLIDE_HOLD = 110; // metres from a greenway's line a street fronting onto it keeps
 const FILL_LONGEST = 2400; // metres, end to end
+const COVER = 560; // metres: no land farther than this from a main street (about a 10-minute walk by street)
+const COVER_STEP = 60; // metres between the spots tested
+const COVER_ROUNDS = 30; // cross streets laid at most, per district, to bring every spot in reach
+const COVER_GAP = 160; // how close such a street may run beside another running the same way
+const COVER_LONGEST = 3200; // metres, end to end
+const EDGE_REACH = 100; // metres from the greenway's line such a street may end, joined straight on to it
 const STRAIGHT_RUN = 200; // metres a cross street holds its heading before easing into the field
 const PARK_CELL = 3; // raster value of district park land (see neighbourhoods.js)
 const PARK_GATES = 2; // main streets that may end at one district park's gate, per district
@@ -1003,9 +1009,11 @@ export function createMainStreets(seed) {
         });
         let lo;
         let hi;
-        if (l.crossingEnd) {
+        if (l.crossingEnd || l.edgeEnd) {
           // Ends at a greenway crossing, where it carries on into the next
-          // district; that end stands, the other is trimmed as usual.
+          // district (or at a park gate, or the land's edge, meeting the
+          // street along the greenway); that end stands, the other is
+          // trimmed as usual.
           const lo = l.protectStart ? 0 : live.length ? live[0].pos : last ? l.points.length - 1 : 0;
           // With nothing left to meet at its other end, it waits for a rescue.
           if (!live.length && !l.protectStart && !last) l.lonely = true;
@@ -1276,6 +1284,112 @@ export function createMainStreets(seed) {
       settle();
     }
 
+    // Everywhere a short walk from a main street: while any land lies more
+    // than COVER from one, a cross street goes through (or close by) the
+    // farthest spot, from a T to a T (or a park gate), as for a
+    // neighbourhood without a route but allowed longer and closer to
+    // streets running the same way. A spot nothing can reach is let be.
+    const gapAt = (x, y) => {
+      let b = COVER * 2;
+      for (const k of segsNear(x, y, COVER * 2)) {
+        const g = segs[k];
+        if (g[6] === 0 || trimmed(g)) continue;
+        b = Math.min(b, segDist(x, y, g[0], g[1], g[2], g[3]));
+      }
+      return b;
+    };
+    const given = [];
+    const ring = d.ring.concat([d.ring[0]]);
+    // The nearest point on the greenway's line.
+    const edgeFoot = (e) => {
+      let f = null;
+      for (let i = 0; i < ring.length - 1; i++) {
+        const a = ring[i];
+        const ab = sub(ring[i + 1], a);
+        const t = Math.max(0, Math.min(1, dot(sub(e, a), ab) / (dot(ab, ab) || 1)));
+        const q = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+        if (!f || len(sub(q, e)) < len(sub(f, e))) f = q;
+      }
+      return f;
+    };
+    let covered = false;
+    for (let round = 0; round < COVER_ROUNDS; round++) {
+      let far = null;
+      for (let y = grid.y0 + COVER_STEP / 2; y < grid.y0 + grid.H * 50; y += COVER_STEP) {
+        for (let x = grid.x0 + COVER_STEP / 2; x < grid.x0 + grid.W * 50; x += COVER_STEP) {
+          if (!isLand(x, y) || given.some((q) => len(sub(q, [x, y])) < COVER)) continue;
+          const r = gapAt(x, y);
+          if (r > COVER && (!far || r > far.r)) far = { p: [x, y], r };
+        }
+      }
+      if (!far) break;
+      given.push(far.p);
+      const id = nextId;
+      let best = null;
+      const spots = [far.p];
+      for (const rr of [COVER * 0.3, COVER * 0.6]) for (let k = 0; k < 8; k++) spots.push([far.p[0] + Math.cos((k * Math.PI) / 4) * rr, far.p[1] + Math.sin((k * Math.PI) / 4) * rr]);
+      const opts = { stopAtHit: true, gap: COVER_GAP, straight: true, slide: true, edgeGap: FILL_EDGE_GAP, parkEnds: true };
+      for (const p of spots) {
+        if (!isLand(p[0], p[1]) || gapAt(p[0], p[1]) < COVER_GAP) continue;
+        const [fa, fb] = field(p[0], p[1]);
+        const heads = [fa, fb];
+        for (let k = 0; k < 6; k++) heads.push([Math.cos((k * Math.PI) / 6), Math.sin((k * Math.PI) / 6)]);
+        // One side may instead run on to the land's edge (meeting the street
+        // along the greenway there), if the other ends in a T.
+        const side = (v) => {
+          const r = steer(p, v, id, opts);
+          if (r.end === 'hit' || r.end === 'park') return r;
+          const e = steer(p, v, id, { ...opts, slide: false, parkEnds: false });
+          return e.end === 'edge' ? e : r;
+        };
+        for (const v of heads) {
+          let a = side(v);
+          let b = side([-v[0], -v[1]]);
+          if (b.end !== 'hit') [a, b] = [b, a];
+          if (b.end !== 'hit' || (a.end !== 'hit' && a.end !== 'park' && a.end !== 'edge')) continue;
+          if (a.end === 'edge') {
+            // Close to the greenway's line, and heading on into it.
+            if (a.pts.length < 2) continue;
+            const e = a.pts[a.pts.length - 1];
+            const f = edgeFoot(e);
+            const r = len(sub(f, e));
+            if (r > EDGE_REACH || (r > 5 && dot(unit(sub(f, e)), unit(sub(e, a.pts[a.pts.length - 2]))) < 0.5)) continue;
+          }
+          const pts = b.pts.slice().reverse().concat(a.pts.slice(1));
+          const L = pathLength(pts);
+          if (L > COVER_LONGEST || curls(pts) || pathLength(a.pts) < JUNCTION_GAP || pathLength(b.pts) < JUNCTION_GAP) continue;
+          const reach = distToLine(far.p[0], far.p[1], pts);
+          if (reach > COVER * 0.7) continue;
+          const n0 = Math.ceil(120 / STEP);
+          let ok = true;
+          for (let i = n0; i < pts.length - n0 && ok; i += 2) if (crowded(pts[i], unit(sub(pts[i + 1], pts[i - 1])), COVER_GAP, id, 0)) ok = false;
+          if (!ok) continue;
+          // Straight, and as near the spot as it can be, with a T at each
+          // end if it can: short only as a tie-break.
+          const score = reach * 3 + turning(pts) * 400 + L * 0.2 + (a.end === 'edge' ? COVER * 0.5 : 0);
+          if (!best || score < best.score) best = { score, pts, park: a.end === 'park' ? a.park : null, edge: a.end === 'edge' };
+        }
+        if (best && best.score < COVER) break;
+      }
+      if (!best) continue;
+      if (best.edge) {
+        // (The land raster is coarse: run on to the greenway's line itself.)
+        const P = best.pts;
+        const e = P[P.length - 1];
+        const f = edgeFoot(e);
+        // (Unless already on it, or just over it.)
+        const n = dot(sub(f, e), sub(e, P[P.length - 2])) > 0 ? Math.ceil(len(sub(f, e)) / STEP) : 0;
+        for (let k = 1; k <= n; k++) P.push([e[0] + ((f[0] - e[0]) * k) / n, e[1] + ((f[1] - e[1]) * k) / n]);
+      }
+      const extra = best.park ? { crossingEnd: addGate(best.park, best.pts[best.pts.length - 1]) } : best.edge ? { edgeEnd: true } : {};
+      place(best.pts, extra);
+      covered = true;
+    }
+    if (covered) {
+      all = keep(resolve());
+      settle();
+    }
+
     const pointAt = (pts, pos) => {
       const i = Math.min(pts.length - 2, Math.floor(pos));
       const t = pos - i;
@@ -1299,6 +1413,8 @@ export function createMainStreets(seed) {
           parkStart: l.crossing && isGate(l.crossing) ? gateOf(l.crossing) : null,
           crossingEnd: l.crossingEnd && !isGate(l.crossingEnd) ? l.crossingEnd : null,
           parkEnd: l.crossingEnd && isGate(l.crossingEnd) ? gateOf(l.crossingEnd) : null,
+          // (Or ending at the land's edge, on the street along the greenway.)
+          edgeEnd: !!l.edgeEnd && l.hi >= l.points.length - 1,
           // Neighbourhoods whose own main street this is (through their centre).
           serves: [...(l.hoodPos || [])].filter(([, i]) => i >= l.lo && i <= l.hi).map(([k]) => k).sort((a, b) => a - b),
           points: pts,
