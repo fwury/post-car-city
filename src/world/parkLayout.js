@@ -268,7 +268,7 @@ export function layoutSchool(P, rng, secondary) {
       s.features.push({ kind: 'trackField', pts: oval(ax.c, ax.u, 84.4, 36.5) });
     }
     pts = building([[110, 34], [90, 30], [70, 28], [55, 24], [42, 22]]);
-    if (!t) s.place('pitch', 100, 64, { grid: true }) || s.place('pitch', 80, 50, { grid: true });
+    if (!t) s.place('pitch', 100, 64, { grid: true }) || s.place('pitch', 80, 50, { grid: true }) || s.place('pitch', 60, 40, { grid: true });
     s.place('court', 28, 15);
   } else {
     pts = building([[75, 26], [60, 22], [45, 20], [34, 18]]);

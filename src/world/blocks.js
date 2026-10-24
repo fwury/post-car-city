@@ -89,6 +89,9 @@ const OVERSIZE = 1.5; // a block this many times its usual area must split, one 
 const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
 const SQUARE_FORMS = { corner: 0.3, against: 0.35 }; // shares of squares by form; the rest stand on their own
 const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school takes
+const SCHOOL_LONGEST = 220; // metres, centreline: a school's grounds longer than this are cut down...
+const SCHOOL_LENGTH = 185; // ...to about this (a track and field and the building beside it)
+const SCHOOL_WIDE = 70; // metres, centreline: narrowest a school's grounds should be (for its field)
 const PEDESTRIAN_ZONE = 300; // metres from the district's square: its pedestrian zone
 const PEDESTRIAN_REACH = 220; // metres from its square a pedestrian street runs
 const FALLBACK_REACH = 250; // metres from a centre a square may stand if none was found by it
@@ -1428,6 +1431,29 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       }
       return null;
     }
+    // A school's grounds cut down to size if they run on too long: the
+    // school keeps one end, and the rest is left for ordinary blocks.
+    function schoolSized(node, depth = 0) {
+      const ax = axes(node.pts);
+      if (ax.L <= SCHOOL_LONGEST) return [node, null];
+      const f = SCHOOL_LENGTH / ax.L;
+      // (Cut where it should be if it can be; failing that, wherever a cut
+      // will go, and the school's piece cut again if still too long.)
+      for (const at of [f, 1 - f, f * 1.12, 1 - f * 1.12, f * 0.9, 1 - f * 0.9, undefined]) {
+        if (at !== undefined && (at <= 0.15 || at >= 0.85)) continue;
+        const kids = split(node, ax, 'campus', { at, force: true, along: false });
+        if (!kids) continue;
+        const [a, b] = Math.abs(axes(kids[0].pts).L - SCHOOL_LENGTH) <= Math.abs(axes(kids[1].pts).L - SCHOOL_LENGTH) ? kids : [kids[1], kids[0]];
+        if (polygonArea(a.pts) < SCHOOL_AREA) continue;
+        if (axes(a.pts).L > SCHOOL_LONGEST && depth < 1) {
+          const [a2, b2] = schoolSized(a, depth + 1);
+          // (The second offcut is left as its own block too.)
+          if (b2) return [a2, b, b2];
+        }
+        return [a, b];
+      }
+      return [node, null];
+    }
     const leaves = [];
     let queue = supers.map((f) => ({ pts: f.pts, tags: f.tags }));
     queue.sort((a, b) => a.pts[0][0] - b.pts[0][0] || a.pts[0][1] - b.pts[0][1]);
@@ -1474,7 +1500,14 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
             // The park is the larger piece.
             const [a, b] = kids[0].pts && polygonArea(kids[0].pts) >= polygonArea(kids[1].pts) ? kids : [kids[1], kids[0]];
             leaves.push({ ...a, ax: axes(a.pts), use: 'park', hood: pk.id });
-            leaves.push({ ...b, ax: axes(b.pts), use: 'school', hood: pk.id });
+            // (Too narrow a strip for a school is left for ordinary blocks:
+            // the school goes on a block nearby instead.)
+            if (axes(b.pts).W < SCHOOL_WIDE) next.push(b);
+            else {
+              const [school, ...rest] = schoolSized(b);
+              leaves.push({ ...school, ax: axes(school.pts), use: 'school', hood: pk.id });
+              for (const r of rest) if (r) next.push(r);
+            }
           } else {
             leaves.push({ ...node, ax, use: 'park', hood: pk.id });
           }
@@ -1573,16 +1606,25 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       if (schools.has(k)) continue;
       const parkPts = new Set(park.pts.map((p) => `${p[0].toFixed(3)},${p[1].toFixed(3)}`));
       let best = null;
-      for (const lf of leaves) {
-        if (!plain(lf) || lf.ax.area < SCHOOL_AREA || lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard')) continue;
-        const r = len(sub(lf.ax.c, (park.ax || axes(park.pts)).c));
-        if (r > 450) continue;
-        // Across a street from the park if it can be.
-        const touches = lf.pts.some((p) => parkPts.has(`${p[0].toFixed(3)},${p[1].toFixed(3)}`));
-        const score = r - (touches ? 300 : 0);
-        if (!best || score < best.score) best = { score, lf };
+      // (Wide enough for its field if one is near, any size that will do if not.)
+      for (const wide of [SCHOOL_WIDE, 0]) {
+        if (best) break;
+        for (const lf of leaves) {
+          if (!plain(lf) || lf.ax.area < SCHOOL_AREA || lf.ax.W < wide || lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard')) continue;
+          const r = len(sub(lf.ax.c, (park.ax || axes(park.pts)).c));
+          if (r > 450) continue;
+          // Across a street from the park if it can be.
+          const touches = lf.pts.some((p) => parkPts.has(`${p[0].toFixed(3)},${p[1].toFixed(3)}`));
+          const score = r - (touches ? 300 : 0);
+          if (!best || score < best.score) best = { score, lf };
+        }
       }
       if (best) {
+        const [school, ...rest] = schoolSized(best.lf);
+        if (rest[0]) {
+          Object.assign(best.lf, school, { ax: axes(school.pts) });
+          for (const r of rest) leaves.push({ ...r, ax: axes(r.pts), zone: best.lf.zone });
+        }
         best.lf.use = 'school';
         best.lf.hood = k;
       }
