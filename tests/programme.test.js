@@ -3,7 +3,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { seedFromText } from '../src/core/hash.js';
 import { createWorld } from '../src/world/districts.js';
-import { USES, EVERYDAY, EVERYDAY_REACH, NEIGHBOURHOOD_LIST } from '../src/world/uses.js';
+import { USES, EVERYDAY, EVERYDAY_REACH, NEIGHBOURHOOD_LIST, MIN_PLOT } from '../src/world/uses.js';
+import { polygonArea } from '../src/util/geom.js';
 
 const world = createWorld(seedFromText('1'));
 const districts = world.districtsInRect(3000, 3000, 5500, 5500).slice(0, 2);
@@ -99,6 +100,18 @@ test('the homes built house each neighbourhood about as many people as planned',
     for (const h of d.stage3.hoods) {
       const r = programme.housed[h.id] / planned[h.id];
       assert.ok(r > 0.75 && r < 1.25, `${h.key}: planned for ${planned[h.id]}, housing ${programme.housed[h.id]}`);
+    }
+  }
+});
+
+test('big buildings of their own stand on plots big enough for them', () => {
+  for (const d of districts) {
+    for (const b of world.blocks(d).blocks) {
+      for (const p of b.plots || []) {
+        const need = MIN_PLOT[p.dedicated];
+        if (!need || need < 1500 || p.cls === 'merged') continue;
+        assert.ok(polygonArea(p.pts) >= need * 0.9, `${d.key}: a ${p.dedicated} on ${Math.round(polygonArea(p.pts))} m², not ${need}`);
+      }
     }
   }
 });

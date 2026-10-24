@@ -27,7 +27,7 @@ import { keyInts } from './cores.js';
 import { polygonArea, signedArea } from '../util/geom.js';
 import {
   USES, EVERYDAY, EVERYDAY_REACH, NEIGHBOURHOOD_LIST, HIGH_STREET_MIX, UPSTAIRS_MIX, OFFICE_MIX, CORNER_MIX, WORSHIP_MIX,
-  DISTRICT_LIST, SUBDISTRICT_LIST,
+  DISTRICT_LIST, SUBDISTRICT_LIST, MIN_PLOT,
 } from './uses.js';
 
 const WORSHIP_PER_HOOD = 3;
@@ -37,6 +37,11 @@ const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
 const CATHEDRAL_BLOCK = [0.45e4, 1.8e4];
 // m², a cathedral's block, beside a square
 const REC_BLOCK = [0.5e4, 1.6e4];
+const WHOLE_BLOCK = 1500; // m²: a building of its own this big takes a whole block if it can...
+const WHOLE_MAX = 4; // ...one up to this many times its size
+const JOIN_STEPS = 5;
+const JOINABLE = new Set(['main', 'corner', 'unit', 'house', 'rowCorner', 'unitShop', 'cornerShop']); // plots a building of its own may take in
+const WORSHIP_PLOT = 600; // m²: what a place of worship looks for // plots each way along a block a building of its own may take in
 const PARKETTE_WALK = 400; // metres: three parkettes within this of every rowhouse
 const PARKETTE_GAP = 210; // metres between parkettes in rowhouse areas (about four within 400 m)
 const SUBDISTRICT_HOODS = 3; // neighbourhoods to a subdistrict centre
@@ -298,32 +303,68 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   }
   // A dedicated building: a plot big enough, or a plot joined with its neighbour.
   function dedicate(q, use, classes, reach, minArea) {
+    // A big building of its own (a museum, a theatre...) takes a whole
+    // block of about its size nearby, if one is free.
+    const need = Math.max(minArea, MIN_PLOT[use] || 0);
+    if (need >= WHOLE_BLOCK) {
+      const b = blocks
+        .filter((o) => (o.use === 'perimeter' || o.use === 'podium') && o.plots && free(o) && o.area >= need && o.area <= need * WHOLE_MAX && len(sub(centroid(o.pts), q)) < reach)
+        .sort((x, y) => len(sub(centroid(x.pts), q)) - len(sub(centroid(y.pts), q)))[0];
+      if (b) {
+        dedicateBlock(b, use);
+        return b.plots[0];
+      }
+    }
     let best = null;
     for (const p of near(q, reach)) {
       // (A core building whose shops are let may still be given over whole.)
       if (!classes.includes(p.cls) || (p.cls === 'podium' ? p.dedicated : taken(p, 'dedicated'))) continue;
       const r = len(sub(p.c, q));
-      const area = polygonArea(p.pts);
-      const fits = area >= minArea;
-      const score = r + (fits ? 0 : 150);
+      const need = Math.max(minArea, MIN_PLOT[use] || 0);
+      const fits = reachable(p, need) >= need;
+      const score = r + (fits ? 0 : 250);
       if (!best || score < best.score) best = { score, p, fits };
     }
     if (!best) return reach < 1500 ? dedicate(q, use, classes, reach * 1.8, minArea) : null;
     return dedicatePlot(best.p, use, minArea);
   }
+  // A neighbour along the block a building of its own may take in: one of
+  // the ordinary buildings, nothing given to anything yet.
+  // (Its shop floor or offices, if any, go: there are more along the street.)
+  const joinable = (o, p) => o && o !== p && JOINABLE.has(o.cls) && !o.dedicated && o.kind !== 'passage';
+  // The most land a plot could come to, taking in its neighbours.
+  function reachable(p, minArea) {
+    let a = polygonArea(p.pts);
+    const list = p.block && p.block.plots;
+    if (!list) return a;
+    for (const dir of [1, -1]) {
+      for (let step = 1; step <= JOIN_STEPS && a < minArea; step++) {
+        const o = list[(((p.index + dir * step) % list.length) + list.length) % list.length];
+        if (!joinable(o, p)) break;
+        a += polygonArea(o.pts);
+      }
+    }
+    return a;
+  }
   function dedicatePlot(p, use, minArea) {
+    minArea = Math.max(minArea, MIN_PLOT[use] || 0);
     if (polygonArea(p.pts) < minArea && p.block && p.block.plots) {
-      // Join the plot to its neighbours along the block until big enough.
+      // Join the plot to its neighbours along the block until big enough:
+      // onward first, then back the other way.
       const list = p.block.plots;
       let pts = p.pts;
-      for (let step = 1; step <= 3 && polygonArea(pts) < minArea; step++) {
-        const o = list[(p.index + step) % list.length];
-        if (!o || o === p || o.cls !== p.cls || taken(o, 'dedicated') || o.kind === 'passage') break;
-        const j = join(pts, o.pts);
-        if (!j) break;
-        pts = j;
-        o.cls = 'merged';
-        o.dedicated = use;
+      for (const dir of [1, -1]) {
+        for (let step = 1; step <= JOIN_STEPS && polygonArea(pts) < minArea; step++) {
+          const o = list[(((p.index + dir * step) % list.length) + list.length) % list.length];
+          if (!joinable(o, p)) break;
+          const j = join(pts, o.pts);
+          if (!j) break;
+          pts = j;
+          o.cls = 'merged';
+          o.dedicated = use;
+          o.ground = null;
+          o.upper = null;
+        }
       }
       p.pts = pts;
       p.c = centroid(pts);
@@ -365,7 +406,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
         if (taken(p, 'dedicated')) continue;
         // Away from the square and from each other; corners first.
         const r = Math.min(len(sub(p.c, q)) * 0.6 + 120, ...spots.map((o) => len(sub(o, p.c))));
-        const score = r + (p.cls === 'main' ? 0 : 80) + toUnit(hash(seed, 'worship', Math.floor(p.c[0]), Math.floor(p.c[1]))) * 60;
+        const score = r + (p.cls === 'main' ? 0 : 80) + toUnit(hash(seed, 'worship', Math.floor(p.c[0]), Math.floor(p.c[1]))) * 60 - (reachable(p, WORSHIP_PLOT) >= WORSHIP_PLOT ? 0 : 200);
         if (!best || score > best.score) best = { score, p };
       }
       if (!best) break;
