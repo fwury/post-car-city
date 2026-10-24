@@ -25,10 +25,15 @@ export const METRO_SPACING = 800; // metres between stations
 const SHARE_STATION = 350; // metres: a station this close to another on a line is the same station
 const LINK_CLEAR = 250; // metres a station keeps from where the line crosses a greenway
 const TURN = (60 * Math.PI) / 180; // the most a line turns at a district centre
-const BEND = (190 * Math.PI) / 180; // and all told, end to end
+const BEND = (150 * Math.PI) / 180; // and all told, end to end
 const PER_STATION = 30000; // people for each metro station, about
 const PLANS = 40; // whole networks laid out and judged
-const MAX_DISTRICTS = 12; // district centres on a line, at most
+const MAX_DISTRICTS = 12; // district centres on a line, at most (a few more to reach the city's edge)
+const TAIL_CLEAR = 400; // metres a line's run on past its last district keeps from the way into another district
+const TAIL_SHORT = 200; // and how far short of the boulevard's end it stops
+const TAIL_EDGE = 350; // or, going straight on, of the district's edge
+const TAIL_MOST = 2.5; // station spacings, at most
+const EDGE_GAP = (110 * Math.PI) / 180; // a district with no neighbour in the city over this wide an angle is on its edge
 export const METRO_RADIUS = 300; // metres: the tightest curve
 const SAMPLE = 40; // metres between points of line
 export const METRO_COLOURS = ["#e3342f", "#3490dc", "#f6993f", "#38a169", "#9561e2", "#f66d9b", "#00a3a3", "#a0522d", "#d4a017", "#2d3a8c", "#6b8e23", "#c71585", "#4a5568", "#e67e22"];
@@ -286,6 +291,15 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
     }
     const leave = (e, from) => (from === e.i ? e.out[0] : e.out[1]);
     const other = (e, n) => (e.i === n ? e.j : e.i);
+    // A district on the city's edge: one with a boulevard out of the city,
+    // or a wide side with no district of the city beyond it.
+    const atEdge = S.map((p, n) => {
+      if (nets[n].links.some((l) => !idx.has(l.neighbour))) return true;
+      const a = adj[n].map((e) => Math.atan2(S[other(e, n)][1] - p[1], S[other(e, n)][0] - p[0])).sort((x, y) => x - y);
+      if (a.length < 2) return true;
+      for (let k = 0; k < a.length; k++) if ((k + 1 < a.length ? a[k + 1] : a[0] + 2 * Math.PI) - a[k] > EDGE_GAP) return true;
+      return false;
+    });
     // How far a line turns all told, from one end to the other (signed
     // turns summed, so a wiggle is not a curl).
     const bend = (l) => {
@@ -590,6 +604,33 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
           linesAtNode[best.m]++;
         }
       }
+      // A line ending inside the city is carried on, a district at a time,
+      // to one on its edge: through an interchange that is full if need be
+      // (so it ends there rather than short of it), straight on as far as
+      // it can.
+      for (const l of lines) {
+        for (const end of [0, 1]) {
+          for (let guard = 0; guard < 6; guard++) {
+            const n = end ? l.nodes[l.nodes.length - 1] : l.nodes[0];
+            if (atEdge[n] || l.nodes.length >= MAX_DISTRICTS + 2) break;
+            const prev = end ? l.nodes[l.nodes.length - 2] : l.nodes[1];
+            const inE = end ? l.edges[l.edges.length - 1] : l.edges[0];
+            let best = null;
+            for (const e of adj[n]) {
+              const m = other(e, n);
+              if (l.nodes.includes(m) || linesAtNode[m] > cap(m)) continue;
+              const turn = angleBetween(mul(leave(inE, n), -1), leave(e, n));
+              if (turn > TURN * 1.35 || angleBetween(sub(S[n], S[prev]), sub(S[m], S[n])) > TURN * 1.6 || bend(l) + turn > BEND) continue;
+              const cost = turn + (usedEdge.get(e.id) > 0 ? 1 : 0) + (e.rail ? 0.3 : 0) - (atEdge[m] ? 0.3 : 0);
+              if (!best || cost < best.cost) best = { cost, e, m };
+            }
+            if (!best) break;
+            extend(l, { end, e: best.e, m: best.m });
+            usedEdge.set(best.e.id, (usedEdge.get(best.e.id) || 0) + 1);
+            linesAtNode[best.m]++;
+          }
+        }
+      }
       // Short lines meeting end to end, running on straight, become one.
       for (let merged = true; merged; ) {
         merged = false;
@@ -666,10 +707,68 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
       }
     }
 
+    // ---- On past the last district centre ----
+    // A line ending at a district on the city's edge runs on out along a
+    // boulevard to near the edge, with its stations, rather than stopping
+    // short in the district's centre (where there is room for a station or
+    // more beyond it).
+    const nearCity = (q) => nets.some((nt) => nt.links.some((lk) => idx.has(lk.neighbour) && len(sub(lk.p, q)) < TAIL_CLEAR));
+    function tail(l, end) {
+      const n = end ? l.nodes[l.nodes.length - 1] : l.nodes[0];
+      if (!atEdge[n]) return null;
+      const inE = end ? l.edges[l.edges.length - 1] : l.edges[0];
+      const dir = mul(leave(inE, n), -1);
+      // Where it might run to: a boulevard out of the city, or the far end
+      // of any boulevard ahead not leading on to another district.
+      const ends = nets[n].links.filter((lk) => !idx.has(lk.neighbour)).map((lk) => lk.p);
+      for (const P of linesOf(n)) for (const q of [P[0], P[P.length - 1]]) if (!nearCity(q)) ends.push(q);
+      let best = null;
+      for (const q of ends) {
+        if (angleBetween(dir, sub(q, S[n])) > TURN || len(sub(q, S[n])) < METRO_SPACING) continue;
+        const P = route(linesOf(n), S[n], q);
+        if (!P || P.length < 2) continue;
+        const L = lengthOf(P) - TAIL_SHORT;
+        if (L < METRO_SPACING * 0.8 || angleBetween(dir, sub(pointAlong(P, Math.min(300, L)), S[n])) > TURN * 1.2) continue;
+        const pts = resample(P, SAMPLE).filter((_, i, A) => lengthOf(A.slice(0, i + 1)) <= L + 1e-6);
+        if (pts.some((q2) => isWater && isWater(q2[0], q2[1]))) continue;
+        if (!best || L > best.L) best = { pts, L };
+      }
+      if (!best) {
+        // No boulevard that way: straight on (under the main street its
+        // stations will have) to near the district's edge.
+        const ring = B[n].ring.concat([B[n].ring[0]]);
+        let r = Infinity;
+        for (let i = 0; i < ring.length - 1; i++) {
+          const a = ring[i];
+          const ab = sub(ring[i + 1], a);
+          const den = dir[0] * ab[1] - dir[1] * ab[0];
+          if (Math.abs(den) < 1e-9) continue;
+          const t = ((a[0] - S[n][0]) * ab[1] - (a[1] - S[n][1]) * ab[0]) / den;
+          const v = ((a[0] - S[n][0]) * dir[1] - (a[1] - S[n][1]) * dir[0]) / den;
+          if (t > 0 && v >= 0 && v <= 1) r = Math.min(r, t);
+        }
+        const L = Math.min(r - TAIL_EDGE, METRO_SPACING * TAIL_MOST);
+        if (!(L >= METRO_SPACING * 0.8)) return null;
+        const pts = resample([S[n], add(S[n], mul(dir, L))], SAMPLE);
+        if (pts.some((q) => (isWater && isWater(q[0], q[1])) || nearCity(q))) return null;
+        best = { pts, L };
+      }
+      // Stations about METRO_SPACING apart, the last at its end.
+      const k = Math.max(1, Math.round(best.L / METRO_SPACING));
+      const stops = [];
+      for (let q = 1; q <= k; q++) {
+        const p = pointAlong(best.pts, (best.L * q) / k);
+        stops.push(stationList.find((o) => len(sub(o.p, p)) < SHARE_STATION) || station(p, B[n].key, false));
+      }
+      return { pts: best.pts, stops };
+    }
+    const tails = best.lines.map((l) => [tail(l, 0), tail(l, 1)]);
+
     // ---- Each line's track and stations ----
     const lines = best.lines.map((l, k) => {
-      let pts = [S[l.nodes[0]]];
-      const stops = [coreStation.get(l.nodes[0])];
+      const [t0, t1] = tails[k];
+      let pts = t0 ? t0.pts.slice().reverse() : [S[l.nodes[0]]];
+      const stops = t0 ? [...t0.stops.slice().reverse(), coreStation.get(l.nodes[0])] : [coreStation.get(l.nodes[0])];
       l.edges.forEach((e, q) => {
         const forward = e.i === l.nodes[q];
         const P = forward ? e.pts : e.pts.slice().reverse();
@@ -677,9 +776,13 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
         const mid = linkStations.get(e.id);
         stops.push(...(forward ? mid : mid.slice().reverse()), coreStation.get(l.nodes[q + 1]));
       });
+      if (t1) {
+        pts = pts.concat(t1.pts.slice(1));
+        stops.push(...t1.stops);
+      }
       const track = smoothLine(
         pts,
-        l.nodes.map((n) => S[n]),
+        l.nodes.map((n) => S[n]).concat(t0 ? [t0.pts[t0.pts.length - 1]] : [], t1 ? [t1.pts[t1.pts.length - 1]] : []),
       );
       for (const st of stops) if (!st.lines.includes(k)) st.lines.push(k);
       // The stretches between district centres, each with how many lines
@@ -696,6 +799,9 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
         const rank = e.i === l.nodes[q] ? on.indexOf(k) : on.length - 1 - on.indexOf(k);
         return { pts: track.filter((_, i) => along[i] >= a - SAMPLE && along[i] <= b + SAMPLE), rank, of: on.length };
       });
+      // (The runs on past the ends, this line's own.)
+      if (t0) pieces.unshift({ pts: track.filter((_, i) => along[i] <= at[0] + SAMPLE), rank: 0, of: 1 });
+      if (t1) pieces.push({ pts: track.filter((_, i) => along[i] >= at[at.length - 1] - SAMPLE), rank: 0, of: 1 });
       return { id: k, name: String(k + 1), colour: METRO_COLOURS[k % METRO_COLOURS.length], nodes: l.nodes.map((n) => B[n].key), pts: track, pieces, stations: stops.map((s) => s.id) };
     });
     // Stations sit on their lines' track.
