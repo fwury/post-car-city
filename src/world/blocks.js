@@ -33,7 +33,7 @@ import { insetWithSources, selfCrosses as selfCrossing } from '../util/offset.js
 import { plotsOfBlock, rectness, TERRACE_RECT } from './plots.js';
 import { assignProgramme } from './programme.js';
 import { assignBuildings } from './buildings.js';
-import { planJunctions } from './junctions.js';
+import { planJunctions, isTramStreet } from './junctions.js';
 import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
 import { createNames } from './names.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample, splitByPolygon } from '../util/geom.js';
@@ -1868,7 +1868,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // where the tram stops are (on the far sides of signalised junctions).
     const places = [d.station];
     for (const b of blocks) if (['square', 'cathedral', 'hospital', 'school', 'elementarySchool', 'recCentre', 'campus', 'station'].includes(b.use) && b.pts) places.push(axes(b.pts).c);
-    const { junctions: intersections, stops: tramStopList } = planJunctions(hashString(d.key), {
+    const { junctions: laidOut, stops: tramStopList } = planJunctions(hashString(d.key), {
       majors: [...st.lines.map((l) => ({ pts: l.points, type: 'mainStreet', typeAt: (q) => (corePoly && pointInPolygon(q[0], q[1], corePoly) ? 'coreMainStreet' : 'mainStreet') })), ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => ({ pts: l.points, type: 'boulevard' }))],
       // (A podium core's streets are core residential streets.)
       local: local.map((x) => ({ ...x, kind: x.kind === 'local' && x.width >= CORE_CROSS - 0.1 ? 'core' : x.kind })),
@@ -1877,6 +1877,12 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       places,
       onLand: (q) => sideLoops.some((lp) => pointInPolygon(q[0], q[1], lp)),
     });
+    // A square that takes in the streets beside it is paved right across
+    // them: no kerbs, crossings or bollards where streets meet on it. (Where
+    // one meets a tram street, its crossing over the tram street stays.)
+    const paved = [...squareOf.values()].filter((sq) => sq.infill && sq.infill.size).map((sq) => sq.pts);
+    const onSquare = (q) => paved.some((P) => pointInPolygon(q[0], q[1], P) || distToLine(q[0], q[1], P.concat([P[0]])) < PEDESTRIAN / 2 + 2);
+    const intersections = laidOut.filter((j) => j.arms.some((a) => isTramStreet(a.type)) || !onSquare(j.p));
     return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tramStopList, greenLinks, districtParks, linearParks, arcades, halls: sites.map((st) => ({ pts: st.hall, central: st.central, t: st.t })) };
   }
 
