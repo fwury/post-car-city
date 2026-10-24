@@ -3,9 +3,10 @@
 // Parkettes: a path through, trees and benches; a playground in the bigger
 // ones. Neighbourhood parks (after Queen's Park or Finsbury Park): a mesh of
 // paths from entrances round the edge to junctions through the park, and the
-// neighbourhood's community centre built into its edge, on a street. District parks: all that and more, larger: playing fields, tennis
-// and basketball courts, a full dog park, food kiosks, a pond, sometimes an
-// outdoor pool or a woodland cemetery, woods, and trails between them.
+// neighbourhood's community centre built into its edge, on a street.
+// District parks (after Hampstead Heath, Richmond Park or the Bois de
+// Vincennes): open meadow, stands of woodland and a few ponds, with a
+// natural network of paths winding between them; nothing built.
 // Secondary schools have their running track and field; elementary schools
 // a playground and a small field.
 //
@@ -82,6 +83,7 @@ class Site {
     this.features = [];
     this.paths = [];
     this.solid = []; // polygons nothing else may overlap
+    this.wet = () => false; // (a river or lake over part of it)
   }
 
   clearOfPaths(R, gap) {
@@ -283,244 +285,62 @@ function segDist(q, a, b) {
   return len(sub([a[0] + ab[0] * t, a[1] + ab[1] * t], q));
 }
 
-// A district park: trails between clearings, sports, water and woods.
-export function layoutDistrictPark(P, rng) {
+export function layoutDistrictPark(P, rng, isWater = () => false) {
   const s = new Site(P, rng, 10);
+  s.wet = (q) => isWater(q[0], q[1]);
   const A = polygonArea(P);
-  // The loop drive: a broad promenade round the park, well in from its
-  // edge, smoothed into long easy curves (as Central Park's drives or High
-  // Park's loop).
-  const inset = Math.max(45, Math.min(110, Math.sqrt(A) * 0.17));
-  let loop = null;
-  for (const d of [inset, inset * 0.75, inset * 0.55]) {
-    loop = insetUniform(P, d);
-    if (loop && loop.length >= 3 && polygonArea(loop) > A * 0.2) break;
-    loop = null;
-  }
-  if (loop) {
-    loop = simplifyRing(loop, 14);
-    for (let k = 0; k < 4; k++) loop = chaikin(loop, true);
-    s.path(loop.concat([loop[0]]), DRIVE_WIDTH);
-  }
-  // Entrances at the corners and along the sides; each a path curving in
-  // from its gate to meet the loop at an easy angle, the way park paths
-  // join (never two meeting the loop at one spot, never crossing).
-  const gates = gatesOf(P, 190);
-  const joins = [];
-  for (const g of gates) {
-    if (!loop) break;
-    const near = nearestOnRing(loop, g);
-    if (!near || near.r < 8) continue;
-    if (joins.some((q) => len(sub(q, near.p)) < 70)) continue;
-    // Come in square from the edge, then swing along the loop to meet it.
-    const inward = unit(sub(near.p, g));
-    const t = loopTangent(loop, near.p);
-    const side = dot(t, sub(g, near.p)) > 0 ? 1 : -1;
-    const meet = pointOnRingFrom(loop, near.p, side * Math.min(60, near.r * 0.6));
-    const ctrl = [g[0] + inward[0] * near.r * 0.6, g[1] + inward[1] * near.r * 0.6];
-    const pts = bezier(g, ctrl, meet, Math.max(8, Math.ceil(near.r / 6)));
-    if (!pts.slice(1, -1).every((q) => inside(P, q))) continue;
-    if (s.paths.slice(1).some(({ pts: o }) => crosses(pts, o))) continue;
-    s.path(pts, ENTRY_WIDTH);
-    joins.push(meet);
-  }
-  // Places, clear of the paths: fields, a pond, courts, a dog park.
-  const fields = Math.max(1, Math.min(4, Math.floor(A / 1.6e5)));
-  for (let k = 0; k < fields; k++) s.place('pitch', 105, 68, { tries: 160 });
-  const pond = s.place('pond', 30 + rng.next() * 30, 0, { tries: 160 });
-  if (pond) {
-    // A natural outline, not a circle.
-    const [p1, p2, p3] = [rng.next() * 6.3, rng.next() * 6.3, rng.next() * 6.3];
-    const pts = [];
-    for (let k = 0; k < 36; k++) {
-      const a = (k / 36) * Math.PI * 2;
-      const r = pond.r * (0.82 + 0.16 * Math.sin(2 * a + p1) + 0.1 * Math.sin(3 * a + p2) + 0.05 * Math.sin(5 * a + p3));
-      pts.push([pond.c[0] + Math.cos(a) * r * 1.25, pond.c[1] + Math.sin(a) * r * 0.8]);
+  // Ponds: one to three, with natural outlines, set apart, on dry land.
+  const ponds = Math.max(1, Math.min(3, Math.round(A / 2.5e5)));
+  for (let k = 0, tries = 0; k < ponds && tries < 12; tries++) {
+    const pond = s.place('pond', 22 + rng.next() * Math.min(40, Math.sqrt(A) * 0.05), 0, { tries: 160, gap: 40 });
+    if (!pond) break;
+    const pts = blob(pond.c, pond.r, rng, 1.25, 0.8);
+    if (grow(pts, 15).some((q) => s.wet(q))) {
+      s.features.pop();
+      s.solid.pop();
+      continue;
     }
     pond.pts = pts;
-    // A path round its shore.
-    const shore = pts.map((q) => {
-      const d = sub(q, pond.c);
-      const l = len(d) || 1;
-      return [q[0] + (d[0] / l) * 7, q[1] + (d[1] / l) * 7];
-    });
-    if (shore.every((q) => inside(s.inner, q))) s.path(chaikin(shore, true).concat([chaikin(shore, true)[0]]), WALK_WIDTH);
     delete pond.c;
+    k++;
   }
-  for (let k = 0; k < 3; k++) s.place('tennis', 36, 18, { tries: 80 });
-  s.place('basketball', 28, 15, { tries: 60 });
-  s.place('dogPark', 90, 60, { tries: 120 });
-  if (rng.next() < 0.4) s.place('pool', 70, 45, { tries: 120 });
-  if (rng.next() < 0.35 && A > 3e5) s.place('cemetery', 230, 160, { tries: 160 });
-  s.place('playground', 40, 30, { tries: 80 });
-  s.place('splash', 12, 0);
-  s.place('skate', 40, 28, { tries: 60 });
-  for (let k = 0; k < 3; k++) s.place('kiosk', 8, 6, { gap: 2 });
-  s.place('washroom', 10, 7);
-  // Winding walks across the middle, from one side of the loop to the
-  // other, meandering round what is placed.
-  if (loop && polygonArea(loop) > 4e4) {
-    const L = ringLength(loop);
-    const walks = Math.max(1, Math.min(4, Math.round(Math.sqrt(polygonArea(loop)) / 160)));
-    for (let k = 0; k < walks; k++) {
-      for (let tries = 0; tries < 12; tries++) {
-        const s0 = rng.next() * L;
-        const s1 = s0 + L * (0.35 + rng.next() * 0.3);
-        const a = ringAt(loop, s0);
-        const b = ringAt(loop, s1 % L);
-        if (joins.some((q) => len(sub(q, a)) < 30 || len(sub(q, b)) < 30)) continue;
-        const pts = meander(a, b, rng);
-        if (!pts.slice(1, -1).every((q) => inside(loop, q))) continue;
-        if (s.solid.some((S) => pts.some((q) => inside(grow(S, 3), q)))) continue;
-        if (s.paths.slice(1).some(({ pts: o }) => crosses(pts, o))) continue;
-        s.path(pts, WALK_WIDTH);
-        joins.push(a, b);
-        break;
-      }
-    }
-  }
-  // A short spur to each place from the nearest path.
-  for (const f of s.features) {
-    if (f.kind === 'pond') continue;
-    const c = f.pts ? f.pts.reduce((a, q) => [a[0] + q[0] / f.pts.length, a[1] + q[1] / f.pts.length], [0, 0]) : f.c;
-    const edge = f.pts ? nearestOnRing(f.pts, c) : null;
-    let best = null;
-    for (const { pts } of s.paths) {
-      for (const q of pts) {
-        const r = len(sub(q, c));
-        if (!best || r < best.r) best = { r, q };
-      }
-    }
-    if (!best) continue;
-    const door = f.pts ? nearestOnRing(f.pts, best.q).p : c;
-    if (len(sub(door, best.q)) < 4 || len(sub(door, best.q)) > 90) continue;
-    const pts = [best.q, door];
-    if (s.solid.some((S) => S !== f.pts && inside(S, [(best.q[0] + door[0]) / 2, (best.q[1] + door[1]) / 2]))) continue;
-    void edge;
-    s.path(pts, SPUR_WIDTH);
+  // Paths: a natural network from gates round the edge to junctions
+  // through the park, wider apart in a bigger one, curving round the water.
+  pathNetwork(s, P, rng, { spacing: Math.max(90, Math.min(170, Math.sqrt(A) * 0.2)), edgeEvery: 200, width: 3.5, links: 1.45, wander: 0.5 });
+  // Woods: stands of trees over about a third of it, the paths running
+  // through them; the rest open meadow.
+  let wooded = 0;
+  let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+  for (const [x, y] of s.inner) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+  const water = s.features.filter((f) => f.kind === 'pond').map((f) => grow(f.pts, 12));
+  for (let t = 0; t < 200 && wooded < A * WOODED; t++) {
+    const c = [x0 + (x1 - x0) * rng.next(), y0 + (y1 - y0) * rng.next()];
+    if (!inside(s.inner, c) || s.wet(c) || water.some((W) => inside(W, c))) continue;
+    const r = 25 + rng.next() * Math.min(55, Math.sqrt(A) * 0.08);
+    // (Held inside the park, and off the water.)
+    const pts = blob(c, r, rng, 1 + rng.next() * 0.5, 0.8).map((q) => (inside(s.inner, q) ? q : nearestOnRing(s.inner, q).p));
+    if (pts.some((q) => s.wet(q)) || water.some((W) => pts.some((q) => inside(W, q)))) continue;
+    s.features.push({ kind: 'woods', pts });
+    wooded += polygonArea(pts);
   }
   return s.result();
 }
 
-const DRIVE_WIDTH = 6; // metres: a district park's loop drive (walking, cycling)
-const ENTRY_WIDTH = 4;
-const WALK_WIDTH = 3;
-const SPUR_WIDTH = 2.2;
+const WOODED = 0.33; // share of a district park under trees
 
-const unit = (v) => {
-  const l = len(v) || 1;
-  return [v[0] / l, v[1] / l];
-};
-
-// A ring with points closer than tol to the line between their neighbours
-// dropped (for a smoother loop).
-function simplifyRing(R, tol) {
-  let out = R.slice();
-  for (let changed = true; changed && out.length > 6; ) {
-    changed = false;
-    for (let i = 0; i < out.length && out.length > 6; i++) {
-      const a = out[(i - 1 + out.length) % out.length];
-      const b = out[(i + 1) % out.length];
-      const ab = sub(b, a);
-      const l = len(ab) || 1;
-      const d = Math.abs(cross(ab, sub(out[i], a))) / l;
-      if (d < tol) {
-        out.splice(i, 1);
-        changed = true;
-      }
-    }
+// A natural outline round c, about r across, stretched sx by sy.
+function blob(c, r, rng, sx = 1, sy = 1) {
+  const [p1, p2, p3] = [rng.next() * 6.3, rng.next() * 6.3, rng.next() * 6.3];
+  const turn = rng.next() * Math.PI;
+  const pts = [];
+  for (let k = 0; k < 36; k++) {
+    const a = (k / 36) * Math.PI * 2;
+    const rr = r * (0.82 + 0.16 * Math.sin(2 * a + p1) + 0.1 * Math.sin(3 * a + p2) + 0.05 * Math.sin(5 * a + p3));
+    const x = Math.cos(a) * rr * sx;
+    const y = Math.sin(a) * rr * sy;
+    pts.push([c[0] + x * Math.cos(turn) - y * Math.sin(turn), c[1] + x * Math.sin(turn) + y * Math.cos(turn)]);
   }
-  return out;
-}
-function ringLength(R) {
-  let L = 0;
-  for (let i = 0; i < R.length; i++) L += len(sub(R[(i + 1) % R.length], R[i]));
-  return L;
-}
-function ringAt(R, s) {
-  for (let i = 0; i < R.length; i++) {
-    const a = R[i];
-    const b = R[(i + 1) % R.length];
-    const l = len(sub(b, a));
-    if (s <= l) return [a[0] + ((b[0] - a[0]) * s) / (l || 1), a[1] + ((b[1] - a[1]) * s) / (l || 1)];
-    s -= l;
-  }
-  return R[0];
-}
-// Where along a ring a point lies (arc length), and the ring's direction there.
-function ringPos(R, q) {
-  let best = null;
-  let acc = 0;
-  for (let i = 0; i < R.length; i++) {
-    const a = R[i];
-    const ab = sub(R[(i + 1) % R.length], a);
-    const l = len(ab);
-    const t = l ? Math.max(0, Math.min(1, dot(sub(q, a), ab) / (l * l))) : 0;
-    const f = [a[0] + ab[0] * t, a[1] + ab[1] * t];
-    const r = len(sub(f, q));
-    if (!best || r < best.r) best = { r, s: acc + t * l, t: unit(ab) };
-    acc += l;
-  }
-  return best;
-}
-const loopTangent = (R, q) => ringPos(R, q).t;
-function pointOnRingFrom(R, q, ds) {
-  const L = ringLength(R);
-  const s0 = ringPos(R, q).s;
-  return ringAt(R, (((s0 + ds) % L) + L) % L);
-}
-function crosses(A, B) {
-  for (let i = 0; i + 1 < A.length; i++) for (let j = 0; j + 1 < B.length; j++) if (segsCross(A[i], A[i + 1], B[j], B[j + 1])) return true;
-  return false;
-}
-// A walk from a to b that wanders gently: a few waypoints off the straight
-// line, alternately to one side and the other, joined smoothly.
-function meander(a, b, rng) {
-  const d = sub(b, a);
-  const L = len(d);
-  const n = [-d[1] / (L || 1), d[0] / (L || 1)];
-  const k = Math.max(2, Math.round(L / 140));
-  const pts = [a];
-  let side = rng.next() < 0.5 ? 1 : -1;
-  for (let i = 1; i < k; i++) {
-    const t = i / k + (rng.next() - 0.5) * 0.12;
-    const off = side * L * (0.06 + rng.next() * 0.08);
-    side = -side;
-    pts.push([a[0] + d[0] * t + n[0] * off, a[1] + d[1] * t + n[1] * off]);
-  }
-  pts.push(b);
-  let out = pts;
-  for (let r = 0; r < 4; r++) out = chaikin(out, false);
-  return out;
-}
-// Gates: just inside each corner, and along the sides every so often.
-function gatesOf(P, every) {
-  const n = P.length;
-  const sign = Math.sign(P.reduce((a, p, i) => a + cross(p, P[(i + 1) % n]), 0)) || 1;
-  const out = [];
-  for (let i = 0; i < n; i++) {
-    const a = P[(i - 1 + n) % n];
-    const v = P[i];
-    const b = P[(i + 1) % n];
-    const turn = Math.atan2(cross(sub(v, a), sub(b, v)), dot(sub(v, a), sub(b, v))) * sign;
-    if (turn > 0.5) {
-      const bis = unit([(a[0] + b[0]) / 2 - v[0], (a[1] + b[1]) / 2 - v[1]]);
-      out.push([v[0] + bis[0] * 3, v[1] + bis[1] * 3]);
-    }
-  }
-  // Along the sides: by arc length round the outline.
-  const L = ringLength(P);
-  const k = Math.floor(L / every);
-  for (let i = 0; i < k; i++) {
-    const q = ringAt(P, ((i + 0.5) / k) * L);
-    if (!out.some((o) => len(sub(o, q)) < every * 0.5)) {
-      // A step in from the edge.
-      const t = ringPos(P, q).t;
-      const a1 = [q[0] - t[1] * 3, q[1] + t[0] * 3];
-      out.push(inside(P, a1) ? a1 : [q[0] + t[1] * 3, q[1] - t[0] * 3]);
-    }
-  }
-  return out;
+  return pts;
 }
 
 // A running-track shape: straights of length l joined by semicircles of radius r.
@@ -541,7 +361,7 @@ export function oval(c, u, l, r, k = 14) {
 // A park's paths: entrances at its corners and along its sides, joined to
 // junctions spread through it by gently curving paths, as a mesh. Paths only
 // meet at junctions, and leave a junction at a good angle to each other.
-export function pathNetwork(s, P, rng, { spacing, edgeEvery, width }) {
+export function pathNetwork(s, P, rng, { spacing, edgeEvery, width, links = 1.9, wander = 0 }) {
   const n = P.length;
   // Entrances: the corners, then along the sides.
   const gates = [];
@@ -565,7 +385,7 @@ export function pathNetwork(s, P, rng, { spacing, edgeEvery, width }) {
     }
   }
   const clean = [];
-  for (const g of gates) if (!clean.some((o) => len(sub(o, g)) < spacing * 0.6)) clean.push(g);
+  for (const g of gates) if (!s.wet(g) && !clean.some((o) => len(sub(o, g)) < spacing * 0.6)) clean.push(g);
   // Junctions inside, kept apart and off what is built.
   const deep = insetUniform(P, spacing * 0.35) || P;
   let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
@@ -573,7 +393,7 @@ export function pathNetwork(s, P, rng, { spacing, edgeEvery, width }) {
   const nodes = [];
   for (let t = 0; t < 600; t++) {
     const q = [x0 + (x1 - x0) * rng.next(), y0 + (y1 - y0) * rng.next()];
-    if (!inside(deep, q) || s.solid.some((S) => inside(grow(S, 6), q))) continue;
+    if (!inside(deep, q) || s.wet(q) || s.solid.some((S) => inside(grow(S, 6), q))) continue;
     if (nodes.some((o) => len(sub(o, q)) < spacing)) continue;
     nodes.push(q);
   }
@@ -609,7 +429,7 @@ export function pathNetwork(s, P, rng, { spacing, edgeEvery, width }) {
   const clearOfBuilt = (a, b) => {
     for (let t = 0.1; t < 1; t += 0.1) {
       const q = [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
-      if (!inside(P, q) || s.solid.some((S) => inside(S, q))) return false;
+      if (!inside(P, q) || s.wet(q) || s.solid.some((S) => inside(S, q))) return false;
     }
     return true;
   };
@@ -628,12 +448,14 @@ export function pathNetwork(s, P, rng, { spacing, edgeEvery, width }) {
   const comp = nodes.map((_, i) => i);
   const find = (i) => (comp[i] === i ? i : (comp[i] = find(comp[i])));
   for (const [, i, j] of cand) if (find(i) !== find(j) && add(i, j)) comp[find(i)] = find(j);
-  for (const [dd, i, j] of cand) if (dd < spacing * 1.9 && !edges.some(([a, b]) => (a === i && b === j) || (a === j && b === i))) add(i, j);
+  for (const [dd, i, j] of cand) if (dd < spacing * links && !edges.some(([a, b]) => (a === i && b === j) || (a === j && b === i))) add(i, j);
   for (let g = nodes.length; g < all.length; g++) {
     const order = nodes.map((_, i) => i).sort((a, b) => len(sub(all[a], all[g])) - len(sub(all[b], all[g])));
     for (const i of order.slice(0, 3)) if (add(g, i)) break;
   }
-  // Each link a gentle curve.
+  // Each link a gentle curve; with `wander`, one that sways one way then
+  // the other, as a path worn across open ground does (kept if it stays
+  // in the park and off what is there).
   for (const [i, j] of edges) {
     const a = all[i];
     const b = all[j];
@@ -641,7 +463,22 @@ export function pathNetwork(s, P, rng, { spacing, edgeEvery, width }) {
     const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
     const k = (rng.next() - 0.5) * 0.18;
     const ctrl = [m[0] - d[1] * k, m[1] + d[0] * k];
-    s.path(bezier(a, ctrl, b, Math.max(6, Math.ceil(len(d) / 6))), isGate(i) || isGate(j) ? width * 0.9 : width);
+    let pts = bezier(a, ctrl, b, Math.max(6, Math.ceil(len(d) / 6)));
+    if (wander) {
+      const k1 = (rng.next() - 0.5) * wander;
+      const k2 = (rng.next() - 0.5) * wander;
+      const c1 = [a[0] + d[0] / 3 - d[1] * k1, a[1] + d[1] / 3 + d[0] * k1];
+      const c2 = [a[0] + (d[0] * 2) / 3 - d[1] * k2, a[1] + (d[1] * 2) / 3 + d[0] * k2];
+      const n = Math.max(8, Math.ceil(len(d) / 6));
+      const w = [];
+      for (let t = 0; t <= n; t++) {
+        const f = t / n;
+        const g = 1 - f;
+        w.push([0, 1].map((x) => g * g * g * a[x] + 3 * g * g * f * c1[x] + 3 * g * f * f * c2[x] + f * f * f * b[x]));
+      }
+      if (w.every((q) => inside(P, q) && !s.wet(q) && !s.solid.some((S) => inside(S, q)))) pts = w;
+    }
+    s.path(pts, isGate(i) || isGate(j) ? width * 0.9 : width);
   }
   // A little round square at junctions where three or more paths meet.
   nodes.forEach((q, i) => {

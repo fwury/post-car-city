@@ -1860,7 +1860,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       if (b.use === 'stadium' && b.plots[0].bldg && b.plots[0].bldg.pitch) b.layout = { features: [{ kind: 'pitch', pts: b.plots[0].bldg.pitch }], paths: [] };
     }
     // District parks, laid out the same way by every district they touch.
-    const districtParks = d.parks.map((pk) => ({ key: pk.key, layout: layoutDistrictPark(pk.shape, rngFor(seed, 'district-park', hashString(pk.key))) }));
+    const districtParks = d.parks.map((pk) => ({ key: pk.key, layout: layoutDistrictPark(pk.shape, rngFor(seed, 'district-park', hashString(pk.key)), isWater) }));
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
