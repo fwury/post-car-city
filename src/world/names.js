@@ -8,27 +8,80 @@ import { hash, hashString, toUnit } from '../core/hash.js';
 
 const ROOTS = [
   'Ash', 'Bram', 'Elm', 'Holl', 'Oak', 'Willow', 'Hazel', 'Rowan', 'Birch', 'Beech', 'Alder', 'Lark', 'Wren', 'King', 'Queen',
-  'Church', 'Mill', 'Bridge', 'Brook', 'Fen', 'Marsh', 'Heath', 'Moor', 'Stone', 'Chalk', 'Red', 'White', 'Black', 'Green',
-  'Kel', 'Ald', 'Brad', 'Craw', 'Dun', 'Ever', 'Fair', 'Gold', 'Hart', 'Lang', 'Lin', 'Long', 'Maple', 'Nor', 'Park', 'Pen',
-  'Rad', 'Rich', 'Rother', 'Sand', 'Sher', 'Stan', 'Sut', 'Thorn', 'Wal', 'Well', 'West', 'Whit', 'Wood', 'Yar', 'Ced', 'Har',
-  'Ken', 'Bel', 'Clare', 'Dart', 'Eden', 'Fern', 'Glen', 'Hay', 'Ivy', 'Lea', 'Mer', 'New', 'Orch', 'Pem', 'Rams', 'Sel',
+  'Church', 'Mill', 'Bridge', 'Brook', 'Fen', 'Marsh', 'Heath', 'Moor', 'Stone', 'Chalk', 'Red', 'White', 'Black', 'Green', 'Kel',
+  'Ald', 'Brad', 'Craw', 'Dun', 'Ever', 'Fair', 'Gold', 'Hart', 'Lang', 'Lin', 'Long', 'Maple', 'Nor', 'Park', 'Pen',
+  'Rad', 'Rich', 'Rother', 'Sand', 'Sher', 'Stan', 'Sut', 'Thorn', 'Wal', 'Well', 'West', 'Whit', 'Wood', 'Yar', 'Ced',
+  'Har', 'Ken', 'Bel', 'Clare', 'Dart', 'Eden', 'Fern', 'Glen', 'Hay', 'Ivy', 'Lea', 'Mer', 'New', 'Orch', 'Pem',
+  'Rams', 'Sel', 'Abber', 'Acken', 'Amber', 'Applet', 'Arn', 'Ashen', 'Aston', 'Avon', 'Bark', 'Barn', 'Bar', 'Bas', 'Bay',
+  'Bell', 'Ben', 'Berk', 'Bex', 'Bick', 'Bil', 'Bin', 'Bish', 'Blyth', 'Bol', 'Bourne', 'Box', 'Brack', 'Bran', 'Brent',
+  'Brick', 'Brigh', 'Brin', 'Brom', 'Broom', 'Bur', 'Butter', 'Cal', 'Cam', 'Can', 'Car', 'Carl', 'Cart', 'Cas', 'Chad',
+  'Chard', 'Charl', 'Chel', 'Chester', 'Chil', 'Chip', 'Chis', 'Clap', 'Clay', 'Cliff', 'Clif', 'Cob', 'Cold', 'Col', 'Corn',
+  'Cos', 'Cot', 'Cran', 'Crick', 'Crom', 'Crow', 'Cud', 'Dal', 'Dar', 'Day', 'Deb', 'Ded', 'Den', 'Der', 'Dor',
+  'Dove', 'Down', 'Drax', 'Dray', 'Dud', 'Dur', 'Eal', 'East', 'Eas', 'Eb', 'Edg', 'Edmon', 'Elder', 'Ell', 'Ems',
+  'Ep', 'Esh', 'Eton', 'Ex', 'Far', 'Farn', 'Fel', 'Finch', 'Fins', 'Flax', 'Fold', 'Ford', 'Fox', 'Frim', 'Frith',
+  'Gad', 'Gar', 'Gil', 'Glas', 'Gos', 'Graf', 'Grant', 'Grave', 'Gray', 'Grims', 'Had', 'Hail', 'Hal', 'Ham', 'Hamp',
+  'Hans', 'Hare', 'Has', 'Hat', 'Haver', 'Haw', 'Hen', 'Here', 'Hes', 'Hey', 'High', 'Hil', 'Hind', 'Hith', 'Hog',
+  'Hol', 'Hon', 'Horn', 'Hors', 'Hox', 'Hum', 'Hun', 'Ick', 'Il', 'Ing', 'Ip', 'Kes', 'Kew', 'Kil', 'Kim',
+  'Kirk', 'Knap', 'Knight', 'Lam', 'Lan', 'Laven', 'Led', 'Lei', 'Lev', 'Lid', 'Lim', 'Lind', 'Lit', 'Lock', 'Lod',
+  'Lor', 'Lox', 'Lud', 'Lyd', 'Lyn', 'Mal', 'Man', 'Mar', 'Mart', 'Mat', 'Mel', 'Mid', 'Mil', 'Mon', 'Mor',
+  'Mort', 'Moss', 'Mul', 'Nan', 'Neth', 'Nut', 'Ock', 'Old', 'Ort', 'Ot', 'Ox', 'Pad', 'Pak', 'Pan', 'Pat',
+  'Pel', 'Pert', 'Pet', 'Pick', 'Pin', 'Pit', 'Plum', 'Pol', 'Pond', 'Pres', 'Pul', 'Put', 'Quar', 'Rain', 'Raven',
+  'Ray', 'Rid', 'Rip', 'Rock', 'Rom', 'Ros', 'Rud', 'Rush', 'Ry', 'Sal', 'Salt', 'Sax', 'Scar', 'Sea', 'Sef',
+  'Shaft', 'Shap', 'Shel', 'Shep', 'Shir', 'Shore', 'Sil', 'Silver', 'Skel', 'Sid', 'Slad', 'Snow', 'Sol', 'Somer', 'Sow',
+  'Spald', 'Spring', 'Staf', 'Stoke', 'Stow', 'Strat', 'Stret', 'Sud', 'Sum', 'Swan', 'Swin', 'Syd', 'Tad', 'Tam', 'Tan',
+  'Tav', 'Ted', 'Tem', 'Tew', 'Thack', 'Than', 'Thrus', 'Tib', 'Til', 'Tod', 'Tot', 'Tow', 'Tren', 'Tring', 'Tun',
+  'Twy', 'Ux', 'Ver', 'Wad', 'Wake', 'Wan', 'War', 'Wat', 'Wav', 'Wed', 'Wel', 'Wen', 'Wey', 'Wim', 'Win',
+  'Wind', 'Wit', 'Wol', 'Wor', 'Wy',
 ];
-const ENDINGS = ['ford', 'field', 'ley', 'ton', 'bury', 'wick', 'ham', 'worth', 'stead', 'dale', 'wood', 'combe', 'gate', 'hurst', 'mere', 'thorpe', 'by', 'well', 'den', 'cote', 'borough', 'minster', 'bridge', 'brook', 'holme'];
+const ENDINGS = [
+  'ford', 'field', 'ley', 'ton', 'bury', 'wick', 'ham', 'worth', 'stead', 'dale', 'wood', 'combe', 'gate', 'hurst', 'mere', 'thorpe',
+  'by', 'well', 'den', 'cote', 'borough', 'minster', 'bridge', 'brook', 'holme', 'hampton', 'ing', 'ington', 'ingham', 'low', 'marsh', 'moor',
+  'more', 'ney', 'ock', 'port', 'ridge', 'sey', 'shaw', 'shot', 'side', 'stock', 'stone', 'stow', 'wade', 'water', 'way', 'wych',
+];
 const SURNAMES = [
   'Ashby', 'Barrow', 'Bennett', 'Carlisle', 'Dawson', 'Ellis', 'Fletcher', 'Gibson', 'Harper', 'Hughes', 'Jennings', 'Kendall',
-  'Lambert', 'Marlowe', 'Norton', 'Parker', 'Radcliffe', 'Shelley', 'Thornton', 'Underwood', 'Vaughan', 'Walsh', 'Yates',
-  'Abbott', 'Baxter', 'Chandler', 'Darby', 'Elliot', 'Fairfax', 'Granger', 'Hartley', 'Ingram', 'Keats', 'Lowell', 'Merrick',
-  'Newton', 'Osborne', 'Palmer', 'Quinn', 'Rowland', 'Sutton', 'Tennyson', 'Upton', 'Vernon', 'Wardell', 'Austen', 'Blake',
-  'Byron', 'Cavendish', 'Dickens', 'Elgar', 'Faraday', 'Gainsborough', 'Hardy', 'Kipling', 'Morris', 'Nash', 'Pitt', 'Russell',
-  'Spencer', 'Turner', 'Wilberforce', 'Wren', 'Constable', 'Darwin', 'Brunel', 'Telford', 'Stephenson', 'Pankhurst', 'Seacole',
+  'Lambert', 'Marlowe', 'Norton', 'Parker', 'Radcliffe', 'Shelley', 'Thornton', 'Underwood', 'Vaughan', 'Walsh', 'Yates', 'Abbott',
+  'Baxter', 'Chandler', 'Darby', 'Elliot', 'Fairfax', 'Granger', 'Hartley', 'Ingram', 'Keats', 'Lowell', 'Merrick', 'Newton',
+  'Osborne', 'Palmer', 'Quinn', 'Rowland', 'Sutton', 'Tennyson', 'Upton', 'Vernon', 'Wardell', 'Austen', 'Blake', 'Byron',
+  'Cavendish', 'Dickens', 'Elgar', 'Faraday', 'Gainsborough', 'Hardy', 'Kipling', 'Morris', 'Nash', 'Pitt', 'Russell', 'Spencer',
+  'Turner', 'Wilberforce', 'Wren', 'Constable', 'Darwin', 'Brunel', 'Telford', 'Stephenson', 'Pankhurst', 'Seacole', 'Addison', 'Ainsworth',
+  'Aldridge', 'Allerton', 'Ambrose', 'Anstey', 'Appleby', 'Archer', 'Arkwright', 'Armitage', 'Ashdown', 'Atherton', 'Atwood', 'Aubrey',
+  'Avery', 'Aylward', 'Bagshaw', 'Bainbridge', 'Barker', 'Barlow', 'Barnes', 'Bartram', 'Bascombe', 'Bateman', 'Beckett', 'Bellamy',
+  'Benbow', 'Bentley', 'Beresford', 'Bewick', 'Bingham', 'Birkett', 'Blackwood', 'Blundell', 'Bolton', 'Booth', 'Boswell', 'Bowden',
+  'Bradshaw', 'Bramwell', 'Brewster', 'Brightwell', 'Brockway', 'Bronte', 'Brooke', 'Browning', 'Buckland', 'Bunyan', 'Burbage', 'Burgess',
+  'Burney', 'Caxton', 'Chaucer', 'Churchill', 'Clarkson', 'Clement', 'Coleridge', 'Collier', 'Colville', 'Cookson', 'Corbett', 'Cotton',
+  'Coverdale', 'Cromwell', 'Crosby', 'Culpeper', 'Dalton', 'Davenport', 'Defoe', 'Denham', 'Dryden', 'Dunstan', 'Eastwood', 'Edison',
+  'Egerton', 'Eliot', 'Emerson', 'Evelyn', 'Fawcett', 'Fielding', 'Finch', 'Fitzroy', 'Forster', 'Fowler', 'Franklin', 'Fry',
+  'Garrick', 'Gaskell', 'Gilbert', 'Godwin', 'Goldsmith', 'Gordon', 'Graham', 'Gresham', 'Grey', 'Grimshaw', 'Hadley', 'Hale',
+  'Halley', 'Hamilton', 'Handel', 'Harcourt', 'Harding', 'Hargreaves', 'Harrington', 'Harvey', 'Hastings', 'Hawkins', 'Hazlitt', 'Herschel',
+  'Hobbes', 'Hogarth', 'Holbein', 'Hooke', 'Hopkins', 'Howard', 'Hume', 'Hunt', 'Jenner', 'Johnson', 'Jowett', 'Keble',
+  'Kemble', 'Kingsley', 'Knowles', 'Landor', 'Latimer', 'Lawrence', 'Leighton', 'Lister', 'Locke', 'Lovelace', 'Lyell', 'Macaulay',
+  'Malory', 'Mansfield', 'Marvell', 'Maxwell', 'Meredith', 'Milton', 'Montague', 'Moore', 'Napier', 'Nelson', 'Newman', 'Nightingale',
+  'Orwell', 'Owen', 'Paget', 'Paine', 'Peel', 'Pepys', 'Petrie', 'Pope', 'Priestley', 'Purcell', 'Raleigh', 'Ramsay',
+  'Reynolds', 'Ricardo', 'Rossetti', 'Ruskin', 'Salisbury', 'Scott', 'Shaftesbury', 'Sheridan', 'Sidney', 'Smeaton', 'Somerville', 'Southey',
+  'Stanhope', 'Sterne', 'Stubbs', 'Swift', 'Talbot', 'Thackeray', 'Tyndale', 'Wallace', 'Walpole', 'Watt', 'Webb', 'Wedgwood',
+  'Wesley', 'Whitworth', 'Wilde', 'Wolfe', 'Woolf', 'Wordsworth', 'Wycliffe',
 ];
 const THINGS = [
   'Acacia', 'Laurel', 'Chestnut', 'Linden', 'Poplar', 'Sycamore', 'Hawthorn', 'Juniper', 'Larch', 'Myrtle', 'Primrose', 'Bluebell',
   'Foxglove', 'Heather', 'Clover', 'Orchard', 'Meadow', 'Spring', 'Well', 'Windmill', 'Tannery', 'Brewery', 'Granary', 'Foundry',
-  'Mason', 'Weaver', 'Cooper', 'Chapel', 'Abbey', 'Priory', 'Castle', 'Tower', 'Beacon', 'Ferry', 'Wharf', 'Quarry', 'Pottery',
+  'Mason', 'Weaver', 'Cooper', 'Chapel', 'Abbey', 'Priory', 'Castle', 'Tower', 'Beacon', 'Ferry', 'Wharf', 'Quarry',
+  'Pottery', 'Alder', 'Almond', 'Apple', 'Aspen', 'Bracken', 'Bramble', 'Briar', 'Broom', 'Buttercup', 'Camellia', 'Catkin',
+  'Cherry', 'Clematis', 'Cowslip', 'Crab', 'Cypress', 'Daisy', 'Damson', 'Elder', 'Fennel', 'Fir', 'Gorse', 'Hazel',
+  'Holly', 'Honeysuckle', 'Hornbeam', 'Iris', 'Ivy', 'Jasmine', 'Lavender', 'Lilac', 'Lime', 'Magnolia', 'Marigold', 'Medlar',
+  'Mulberry', 'Nettle', 'Olive', 'Pear', 'Pine', 'Plum', 'Quince', 'Reed', 'Rose', 'Rosemary', 'Rush', 'Saffron',
+  'Sage', 'Sorrel', 'Teasel', 'Thistle', 'Thyme', 'Tulip', 'Violet', 'Walnut', 'Wisteria', 'Yew', 'Anvil', 'Bakehouse',
+  'Barley', 'Bell', 'Boathouse', 'Bowling', 'Brickfield', 'Candle', 'Cannon', 'Cloth', 'Coach', 'Cobble', 'Copper', 'Corn',
+  'Dairy', 'Dye', 'Forge', 'Glass', 'Glebe', 'Hop', 'Kiln', 'Lantern', 'Lock', 'Malt', 'Market', 'Mint',
+  'Paper', 'Pump', 'Rope', 'Saddle', 'Salt', 'Sawmill', 'Silk', 'Smithy', 'Soap', 'Spinner', 'Tallow', 'Tanner',
+  'Tile', 'Timber', 'Toll', 'Vine', 'Wool', 'Badger', 'Falcon', 'Fox', 'Hare', 'Heron', 'Kestrel', 'Kingfisher',
+  'Lapwing', 'Linnet', 'Magpie', 'Mallard', 'Martin', 'Nightingale', 'Otter', 'Owl', 'Peacock', 'Plover', 'Raven', 'Robin',
+  'Rook', 'Skylark', 'Sparrow', 'Starling', 'Swallow', 'Swan', 'Thrush', 'Wagtail', 'Woodpecker', 'Arch', 'Bank', 'Barrow',
+  'Bourne', 'Causeway', 'Cliff', 'Coppice', 'Croft', 'Dell', 'Dyke', 'Fold', 'Ford', 'Grove', 'Haven', 'Hollow',
+  'Knoll', 'Lea', 'Mead', 'Mill', 'Pond', 'Ridge', 'Shaw', 'Spinney', 'Stile', 'Weir',
 ];
 const HOOD_STREET = 0.3; // share of one-word neighbourhoods whose main street takes their name
-const PLACE_WORDS = ['Green', 'Heath', 'End', 'Common', 'Park', 'Fields', 'Hill', 'Cross', 'Vale', 'Wood', 'Gate', 'Rise', 'Side', 'Town'];
+const PLACE_WORDS = ['Green', 'Heath', 'End', 'Common', 'Park', 'Fields', 'Hill', 'Cross', 'Vale', 'Wood', 'Gate', 'Rise', 'Side', 'Town', 'Bank', 'Bridge', 'Farm', 'Grange', 'Hollow', 'Lea', 'Marsh', 'Mead', 'Row', 'Wharf', 'Yard', 'Corner', 'Down', 'Edge', 'Hythe', 'Moor'];
 
 // Street types, by kind and shape. Most streets are plain streets.
 export const STREET_TYPES_NAMES = {
@@ -57,9 +110,11 @@ export function createNames(seed) {
   // A street's own word: a family name, a thing, or a place.
   const word = (...k) => {
     const r = u(...k, 10);
-    if (r < 0.45) return pick(SURNAMES, ...k, 11);
-    if (r < 0.75) return pick(THINGS, ...k, 12);
-    return place(...k, 13).split(' ').pop();
+    if (r < 0.35) return pick(SURNAMES, ...k, 11);
+    if (r < 0.6) return pick(THINGS, ...k, 12);
+    // (Of "Harper Green", Harper; of "Old Ashford", Ashford.)
+    const parts = place(...k, 13).split(' ');
+    return PLACE_WORDS.includes(parts[parts.length - 1]) ? parts[0] : parts[parts.length - 1];
   };
   // Main streets. A neighbourhood with a one-word name now and then lends
   // it to its own main street (the one through its centre): its High
