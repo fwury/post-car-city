@@ -204,7 +204,9 @@ export function layOutCrossings(j) {
 // [{ id, kind, lines }] (kinds local, core, coreNarrow, pedestrian, rail);
 // alleys: laneways [pts]; greenways: linear parks' trails [pts]; places:
 // points worth a tram stop.
-export function planJunctions(seedKey, { majors, local, alleys = [], greenways = [], places = [] }) {
+// onLand(p): whether a point is on the district's land (not in a greenway,
+// a river or a park): streets meeting anywhere else are no junction.
+export function planJunctions(seedKey, { majors, local, alleys = [], greenways = [], places = [], onLand = () => true }) {
   const u = (...k) => toUnit(hash(seedKey, 'junction', ...k));
   const lines = majors.map((m) => ({ ...m, cum: params(m.pts) }));
   const junctions = [];
@@ -341,6 +343,16 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     const j = at(q);
     for (const a of uniq) j.kinds.add(a.kind);
     addArms(j, uniq);
+  }
+
+  // (Not where streets meet out on a greenway, say where one district's
+  // boulevard runs on into the next's over a bridge.)
+  for (let k = junctions.length - 1; k >= 0; k--) {
+    if (onLand(junctions[k].p)) continue;
+    const j = junctions[k];
+    junctions.splice(k, 1);
+    const g = grid.get(Math.floor(j.p[0] / G) * 1e6 + Math.floor(j.p[1] / G));
+    if (g) g.splice(g.indexOf(j), 1);
   }
 
   // ---- Kinds ----

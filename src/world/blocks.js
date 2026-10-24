@@ -1871,6 +1871,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       alleys: blocks.map((b) => b.alley).filter(Boolean),
       greenways: linearParks.map((lp) => lp.centre),
       places,
+      onLand: (q) => sideLoops.some((lp) => pointInPolygon(q[0], q[1], lp)),
     });
     return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tramStopList, greenLinks, districtParks, linearParks, arcades, halls: sites.map((st) => ({ pts: st.hall, central: st.central, t: st.t })) };
   }
