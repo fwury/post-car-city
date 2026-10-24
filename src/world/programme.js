@@ -34,8 +34,7 @@ const ELEMENTARY_PER_HOOD = 2;
 const SCHOOL_BLOCK = [0.3e4, 1.3e4]; // m², net: a block an elementary school takes
 const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
 const CATHEDRAL_BLOCK = [0.45e4, 1.8e4];
-const STADIUM_SHARE = 0.6; // of districts, those with a stadium
-const STADIUM_BLOCK = [1.0e4, 4.5e4]; // m², a stadium's block // m², a cathedral's block, beside a square
+// m², a cathedral's block, beside a square
 const REC_BLOCK = [0.5e4, 1.6e4];
 const PARKETTE_GAP = 210; // metres between parkettes in rowhouse areas (about four within 400 m)
 const SUBDISTRICT_HOODS = 3; // neighbourhoods to a subdistrict centre
@@ -234,16 +233,9 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   }
 
   // ---- A stadium ----
-  // In some districts (more than half), on a block of its own near the core.
-  if (toUnit(hash(seed, 'stadium', ...keyInts(d.coreInfo))) < STADIUM_SHARE) {
-    const b = blocks
-      .filter((o) => (o.use === 'perimeter' || o.use === 'podium' || o.use === 'rowhouse') && o.area >= STADIUM_BLOCK[0] && o.area <= STADIUM_BLOCK[1] && o.plots && !o.plots.some((p) => p.dedicated))
-      .map((o) => ({ o, r: len(sub(centroid(o.pts), S)) }))
-      .filter((x) => x.r > 250 && x.r < 1400)
-      // The biggest block, nearer the core the better.
-      .sort((x, y) => y.o.area - 12 * y.r - (x.o.area - 12 * x.r))[0];
-    if (b) dedicateBlock(b.o, 'stadium');
-  }
+  // In some districts (more than half), on the block cut for it near the
+  // core (see blocks.js).
+  for (const b of blocks) if (b.use === 'stadium' && b.plots) dedicateBlock(b, 'stadium');
 
   // ---- Subdistrict centres ----
   const rest = hoods.filter((h) => !h.core);

@@ -76,6 +76,9 @@ const LINEAR_PARK_SHARE = 0.5; // of such stretches of boundary, those made line
 const LINEAR_PARK_WIDTH = [28, 40]; // metres
 const ROW_AWKWARD_AREA = 0.9e4; // m²: a rowhouse block bigger than this that is far from rectangular is split again ...
 const TERRACE_RECT_GOOD = 0.78; // ... (rectangular enough, by this measure); a smaller one is a green
+const STADIUM_SHARE = 0.6; // of districts, those with a stadium
+const STADIUM_SITE = [250, 200]; // metres, centreline: a stadium's block (a 60 000-seat bowl and its concourse)
+const STADIUM_REACH = [300, 1500]; // metres from the station
 const ROW_STRIP = 74; // metres, centreline to centreline: a rowhouse block's width (two houses, gardens and the lane)
 const OVERSIZE = 1.5; // a block this many times its usual area must split, one way or another
 const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
@@ -1241,6 +1244,30 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       return null;
     };
 
+    // About three districts in five have a stadium.
+    const wantStadium = toUnit(hash(seed, 'stadium', ...keyInts(d.coreInfo))) < STADIUM_SHARE;
+    let stadiumPlaced = false;
+    // Cut a block of a stadium's size from a node: a strip of its width
+    // along one side, then that strip cut to its length. Returns the block
+    // and the pieces left, or null.
+    function carve(node, ax, zone) {
+      const [SL, SW] = STADIUM_SITE;
+      for (const t of [SW / ax.W, 1 - SW / ax.W]) {
+        const kids = split(node, ax, zone, { at: t, along: true, force: true });
+        if (!kids) continue;
+        const [strip, other] = kids.map((k) => ({ k, a: axes(k.pts) })).sort((x, y) => Math.abs(x.a.W - SW) - Math.abs(y.a.W - SW));
+        if (Math.abs(strip.a.W - SW) > 18) continue;
+        for (const u of [SL / strip.a.L, 1 - SL / strip.a.L, 0.5]) {
+          if (u <= 0 || u >= 1) continue;
+          const parts = split(strip.k, strip.a, zone, { at: u, along: false, force: true });
+          if (!parts) continue;
+          const [blk, rest] = parts.map((k) => ({ k, a: axes(k.pts) })).sort((x, y) => Math.abs(x.a.L - SL) - Math.abs(y.a.L - SL));
+          if (Math.abs(blk.a.L - SL) > 45 || blk.a.W < SW - 18 || rectness(blk.k.pts) < 0.85) continue;
+          return { block: blk.k, rest: [other.k, rest.k] };
+        }
+      }
+      return null;
+    }
     const leaves = [];
     let queue = supers.map((f) => ({ pts: f.pts, tags: f.tags }));
     queue.sort((a, b) => a.pts[0][0] - b.pts[0][0] || a.pts[0][1] - b.pts[0][1]);
@@ -1255,6 +1282,20 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
           squareOf.set(sq.id, leaf);
           leaves.push(leaf);
           continue;
+        }
+        // A stadium's own block, cut to its size from a large piece of land
+        // near the core: a rectangle, the stadium filling it.
+        if (wantStadium && !stadiumPlaced && zone !== 'campus') {
+          const r = len(sub(ax.c, d.station));
+          if (r > STADIUM_REACH[0] && r < STADIUM_REACH[1] && ax.W >= STADIUM_SITE[1] + 70 && ax.L >= STADIUM_SITE[0] + 70) {
+            const site = carve(node, ax, zone);
+            if (site) {
+              stadiumPlaced = true;
+              leaves.push({ ...site.block, ax: axes(site.block.pts), use: 'stadium', hood: hoodAt(site.block.ax ? site.block.ax.c : axes(site.block.pts).c)?.id ?? 0 });
+              next.push(...site.rest);
+              continue;
+            }
+          }
         }
         const pk = parkFor(node, ax.area);
         if (pk) {
