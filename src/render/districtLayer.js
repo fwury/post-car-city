@@ -428,14 +428,19 @@ export function drawDistricts(ctx, view, world, layers) {
   return items;
 }
 
-const transitCache = new WeakMap();
-function transitPaths(t, origin) {
-  let p = transitCache.get(t);
-  if (p && p.origin === origin) return p;
-  const [ox, oy] = origin;
-  p = { origin, metro: new Path2D() };
-  for (const L of t.metro) addPoly(p.metro, L, ox, oy, false);
-  transitCache.set(t, p);
+// A line's path offset to one side (metres), cached by offset.
+const offsetCache = new WeakMap();
+function offsetPath(pts, o) {
+  let m = offsetCache.get(pts);
+  if (!m) offsetCache.set(pts, (m = new Map()));
+  const k = Math.round(o * 4) / 4;
+  let p = m.get(k);
+  if (!p) {
+    p = new Path2D();
+    addPoly(p, k ? offsetLine(pts, k) : pts, 0, 0, false);
+    if (m.size > 6) m.clear();
+    m.set(k, p);
+  }
   return p;
 }
 
@@ -459,24 +464,30 @@ function drawTransit(ctx, view, world, items, place, px, which) {
   const { zoom, x0, y0, s } = view;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
+  const m = VIADUCT * 2;
+  const vx0 = x0 - m;
+  const vy0 = y0 - m;
+  const vx1 = x0 + view.w / s + m;
+  const vy1 = y0 + view.h / s + m;
   if (which === 'metro') {
-    if (zoom > 1.6) return;
-    const list = items.map(({ d }) => ({ d, p: transitPaths(world.transit(d), d.origin) }));
-    ctx.strokeStyle = palette.metro;
-    ctx.globalAlpha = 0.85;
-    ctx.lineWidth = Math.max(5, px(3));
-    ctx.setLineDash([px(6), px(4)]);
-    for (const { d, p } of list) {
-      place(d);
-      ctx.stroke(p.metro);
+    // The metro in tunnels: each line in its own colour, lines sharing a
+    // stretch side by side; hidden close in, where the streets take over.
+    if (zoom > 1.6 || !world.metro) return;
+    ctx.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
+    // (Thinner than the rail, with a white casing.)
+    const w = px(zoom < 0.05 ? 1.6 : 2.2);
+    for (const [colour, width] of [['#ffffff', w * 2], [null, w]]) {
+      for (const L of world.metro.near(vx0, vy0, vx1, vy1)) {
+        ctx.strokeStyle = colour || L.colour;
+        ctx.lineWidth = width;
+        for (const pc of L.pieces) ctx.stroke(offsetPath(pc.pts, (pc.rank - (pc.of - 1) / 2) * w * 1.3));
+      }
     }
-    ctx.setLineDash([]);
-    ctx.globalAlpha = 1;
     return;
   }
   if (!world.rail) return;
-  const m = VIADUCT * 2;
-  const list = world.rail.near(x0 - m, y0 - m, x0 + view.w / s + m, y0 + view.h / s + m).map(railPaths);
+  const segs = world.rail.near(vx0, vy0, vx1, vy1);
+  const list = segs.map(railPaths);
   ctx.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
   const close = zoom >= 0.5;
   if (close) {
@@ -493,6 +504,24 @@ function drawTransit(ctx, view, world, items, place, px, which) {
     ctx.strokeStyle = palette.railTrack;
     ctx.lineWidth = Math.max(0.15, px(0.6));
     for (const p of list) ctx.stroke(p.rails);
+  } else if (zoom < 0.3) {
+    // Far out, as on a transit map: each line in its colour, side by side
+    // where they share the track.
+    // (Thicker than the metro, cased in the viaduct's grey.)
+    const w = px(zoom < 0.05 ? 2.4 : 3.2);
+    ctx.strokeStyle = palette.railEdge;
+    for (const sg of segs) {
+      ctx.lineWidth = w * ((sg.lines || []).length || 1) + px(1.6);
+      ctx.stroke(railPaths(sg).rail);
+    }
+    for (const sg of segs) {
+      const ids = sg.lines || [];
+      ids.forEach((id, k) => {
+        ctx.strokeStyle = world.rail.lines[id].colour;
+        ctx.lineWidth = w;
+        ctx.stroke(offsetPath(sg.pts, (k - (ids.length - 1) / 2) * w));
+      });
+    }
   } else {
     // Farther out, ties along the line, as maps draw railways.
     ctx.strokeStyle = '#ffffff';

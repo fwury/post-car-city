@@ -22,6 +22,7 @@ import { createParks } from './parks.js';
 import { createGreenways } from './greenway.js';
 import { createTransit } from './transit.js';
 import { createRail } from './rail.js';
+import { createMetro } from './metro.js';
 import { createNames } from './names.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
 export { PARK_AREA_HA } from './parks.js';
@@ -182,9 +183,13 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   // whose boundaries follow it.
   const rail = createRail(seed, { cores: cityCores, terrain });
   const boulevards = createBoulevards(seed);
+  // The metro, for the whole city: from the districts' boulevards, before
+  // the neighbourhoods, whose centres its stations are.
+  const metro = createMetro(seed, { cores: cityCores, base: (c) => base(c), network: (b) => boulevards.network(b), rail, population, isWater: terrain.isWater });
   const hoods = createNeighbourhoods(seed, {
     boulevards,
     railIn: (d) => rail.near(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1).map((sg) => sg.pts),
+    metroIn: (d) => metro.stationsIn(d.key),
   });
   const parks = createParks(seed, {
     baseOf: (k) => baseOf(k), label: (i, j) => growth.label(i, j), parcel: PARCEL,
@@ -229,7 +234,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     return arms;
   }
   const names = createNames(seed);
-  const transit = createTransit({ rail });
+  const transit = createTransit({ rail, metro });
 
   const bases = new LruCache(12000);
   const districts = new LruCache(12000);
@@ -688,10 +693,10 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   }
 
   // Stage 4: local streets and blocks, worked out only when wanted.
-  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.near(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1).map((sg) => sg.pts) });
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.near(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1).map((sg) => sg.pts), stationsIn: (d) => transit.of(d).railStops });
 
   return {
-    seed, population, terrain, centre, cityCores, rail, cores, growth, boulevards,
+    seed, population, terrain, centre, cityCores, rail, metro, cores, growth, boulevards,
     blocks: (d) => blocks.of(d),
     forgetBlocks: (d) => blocks.forget(d),
     // Stage 5: the stream, trail and woods of a stretch of greenway.

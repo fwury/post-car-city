@@ -49,6 +49,7 @@ const LLOYD_STEPS = 6; // rounds of moving the free centres to the middle of the
 const CAMPUS_SHARE = 0.45; // share of a campus neighbourhood's land that is not housing
 export const NEIGHBOURHOODS = [1, 22]; // per district, besides the core (as many as its people fill)
 export const RING_MARGIN = 80; // land this close to a district's greenway is the greenway's
+const BOULEVARD_SNAP = 140; // metres a metro station's neighbourhood centre may move to sit on its boulevard
 export const SPINE_REACH = 450; // metres of its main street either side of a centre a neighbourhood grows from
 export const GATEWAY_TWO = 2600; // a shared greenway this long gets two gateways for main streets, else one
 const EDGE_END = 400; // crossings keep this far from the ends of a greenway stretch
@@ -91,7 +92,7 @@ function along(pts, s) {
   return pts[pts.length - 1];
 }
 
-export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
+export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metroIn = () => [] }) {
   const mainStreets = createMainStreets(seed);
   const friction = createNoise(seed, 'neighbourhood-friction');
   // Housing form: perimeter blocks where high, rowhouses and villas where low.
@@ -228,12 +229,33 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
     const fromEdge = distanceField(CELL, edgeSrc, W, H);
 
     // ---- Centres ----
-    // The core first, then centres along the boulevards, then the rest.
+    // The core first, then the metro stations (each the centre of its
+    // neighbourhood), then centres along the boulevards, then the rest.
     const centres = [[S[0], S[1]]];
     const onBoulevard = [{ t: null }];
     const spacing = Math.sqrt(NEIGHBOURHOOD_AREA) * 1.05;
     const farFrom = (p, r) => centres.every((c) => len(sub(c, p)) >= r);
     const lines = d.network.lines.filter((l) => l.kind !== 'roundabout').slice().sort((a, b) => (a.key < b.key ? -1 : 1));
+    for (const st of metroIn(d)) {
+      const n = cellOf(st.p[0], st.p[1]);
+      if (st.core || centres.length >= count || n < 0 || mask[n] !== LAND || onRail[n] || fromEdge[n] < 400) continue;
+      // (As far apart as centres along the boulevards.)
+      const local = Math.sqrt(NEIGHBOURHOOD_PEOPLE / dens[n]) * 1.05;
+      if (len(sub(st.p, S)) < local * 1.1 || !farFrom(st.p, local)) continue;
+      // On the boulevard above it (the metro runs under the boulevards, if
+      // not always right under them): that is its main street.
+      let best = null;
+      for (const l of lines) {
+        const q = l.points;
+        for (let i = 1; i < q.length - 1; i++) {
+          const r = len(sub(q[i], st.p));
+          if (r < BOULEVARD_SNAP && (!best || r < best.r)) best = { r, p: q[i], t: unit(sub(q[i + 1], q[i - 1])) };
+        }
+      }
+      if (best && !farFrom(best.p, local)) continue;
+      centres.push(best ? best.p : st.p.slice());
+      onBoulevard.push({ t: best ? best.t : null });
+    }
     for (const l of lines) {
       const q = l.points;
       for (let i = 3; i < q.length - 3 && centres.length < count; i += 3) {
@@ -319,11 +341,17 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
       }
     }
 
-    // The campus, if any: one of the free centres, picked by its place alone.
+    // The campus, if any: one of the free centres with room round it (the
+    // more open half), picked by its place alone.
     let campus = null;
     if (hasCampus) {
       let best = -1;
+      const room = (k) => Math.min(...centres.map((c, j) => (j === k ? Infinity : len(sub(c, centres[k])))));
+      const rooms = [];
+      for (let k = fixed; k < count; k++) rooms.push(room(k));
+      const enough = rooms.slice().sort((a, b) => a - b)[Math.floor(rooms.length / 2)] ?? 0;
       for (let k = fixed; k < count; k++) {
+        if (room(k) < enough) continue;
         const u = toUnit(hash(seed, 'campus-site', Math.floor(centres[k][0] / CELL), Math.floor(centres[k][1] / CELL)));
         if (u > best) {
           best = u;
@@ -355,7 +383,9 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
         let bd = Infinity;
         for (const n of land) {
           if (side[n] !== k) continue;
-          const dd = Math.hypot(cx(n) - tx, cy(n) - ty) - Math.min(fromEdge[n], 200);
+          // (Near its middle, but clear of centres across the track.)
+          const clear = Math.min(600, ...centres.map((c) => Math.hypot(cx(n) - c[0], cy(n) - c[1])));
+          const dd = Math.hypot(cx(n) - tx, cy(n) - ty) - Math.min(fromEdge[n], 200) - clear;
           if (dd < bd) [bd, b] = [dd, n];
         }
         if (b >= 0) {
@@ -799,6 +829,12 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
       h.density = h.area > 0 ? Math.round(pop[h.id] / (h.area / 1e6)) : 0;
       // One form of housing to a neighbourhood: the less dense are rowhouses.
       h.character = h.core ? 'core' : h.campus ? 'campus' : h.density < ROWHOUSE_DENSITY ? 'rowhouses' : 'perimeter blocks';
+    }
+    // Neighbourhoods with a metro station.
+    for (const st of metroIn(d)) {
+      const n = cellOf(st.p[0], st.p[1]);
+      const k = n >= 0 ? label[n] : -1;
+      if (k >= 0 && hoods[k]) (hoods[k].metro ||= []).push(st.id);
     }
     // The rasters later stages read: residents per m² and neighbourhood per cell.
     const raster = { x0, y0, W, H, cell: CELL, dens, label };

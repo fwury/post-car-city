@@ -308,39 +308,65 @@ export class Renderer {
     const m = 40 / camera.zoom;
     const big = camera.zoom >= 0.06;
     const world = this.getWorld();
-    // Metro stations at neighbourhood centres, then second rail stops, then
-    // the district stations on top.
-    if (camera.zoom >= 0.15) {
-      for (const d of world.districtsInRect(b.x0 - m, b.y0 - m, b.x1 + m, b.y1 + m)) {
-        const t = world.transit(d);
-        for (const st of t.metroStops.slice(1)) this.metroBadge(...camera.worldToScreen(st.p[0], st.p[1]));
+    // Metro stations (at district and neighbourhood centres), then rail
+    // stations on top; close enough in, each with its lines' names.
+    const named = camera.zoom >= 0.3;
+    const inView = ([x, y]) => x >= b.x0 - m && x <= b.x1 + m && y >= b.y0 - m && y <= b.y1 + m;
+    const metro = world.metro;
+    const railKeys = new Set(world.rail.stations.filter((st) => st.key).map((st) => st.key));
+    if (metro && camera.zoom >= 0.06) {
+      for (const st of metro.stations) {
+        if (!inView(st.p)) continue;
+        // (A district's rail station stands for its metro station far out.)
+        if (st.core && railKeys.has(st.key) && camera.zoom < 0.3) continue;
+        const [sx, sy] = camera.worldToScreen(st.p[0], st.p[1]);
+        if (camera.zoom < 0.2 && !st.core) this.metroDot(sx, sy, metro.lines[st.lines[0]].colour);
+        else this.metroBadge(sx, sy, st.core ? 1 : 0.8);
+        if (named && st.lines.length) this.linePills(sx + 10, sy, st.lines.map((id) => metro.lines[id]));
       }
     }
-    // Rail stations: the district stations on the lines and the stops
-    // between them; a district off the rail has its metro station.
-    const onRail = new Set();
     for (const st of world.rail.stations) {
-      if (st.key) onRail.add(st.key);
       const [x, y] = st.p;
-      if (x < b.x0 - m || x > b.x1 + m || y < b.y0 - m || y > b.y1 + m) continue;
+      if (!inView(st.p)) continue;
       if (st.stop && camera.zoom < 0.15) continue;
       const [sx, sy] = camera.worldToScreen(x, y);
       if (!big) this.stationDot(sx, sy);
       else this.stationBadge(sx, sy, st.stop ? 0.8 : st.central ? 1.25 : 1);
-    }
-    for (const c of world.coresInRect(b.x0 - m, b.y0 - m, b.x1 + m, b.y1 + m)) {
-      if (onRail.has(c.key)) continue;
-      const [sx, sy] = camera.worldToScreen(c.x, c.y);
-      if (big) this.metroBadge(sx, sy);
-      else this.stationDot(sx, sy);
+      if (named && st.lines && st.lines.length) this.linePills(sx + (st.central ? 14 : 12), sy, st.lines.map((id) => world.rail.lines[id]));
     }
   }
 
+  // Small rounded tags in line colours, each with the line's name.
+  linePills(x, y, lines) {
+    const { ctx } = this;
+    ctx.save();
+    ctx.font = '700 9px -apple-system, system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    let at = Math.round(x);
+    for (const L of lines) {
+      const w = Math.max(13, ctx.measureText(L.name).width + 6);
+      ctx.fillStyle = '#fff';
+      ctx.beginPath();
+      ctx.roundRect(at - 1, Math.round(y) - 7.5, w + 2, 15, 4);
+      ctx.fill();
+      ctx.fillStyle = L.colour;
+      ctx.beginPath();
+      ctx.roundRect(at, Math.round(y) - 6.5, w, 13, 3.5);
+      ctx.fill();
+      ctx.fillStyle = '#fff';
+      ctx.fillText(L.name, at + w / 2, Math.round(y) + 0.5);
+      at += w + 2;
+    }
+    ctx.restore();
+  }
+
   // A metro station: a white disc with an M.
-  metroBadge(x, y) {
+  metroBadge(x, y, scale = 1) {
     const { ctx } = this;
     ctx.save();
     ctx.translate(Math.round(x), Math.round(y));
+    ctx.scale(scale, scale);
     ctx.beginPath();
     ctx.arc(0, 0, 8, 0, Math.PI * 2);
     ctx.fillStyle = '#fff';
@@ -354,6 +380,18 @@ export class Renderer {
     ctx.textBaseline = 'middle';
     ctx.fillText('M', 0, 0.5);
     ctx.restore();
+  }
+
+  // A metro station far out: a small white dot ringed in its line's colour.
+  metroDot(sx, sy, colour) {
+    const { ctx } = this;
+    ctx.beginPath();
+    ctx.arc(sx, sy, 3, 0, Math.PI * 2);
+    ctx.fillStyle = '#fff';
+    ctx.fill();
+    ctx.lineWidth = 1.5;
+    ctx.strokeStyle = colour;
+    ctx.stroke();
   }
 
   stationDot(sx, sy) {

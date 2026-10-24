@@ -40,6 +40,7 @@ const MAX_TURN = STEP / 140; // radians per step: no bend tighter than about 140
 const MAX_ROUTE_TURN = (200 * Math.PI) / 180; // a route through several centres may wind a little more
 const STATION_CLEAR = 250; // routes join the core's streets this far from the station, not at it
 const ROUTE_GAP = 300; // a loose end stops this close beside a street running the same way
+const JOIN_REACH = 900; // metres a crossing street meeting nothing at all may run straight on to the nearest street
 const PAIR_REACH = 1000; // two loose ends this close may join up as one street
 const FILL_SHIFT = 180; // a cross street for a neighbourhood left without a route may pass this far from its centre
 const FILL_GAP = 220; // and may come this close beside a street running the same way
@@ -1313,6 +1314,31 @@ export function createMainStreets(seed) {
     if (all.some((l) => l.alive && l.lonely)) {
       all = resolve(true);
       out = extract(all);
+    }
+    // Last of all, a street in from a greenway crossing that still meets
+    // nothing runs straight on to the nearest street, if one is near.
+    for (const o of out) {
+      if (!o.crossing || o.crossingEnd || o.parkEnd) continue;
+      const e = o.points[o.points.length - 1];
+      const others = out.filter((x) => x !== o).map((x) => x.points).concat(d.network.lines.map((l) => l.points));
+      if (others.some((P) => P.some((q, i) => i && segDist(e[0], e[1], P[i - 1][0], P[i - 1][1], q[0], q[1]) < 1))) continue;
+      let best = null;
+      for (const P of others) {
+        for (let i = 1; i < P.length; i++) {
+          const a = P[i - 1];
+          const ab = sub(P[i], a);
+          const l2 = dot(ab, ab) || 1;
+          const t = Math.max(0, Math.min(1, dot(sub(e, a), ab) / l2));
+          const q = [a[0] + ab[0] * t, a[1] + ab[1] * t];
+          const r = len(sub(q, e));
+          if (r < JOIN_REACH && (!best || r < best.r)) best = { r, q };
+        }
+      }
+      if (!best) continue;
+      const n = Math.max(1, Math.ceil(best.r / STEP));
+      for (let k = 1; k <= n; k++) o.points.push([e[0] + ((best.q[0] - e[0]) * k) / n, e[1] + ((best.q[1] - e[1]) * k) / n]);
+      o.bbox = lineBox(o.points);
+      o.pieces = piecesOf(o.points);
     }
 
     // Street distance from the station, on a raster of the streets.

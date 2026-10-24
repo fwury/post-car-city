@@ -295,7 +295,48 @@ function joinRuns(runs) {
   return out;
 }
 
-export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [] }) {
+// Where each rail station's hall and plazas go: the hall a rectangle along
+// the track at the station, the plazas against its long sides, on land and
+// clear of the district's own plaza (near its core neighbourhood's centre).
+export const STATION_HALL = { district: [220, 44], central: [300, 60], stop: [150, 36] };
+const STATION_PLAZA = [130, 60]; // metres along the hall and out from it
+const PLAZA_CLEAR = 220; // metres a station plaza keeps from the district's plaza
+export function hallOf(st) {
+  const [L, W] = st.central ? STATION_HALL.central : st.second ? STATION_HALL.stop : STATION_HALL.district;
+  const t = unit(st.dir || [1, 0]);
+  const n = [-t[1], t[0]];
+  const at = (a, b) => [st.p[0] + t[0] * a + n[0] * b, st.p[1] + t[1] * a + n[1] * b];
+  return { pts: [at(-L / 2, -W / 2), at(L / 2, -W / 2), at(L / 2, W / 2), at(-L / 2, W / 2)], t, n, L, W, at };
+}
+function stationSites(d, stations, plazaAt, noPlaza = () => false) {
+  const onLand = (q) => {
+    let inside = false;
+    for (const r of d.rings) if (pointInPolygon(q[0], q[1], r)) inside = !inside;
+    return inside && !d.parks.some((pk) => pointInPolygon(q[0], q[1], pk.shape));
+  };
+  const out = [];
+  for (const st of stations) {
+    const h = hallOf(st);
+    if (!h.pts.every(onLand)) continue;
+    const [PL, PD] = st.central ? [STATION_PLAZA[0] * 1.4, STATION_PLAZA[1] * 1.2] : STATION_PLAZA;
+    const sides = [];
+    for (const sg of [1, -1]) {
+      const a = (h.W / 2) * sg;
+      const b = (h.W / 2 + PD) * sg;
+      const rect = [h.at(-PL / 2, a), h.at(PL / 2, a), h.at(PL / 2, b), h.at(-PL / 2, b)];
+      const c = h.at(0, (a + b) / 2);
+      if (!rect.every(onLand) || len(sub(c, plazaAt)) < PLAZA_CLEAR || noPlaza(c)) continue;
+      // Its three outer sides, run a little into the hall's side so they meet it.
+      const outline = [h.at(-PL / 2, a - 2 * sg), rect[3], rect[2], h.at(PL / 2, a - 2 * sg)];
+      sides.push({ rect, outline, c, far: len(sub(c, plazaAt)) });
+    }
+    sides.sort((x, y) => y.far - x.far);
+    out.push({ p: st.p, hall: h.pts, plazas: st.central ? sides : sides.slice(0, 1) });
+  }
+  return out;
+}
+
+export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [] }) {
   // A path that would run through water is left out.
   const dryPath = (pts) => pts && !pts.some((q) => isWater(q[0], q[1]));
   const names = createNames(seed);
@@ -765,6 +806,17 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       flush();
     }
     for (const L of railLines) lines.push({ pts: L, tag: street('rail', RAIL_CORRIDOR) });
+    // Rail stations: a hall across the tracks, with its entrances on both
+    // sides, ringed by a pedestrian street; and a station plaza before it on
+    // one side (both, at the central station), off where the district's own
+    // plaza is.
+    // (A campus's station has no plaza: the campus is its forecourt.)
+    const sites = stationSites(d, stationsIn(d), hoods[0] ? hoods[0].centre : d.station, (q) => (hoodAt(q) || {}).campus);
+    for (const site of sites) {
+      const tag = () => street('pedestrian', PEDESTRIAN, { square: site.p, reach: Infinity });
+      lines.push({ pts: site.hall, closed: true, tag: tag() });
+      for (const pz of site.plazas) lines.push({ pts: pz.outline, tag: tag() });
+    }
     for (const pk of d.parks) lines.push({ pts: pk.shape, closed: true, tag: street('park', PARKSIDE * 2, { park: pk.key }) });
     // Secondary greenways: linear parks along some stretches of the
     // boundaries between neighbourhoods, each from one main street to the
@@ -1277,6 +1329,14 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       const next = [];
       for (const node of queue) {
         const ax = axes(node.pts);
+        // Under a station hall, or a station plaza.
+        const ip = interiorPoint(node.pts);
+        const site = sites.find((st) => pointInPolygon(ip[0], ip[1], st.hall) || st.plazas.some((pz) => pointInPolygon(ip[0], ip[1], pz.rect)));
+        if (site) {
+          const hall = pointInPolygon(ip[0], ip[1], site.hall);
+          leaves.push({ ...node, ax, use: hall ? 'station' : 'square', stationPlaza: !hall, hood: (hoodAt(ax.c) || {}).id ?? 0 });
+          continue;
+        }
         const zone = zoneOf(node, ax);
         const sq = squareFor(node, ax.area, ax.W);
         if (sq) {
@@ -1549,9 +1609,10 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       const use = lf.use ?? (area < REMNANT || awkward ? 'green' : lf.zone === 'rowhouse' && front ? 'perimeter' : lf.zone);
       const b = { pts: net, centreline: P, dist, use, area, stuck: !!lf.stuck, raw: polygonArea(P), hood: lf.hood ?? (hoodAt(lf.ax.c) || {}).id, front: lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard') };
       if (lf.form) b.form = lf.form;
-      if (!net) b.use = 'green';
+      if (lf.stationPlaza) b.stationPlaza = true;
+      if (!net) b.use = lf.use === 'station' ? 'station' : 'green';
       else {
-        let pl = plotsOfBlock(net, fronts, b.use, axes(net).W, rng);
+        let pl = plotsOfBlock(net, fronts, b.use === 'station' ? 'square' : b.use, axes(net).W, rng);
         // A rowhouse block that would take neither terraces nor a ring of
         // houses (cut into long strips instead) is left as a green.
         if (b.use === 'rowhouse' && !pl.alley && !pl.inner) {
