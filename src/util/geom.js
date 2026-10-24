@@ -132,3 +132,41 @@ export function resample(pts, step) {
   out.push(last);
   return out;
 }
+
+// A polyline cut into runs inside and outside a polygon (cut where it
+// crosses the polygon's edge, the runs sharing their ends): [{ pts, inside }].
+export function splitByPolygon(P, poly) {
+  if (!poly || poly.length < 3 || P.length < 2) return [{ pts: P, inside: false }];
+  const inside = (q) => pointInPolygon(q[0], q[1], poly);
+  const out = [];
+  let run = { pts: [P[0]], inside: inside(P[0]) };
+  for (let i = 1; i < P.length; i++) {
+    const a = P[i - 1];
+    const b = P[i];
+    const ib = inside(b);
+    if (ib !== run.inside) {
+      // Where the segment crosses the polygon's edge.
+      let x = b;
+      for (let k = 0; k < poly.length; k++) {
+        const c = poly[k];
+        const e = poly[(k + 1) % poly.length];
+        const r = [b[0] - a[0], b[1] - a[1]];
+        const s = [e[0] - c[0], e[1] - c[1]];
+        const den = r[0] * s[1] - r[1] * s[0];
+        if (Math.abs(den) < 1e-12) continue;
+        const t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den;
+        const v = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den;
+        if (t >= 0 && t <= 1 && v >= 0 && v <= 1) {
+          x = [a[0] + r[0] * t, a[1] + r[1] * t];
+          break;
+        }
+      }
+      run.pts.push(x);
+      out.push(run);
+      run = { pts: [x], inside: ib };
+    }
+    run.pts.push(b);
+  }
+  out.push(run);
+  return out.filter((r) => r.pts.length > 1);
+}

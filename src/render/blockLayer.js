@@ -223,7 +223,9 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
   const detail = zoom >= DETAIL_MIN_ZOOM;
   if (detail) {
     const items = [];
-    for (const { d, p } of list) for (const st of p.streets.values()) items.push({ path: st.path, type: st.kind === 'local' ? 'localStreet' : 'pedestrianStreet', place: () => place(d) });
+    // (A core's local streets, wider, are core residential streets.)
+    const typeOf = (st) => (st.kind === 'local' ? (st.width >= STREET_TYPES.coreCrossStreet.width - 0.1 ? 'coreCrossStreet' : 'localStreet') : 'pedestrianStreet');
+    for (const { d, p } of list) for (const st of p.streets.values()) items.push({ path: st.path, type: typeOf(st), place: () => place(d) });
     drawSections(ctx, items, px);
   }
   const passes = detail ? [] : zoom >= PLOT_MIN_ZOOM ? ['casing', 'pavement', 'fill'] : ['casing', 'fill'];
