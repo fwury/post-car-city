@@ -192,7 +192,6 @@ const REMOVABLE = '#c8743c'; // a removable bollard (for emergency vehicles)
 const PLATFORM_FILL = '#f4f2ee';
 const SHELTER = '#d65a4e';
 const REFUGE = new Set(['median', 'buffer', 'furnishing', 'planted']);
-const KERB_RADIUS = { boulevard: 7, mainStreet: 5.5, coreMainStreet: 5.5, coreCrossStreet: 3, coreCrossStreetNarrow: 3 };
 
 // A point of an arm's frame: `along` out from the junction, `lat` to its right.
 const F = (c, a, along, lat) => [c[0] + a.dir[0] * along + a.n[0] * lat, c[1] + a.dir[1] * along + a.n[1] * lat];
@@ -329,31 +328,27 @@ const ringLat = (a) => {
 };
 
 // The kerb round a corner between arm A (its +n side) and arm B (its -n
-// side), from A's carriageway edge at alA to B's at alB.
+// side), from A's carriageway edge at alA to B's at alB: straight to the
+// crossings, then the long side of the corner island between them, bowed
+// out toward the corner so turning cars swing wide round it.
+const BOW = 0.45;
 function kerbCorner(c, A, B, alA, alB) {
   const dA = profile(A.type).drive;
   const dB = profile(B.type).drive;
-  const pA = F(c, A, alA, dA);
-  const pB = F(c, B, alB, -dB);
-  const K = meet(F(c, A, 0, dA), A.dir, F(c, B, 0, -dB), B.dir);
-  if (!K) return { pA, pB, curve: [pA, pB] };
-  const r = Math.max(KERB_RADIUS[A.type] || 2, KERB_RADIUS[B.type] || 2);
-  const toward = (p, q, d) => {
-    const L = Math.hypot(q[0] - p[0], q[1] - p[1]) || 1;
-    const k = Math.min(d, L * 0.9) / L;
-    return [p[0] + (q[0] - p[0]) * k, p[1] + (q[1] - p[1]) * k];
-  };
-  const a1 = toward(K, pA, r);
-  const b1 = toward(K, pB, r);
-  const curve = [pA, a1];
-  for (let t = 0.2; t < 1; t += 0.2) {
-    const m = (1 - t) * (1 - t);
-    const n = 2 * t * (1 - t);
-    const o = t * t;
-    curve.push([m * a1[0] + n * K[0] + o * b1[0], m * a1[1] + n * K[1] + o * b1[1]]);
-  }
-  curve.push(b1, pB);
-  return { pA, pB, curve };
+  const pA = F(c, A, A.s, dA);
+  const pB = F(c, B, B.s, -dB);
+  const curve = [F(c, A, alA, dA)];
+  const inner = meet(F(c, A, A.s, 0), A.n, F(c, B, B.s, 0), B.n);
+  if (inner) {
+    const m = [(pA[0] + pB[0]) / 2, (pA[1] + pB[1]) / 2];
+    const k = [m[0] + (inner[0] - m[0]) * BOW, m[1] + (inner[1] - m[1]) * BOW];
+    for (let t = 0; t <= 1.0001; t += 0.125) {
+      const u = 1 - t;
+      curve.push([u * u * pA[0] + 2 * u * t * k[0] + t * t * pB[0], u * u * pA[1] + 2 * u * t * k[1] + t * t * pB[1]]);
+    }
+  } else curve.push(pA, pB);
+  curve.push(F(c, B, alB, -dB));
+  return { curve, mid: curve[Math.floor(curve.length / 2)], inner };
 }
 
 // The ground of each junction (before platforms and rails).
@@ -430,36 +425,63 @@ function protectedGround(ctx, c, j, px) {
   ctx.beginPath();
   poly(ctx, ring);
   ctx.fill();
-  // Corner islands, between the kerbs and the crossings, and the cycle
-  // track round each: in from one crossing, round the island, out over the
-  // next.
+  // Each corner, Dutch style: the pavement swept round behind it, the
+  // cycle track curving from one crossing to the next (each crossing in
+  // line with the cycle lanes it joins), and a lens-shaped island between
+  // the track and the kerb the cars turn round.
+  ctx.lineCap = 'butt';
   for (const [A, B] of corners(j)) {
+    const PA = profile(A.type);
+    const PB = profile(B.type);
+    // The pavement behind the corner, out to the building lines.
+    const back = kerbCorner(c, A, B, A.zebra, B.zebra);
+    const Q = meet(F(c, A, 0, PA.half), A.dir, F(c, B, 0, -PB.half), B.dir);
+    if (!Q) continue;
+    ctx.fillStyle = COLOURS.clearway;
+    ctx.beginPath();
+    poly(ctx, [...back.curve, F(c, B, B.zebra, -PB.half), Q, F(c, A, A.zebra, PA.half)]);
+    ctx.fill();
+    // The track: a quarter-round from the end of A's crossing to B's.
+    const w = Math.min(A.cw, B.cw);
+    const track = (sA, sB) => {
+      const p = F(c, A, sA, ringLat(A));
+      const q = F(c, B, sB, -ringLat(B));
+      const m = meet(p, A.n, q, B.n);
+      if (!m) return [p, q];
+      const k = 0.5523;
+      const c1 = [p[0] + (m[0] - p[0]) * k, p[1] + (m[1] - p[1]) * k];
+      const c2 = [q[0] + (m[0] - q[0]) * k, q[1] + (m[1] - q[1]) * k];
+      const out = [];
+      for (let t = 0; t <= 1.0001; t += 0.125) {
+        const u = 1 - t;
+        out.push([0, 1].map((i) => u * u * u * p[i] + 3 * u * u * t * c1[i] + 3 * u * t * t * c2[i] + t * t * t * q[i]));
+      }
+      return out;
+    };
+    const mid = track(A.s + A.cw / 2, B.s + B.cw / 2);
+    for (const [colour, lw] of [[KERB, w + 0.5], [COLOURS.cycle, w]]) {
+      ctx.strokeStyle = colour;
+      ctx.lineWidth = lw;
+      ctx.beginPath();
+      ctx.moveTo(mid[0][0], mid[0][1]);
+      for (const p of mid) ctx.lineTo(p[0], p[1]);
+      ctx.stroke();
+    }
+    // The cycle lanes joining it, run on over the pavement to the zebras.
+    if (PA.cycle) fillBand(ctx, c, A, A.s + A.cw, A.zebra + 0.5, PA.cycle.outer - PA.cycle.w, PA.cycle.outer, COLOURS.cycle);
+    if (PB.cycle) fillBand(ctx, c, B, B.s + B.cw, B.zebra + 0.5, -PB.cycle.outer, -PB.cycle.outer + PB.cycle.w, COLOURS.cycle);
+    // The island: the turning kerb, then back along the track's inside.
     const k = kerbCorner(c, A, B, A.s, B.s);
-    const inner = meet(F(c, A, A.s, 0), A.n, F(c, B, B.s, 0), B.n);
-    if (!inner) continue;
+    const inside = track(A.s, B.s).reverse();
     ctx.fillStyle = COLOURS.clearway;
     ctx.strokeStyle = KERB;
     ctx.lineWidth = Math.max(0.15, px(0.7));
     ctx.beginPath();
-    poly(ctx, [...k.curve, inner]);
+    poly(ctx, [...k.curve, ...inside]);
     ctx.fill();
     ctx.stroke();
-    const mid = meet(F(c, A, A.s + A.cw / 2, 0), A.n, F(c, B, B.s + B.cw / 2, 0), B.n);
-    if (!mid) continue;
-    const pA = F(c, A, A.s + A.cw / 2, ringLat(A));
-    const pB = F(c, B, B.s + B.cw / 2, -ringLat(B));
-    ctx.lineCap = 'butt';
-    for (const [colour, w] of [[KERB, Math.min(A.cw, B.cw) + 0.5], [COLOURS.cycle, Math.min(A.cw, B.cw)]]) {
-      ctx.strokeStyle = colour;
-      ctx.lineWidth = w;
-      ctx.beginPath();
-      ctx.moveTo(pA[0], pA[1]);
-      ctx.lineTo(mid[0], mid[1]);
-      ctx.lineTo(pB[0], pB[1]);
-      ctx.stroke();
-    }
-    ctx.lineCap = 'round';
   }
+  ctx.lineCap = 'round';
 }
 
 function protectedMarks(ctx, c, j, px) {
@@ -498,7 +520,7 @@ function protectedMarks(ctx, c, j, px) {
   // Signal poles on the corner islands.
   for (const [A, B] of corners(j)) {
     const k = kerbCorner(c, A, B, A.s, B.s);
-    signal(ctx, k.curve[Math.floor(k.curve.length / 2)], px);
+    if (k.inner) signal(ctx, [k.mid[0] + (k.inner[0] - k.mid[0]) * 0.2, k.mid[1] + (k.inner[1] - k.mid[1]) * 0.2], px);
   }
 }
 
