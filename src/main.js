@@ -9,7 +9,8 @@ import { createTilePool } from './render/workerPool.js';
 import { attachInput } from './ui/input.js';
 import { readUrlState, createUrlSync, setupControls, loadLayers, MAP_LAYERS } from './ui/controls.js';
 import { createHud } from './ui/hud.js';
-import { createPlaceCard, pickBuilding } from './ui/placeCard.js';
+import { createPlaceCard } from './ui/placeCard.js';
+import { pickPlace } from './render/places.js';
 import { BUILDING_MIN_ZOOM } from './render/buildingLayer.js';
 import { BLOCK_MIN_ZOOM } from './render/blockLayer.js';
 
@@ -81,24 +82,17 @@ renderer.blocksFor = blocksFor;
 const input = attachInput(canvas, camera);
 const hud = createHud(document.getElementById('hud'));
 
-// Click a building to see what it is.
+// Tap a place marker to see what it is.
 const card = createPlaceCard(document.getElementById('place-card'));
 input.onTap = ([sx, sy]) => {
-  let hit = null;
-  if (camera.zoom >= BUILDING_MIN_ZOOM && state.layers.blocks) {
-    const [wx, wy] = camera.screenToWorld(sx, sy);
-    for (const d of world.districtsInRect(wx - 120, wy - 120, wx + 120, wy + 120)) {
-      const h = pickBuilding(blocksFor(d), wx, wy, state.layers.heights);
-      if (h && (!hit || h.key > hit.key)) hit = { ...h, d };
-    }
-  }
+  const hit = pickPlace(renderer.placesDrawn || [], sx, sy);
   if (!hit) {
     card.close();
     renderer.selected = null;
   } else {
     const hood = hit.d.stage3.hoods.find((h) => h.id === hit.block.hood);
-    card.show(hit, hood ? `${world.names.hood(hit.d, hood)}, ${world.names.district(hit.d)}` : world.names.district(hit.d));
-    renderer.selected = hit.plot.bldg;
+    card.show({ plot: hit.plot, block: hit.block, use: hit.use }, hood ? `${world.names.hood(hit.d, hood)}, ${world.names.district(hit.d)}` : world.names.district(hit.d));
+    renderer.selected = hit.plot.bldg || null;
   }
   dirty = true;
 };
@@ -173,7 +167,7 @@ function frame(now) {
   const stageEl = document.querySelector('.panel .stage');
   if (stageEl) {
     const z = camera.zoom;
-    const text = z < BLOCK_MIN_ZOOM ? 'Stage 5: zoom in to see blocks' : z < BUILDING_MIN_ZOOM ? 'Stage 5: zoom in further to see buildings' : 'Stage 5: buildings (click one)';
+    const text = z < BLOCK_MIN_ZOOM ? 'Stage 5: zoom in to see blocks' : z < BUILDING_MIN_ZOOM ? 'Stage 5: zoom in further to see buildings' : 'Stage 5: buildings (tap a place for more)';
     if (stageEl.textContent !== text) stageEl.textContent = text;
   }
   hud.update(now, { camera, input, tiles: districtTiles, renderer, world, visible: state.layers.hud });
