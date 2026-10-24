@@ -223,7 +223,8 @@ export class Renderer {
       const lists = [];
       for (const d of this.getWorld().districtsInRect(b.x0, b.y0, b.x1, b.y1)) {
         const bl = this.blocksFor(d);
-        if (bl) lists.push(placesOf(bl).map((pl) => ({ ...pl, d })));
+        // (Station entrances only with the transit layer.)
+        if (bl) lists.push(placesOf(bl).filter((pl) => L.transit || pl.use !== 'stationEntrance').map((pl) => ({ ...pl, d })));
       }
       this.placesDrawn = drawPlaces(ctx, camera, lists, this.dpr);
     }

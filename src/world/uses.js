@@ -167,8 +167,7 @@ export const USES = {
   nightclub: { label: 'Nightclub', cat: 'entertainment', floor: 'ground' },
   bikeParking: { label: 'Bicycle parking', cat: 'transport', floor: 'ground' },
   districtPlaza: { label: 'District plaza', cat: 'civic', floor: 'open' },
-  stationPlaza: { label: 'Station plaza', cat: 'civic', floor: 'open' },
-  railStation: { label: 'Railway station', cat: 'civic', floor: 'open' },
+  stationEntrance: { label: 'Rail station entrance', cat: 'transport', floor: 'ground' },
   skatingRink: { label: 'Skating rink', cat: 'recreation', floor: 'dedicated' },
   stadium: { label: 'Stadium and concert venue', cat: 'recreation', floor: 'dedicated' },
 };
