@@ -1,21 +1,30 @@
-// Regional rail, for the whole city at once.
+// Regional rail, planned for the whole city at once as one network.
 //
-// Lines run through the central station: each comes in from the country on
-// one side, through the central station and out to the country on the other
-// (through running, so no line stops short). Out from the centre the lines
-// fan into arms, each a chain of district stations, one district core after
-// another, turning only a little at each. A district left between the arms
-// gets a branch off the nearest arm, leaving it at a station.
+// It is radial: lines run out from the central station to the country in
+// most directions, and through running, each coming in on one side of the
+// centre and going out on the other. The central station has two axes
+// crossing at about a right angle (as Berlin's main station does); each
+// line runs straight through along one of them. Out from the centre each
+// of the four trunks carries its lines through one district station after
+// another, and now and then divides in two at a station (never three ways,
+// and at most twice along a line), so the lines spread out into the
+// districts. Lines keep well apart: no two tracks run close side by side.
+// Not every district needs a station of its own, but every district should
+// have one in a district next to it. A large city also has a ring line
+// round its inner districts (as the Ringbahn or the Yamanote Line), meeting
+// the radial lines at interchange stations.
 //
-// Lines only ever meet at a station running side by side on the same
-// alignment: every station has one direction through it, so where a branch
-// leaves an arm it leaves along the arm's track (and the central station,
-// where every line meets, has all its lines through it in one direction).
-// Platforms are straight, and the curves between stations are kept gentle
-// (no tighter than MIN_RADIUS) for fast regional and intercity trains.
+// The network is judged as a whole: several layouts (the axes turned this
+// way and that) are laid out and scored on how many districts they serve
+// and how evenly they reach out in every direction, against how much track
+// they take, and the best is kept.
 //
-// The tracks run on viaducts across the neighbourhoods, never down the
-// streets; neighbourhood boundaries are drawn along them.
+// Track is laid as railways are, for 140 km/h: straight along each platform,
+// and between stations one curve of fixed radius (no tighter than 900 m)
+// then straight on; tighter curves only in the central station's throat,
+// where trains run slowly. A long stretch between district stations gets
+// an infill stop. The tracks run on viaducts across the neighbourhoods,
+// never down the streets; neighbourhood boundaries are drawn along them.
 
 import { hash, toUnit } from '../core/hash.js';
 
@@ -23,13 +32,22 @@ export const MIN_RADIUS = 900; // metres: the tightest curve out on the line
 export const CENTRE_RADIUS = 400; // and leaving the central station
 export const VIADUCT_WIDTH = 11; // metres: a two-track viaduct
 const PLATFORM = 170; // metres of straight track either side of a station
-const SPACING = [1100, 6000]; // metres between one district station and the next on an arm
-const TURN = (75 * Math.PI) / 180; // how far off its general heading an arm may reach for a station
-const BRANCH_TURN = (75 * Math.PI) / 180; // the most a branch may turn off its arm
-const TRUNKS = 3; // lines leaving the central station either way, at most
-const EXTRA_STOP = 1900; // metres: a stretch this long between stations has a stop in the middle
+const SPACING = [1300, 7000]; // metres from one district station to the next
+const REACH = (60 * Math.PI) / 180; // how far off its heading a trunk may reach for a station
+const SPLIT_APART = (38 * Math.PI) / 180; // the least angle between the two lines of a division
+const SPLITS = 2; // divisions along any one line, at most
+const GAP = 750; // metres two tracks keep apart, away from the stations they share
+const OUT_ANGLE = (60 * Math.PI) / 180; // how far off the way out from the centre a line may run
+const LAYOUTS = 36; // whole networks laid out and judged
+const PART = 1400; // metres out from a division before its two tracks must be GAP apart
+const TAIL_TURN = (75 * Math.PI) / 180; // the most a line out into the country turns
+const NEAR = 3000; // metres: districts this close are next to each other
+const INFILL = 3200; // metres: a stretch this long between stations gets an infill stop
+const RING_CITY = 20; // districts (3 million people): from here, a ring line
 const COUNTRY = 14000; // metres the lines run on beyond the city
 const STEP = 20; // metres between points of track
+// Line colours, as on a transit map.
+export const RAIL_COLOURS = ['#2f6db5', '#d4442e', '#2e9a5b', '#8e44ad', '#e6900f', '#0b8fa3', '#b5651d', '#c2185b', '#5d6d7e', '#7cb342', '#3949ab', '#00897b'];
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
@@ -47,6 +65,7 @@ const wrap = (a) => {
   while (x < -Math.PI) x += 2 * Math.PI;
   return x;
 };
+const angleBetween = (a, b) => Math.acos(Math.max(-1, Math.min(1, dot(unit(a), unit(b)))));
 
 // The tightest radius along a polyline (from the turn at each point).
 export function minRadius(P) {
@@ -66,7 +85,7 @@ export function minRadius(P) {
 // too). The widest radius that fits is taken. Returns the track, the
 // direction it arrives in, and how far it turns; or null.
 const RADII = [2400, 1800, 1400, 1100, MIN_RADIUS];
-const MAX_TURN = (90 * Math.PI) / 180;
+const MAX_TURN = (80 * Math.PI) / 180;
 // Out of the central station trains run slowly through the throat, so the
 // lines may fan out there on tighter curves.
 const CENTRE_RADII = [...RADII, 700, 550, CENTRE_RADIUS];
@@ -117,198 +136,305 @@ function pointAlong(P, s) {
 }
 const lengthOf = (P) => P.reduce((s, p, i) => (i ? s + len(sub(p, P[i - 1])) : 0), 0);
 
+// A smooth closed curve through points (centripetal Catmull-Rom), sampled.
+function closedCurve(Q, step = STEP) {
+  const n = Q.length;
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const p0 = Q[(i - 1 + n) % n];
+    const p1 = Q[i];
+    const p2 = Q[(i + 1) % n];
+    const p3 = Q[(i + 2) % n];
+    const k = Math.max(2, Math.ceil(len(sub(p2, p1)) / step));
+    for (let j = 0; j < k; j++) {
+      const t = j / k;
+      const t2 = t * t;
+      const t3 = t2 * t;
+      out.push([0, 1].map((c) => 0.5 * (2 * p1[c] + (-p0[c] + p2[c]) * t + (2 * p0[c] - 5 * p1[c] + 4 * p2[c] - p3[c]) * t2 + (-p0[c] + 3 * p1[c] - 3 * p2[c] + p3[c]) * t3)));
+    }
+  }
+  return out;
+}
+
 // cores: the city's cores, the central one first.
 export function createRail(seed, { cores, terrain }) {
   const u = (...k) => toUnit(hash(seed, 'rail', ...k));
-  const empty = { segments: [], stations: [], lines: [], near: () => [] };
-  if (!cores.length) return empty;
-  const C = cores[0];
-  const cp = [C.x, C.y];
-  const wet = (p) => terrain.isSea(p[0], p[1]);
+  if (!cores.length) return { segments: [], stations: [], lines: [], near: () => [], joins: () => false, termini: [] };
+  const N = cores.length;
+  const P = cores.map((c) => [c.x, c.y]);
+  const cp = P[0];
+  const wet = (p) => terrain.isSea(p[0], p[1]) || (terrain.isHigh && terrain.isHigh(p[0], p[1]));
   const dryRun = (a, b) => {
     const n = Math.ceil(len(sub(b, a)) / 100);
     for (let i = 1; i < n; i++) if (wet(add(a, mul(sub(b, a), i / n)))) return false;
     return true;
   };
+  const farthest = Math.max(1, ...P.map((p) => len(sub(p, cp))));
 
-  // ---- The direction through the central station ----
-  // Along the spread of the city (its principal axis), turned if need be
-  // so the line has land to run on either way.
-  let sxx = 0;
-  let sxy = 0;
-  let syy = 0;
-  for (const c of cores) {
-    const dx = c.x - C.x;
-    const dy = c.y - C.y;
-    sxx += dx * dx;
-    sxy += dx * dy;
-    syy += dy * dy;
-  }
-  let theta = cores.length > 2 ? 0.5 * Math.atan2(2 * sxy, sxx - syy) : u(1) * Math.PI;
-  const landBothWays = (th) => {
-    const t = [Math.cos(th), Math.sin(th)];
-    let s = 0;
-    for (const r of [1500, 3000, 5000]) s += (wet(add(cp, mul(t, r))) ? 0 : 1) + (wet(sub(cp, mul(t, r))) ? 0 : 1);
-    return s;
-  };
-  {
-    let best = { th: theta, s: landBothWays(theta) };
-    for (let k = 1; k < 12 && best.s < 6; k++) {
-      for (const sg of [1, -1]) {
-        const th = theta + (sg * k * Math.PI) / 24;
-        const s = landBothWays(th);
-        if (s > best.s) best = { th, s };
+  // ---- One layout, for axes at angle theta ----
+  // Outward only, and roughly away from the centre, so lines run out
+  // radially rather than curling round it.
+  const outward = (from, i) => len(sub(P[i], cp)) > len(sub(from, cp)) + 300 && angleBetween(sub(P[i], from), sub(P[i], cp)) < OUT_ANGLE;
+  function layout(theta, splitRatio, keep) {
+    const axes = N < 6 ? [theta] : [theta, theta + Math.PI / 2];
+    const SP = P.map((q) => q.slice()); // where each station stands
+    const taken = new Uint8Array(N);
+    taken[0] = 1;
+    const dirOut = new Map(); // station -> the way trains leave it outward
+    const segs = []; // { a, b, pts }
+    const samples = []; // track points, for keeping tracks apart
+    const nodes = []; // { s, parent, side, splits }
+    // Points along a track, away from its stations.
+    const inner = (pts) => {
+      const L = lengthOf(pts);
+      const out = [];
+      for (let s = 600; s < L - 600; s += 120) out.push(pointAlong(pts, s));
+      return out;
+    };
+    // (Near the station it leaves, a track may run close to those it
+    // leaves beside: lines dividing there part gradually.)
+    const clear = (pts) => {
+      for (const q of inner(pts)) if (len(sub(q, pts[0])) > PART) for (const o of samples) if (Math.abs(q[0] - o[0]) < GAP && Math.abs(q[1] - o[1]) < GAP && len(sub(q, o)) < GAP) return false;
+      return true;
+    };
+    // A station's place: at its core, or a little to one side of it if
+    // that lets the line run more gently.
+    const OFFSETS = [0, 220, -220, 400, -400];
+    const reach = (from, dir, i, fromCentre) => {
+      let best = null;
+      const v = unit(sub(P[i], from));
+      for (const o of OFFSETS) {
+        const q = add(P[i], mul([-v[1], v[0]], o));
+        if (wet(q)) continue;
+        const t = track(from, dir, q, fromCentre);
+        if (!t || angleBetween(t.arrive, sub(q, cp)) > OUT_ANGLE || !clear(t.pts)) continue;
+        const score = t.turn + Math.abs(o) / 800;
+        if (!best || score < best.score) best = { t, q, score };
       }
-    }
-    theta = best.th;
-  }
-  const axis = [Math.cos(theta), Math.sin(theta)];
-
-  // ---- Arms ----
-  // Stations are core indices; 0 is the centre.
-  const P = cores.map((c) => [c.x, c.y]);
-  // Where each station stands: at its district's core, or a little to one
-  // side of it if that lets the line run more gently.
-  const SP = P.map((q) => q.slice());
-  const OFFSETS = [0, 220, -220, 400, -400];
-  const reach = (from, dir, i, fromCentre) => {
-    let best = null;
-    const v = unit(sub(P[i], from));
-    for (const o of OFFSETS) {
-      const q = add(P[i], mul([-v[1], v[0]], o));
-      if (terrain.isWater(q[0], q[1])) continue;
-      const t = track(from, dir, q, fromCentre);
-      if (!t) continue;
-      const score = t.turn + Math.abs(o) / 800;
-      if (!best || score < best.score) best = { t, q, score };
-    }
-    return best;
-  };
-  const taken = new Uint8Array(cores.length);
-  taken[0] = 1;
-  // Two trunks at most leave the central station each way (more would fan out
-  // into slivers of land between the viaducts); other lines branch off them.
-  const nArms = cores.length === 1 ? 0 : cores.length < 6 ? 2 : 4;
-  const arms = [];
-  for (let k = 0; k < nArms; k++) {
-    const h = theta + (k * 2 * Math.PI) / nArms + (u(2, k) - 0.5) * 0.3;
-    arms.push({ stations: [0], heading: h, side: Math.cos(h - theta) >= 0 ? 1 : -1, open: true });
-  }
-  // How a train leaves each station outward: from the centre along its
-  // axis, elsewhere the way it arrived.
-  const dirOut = new Map();
-  const segments = new Map(); // "a>b" -> track, each stretch once
-  const step = (arm) => {
-    const at = arm.stations[arm.stations.length - 1];
-    let best = null;
-    for (let i = 1; i < P.length; i++) {
-      if (taken[i]) continue;
-      const v = sub(P[i], SP[at]);
-      const D = len(v);
-      if (D < SPACING[0] || D > SPACING[1]) continue;
-      const dev = Math.abs(wrap(angleOf(v) - arm.heading));
-      if (dev > TURN) continue;
-      // Outward only: never back towards the centre.
-      if (at !== 0 && len(sub(P[i], cp)) < len(sub(P[at], cp)) + 100) continue;
-      if (!dryRun(SP[at], P[i])) continue;
-      const r = reach(SP[at], at === 0 ? mul(axis, arm.side) : dirOut.get(at), i, at === 0);
-      if (!r) continue;
-      const score = D * (1 + 1.3 * r.t.turn + 0.5 * dev);
-      if (!best || score < best.score) best = { i, score, v, t: r.t, q: r.q };
-    }
-    return best;
-  };
-  const take = (arm, s) => {
-    const at = arm.stations[arm.stations.length - 1];
-    taken[s.i] = 1;
-    SP[s.i] = s.q;
-    arm.stations.push(s.i);
-    dirOut.set(s.i, s.t.arrive);
-    segments.set(`${at}>${s.i}`, { key: `${at}>${s.i}`, a: at, b: s.i, pts: s.t.pts, radius: s.t.radius });
-    arm.heading += wrap(angleOf(s.v) - arm.heading) * 0.5;
-  };
-  // Round by round, each arm taking its next station, so they share the
-  // districts fairly.
-  for (let round = 0; round < cores.length; round++) {
-    let any = false;
-    for (const arm of arms) {
-      if (!arm.open) continue;
-      const s = step(arm);
-      if (!s) {
-        arm.open = false;
-        continue;
-      }
-      take(arm, s);
-      any = true;
-    }
-    if (!any) break;
-  }
-  for (let a = arms.length - 1; a >= 0; a--) if (arms[a].stations.length < 2) arms.splice(a, 1);
-
-  // ---- Branches ----
-  // A district no arm reached: a branch leaving an arm at a station, along
-  // its track, then curving off towards the district.
-  const left = [];
-  for (let i = 1; i < P.length; i++) if (!taken[i]) left.push(i);
-  left.sort((a, b) => len(sub(P[a], cp)) - len(sub(P[b], cp)));
-  for (const i of left) {
-    if (taken[i]) continue;
-    let best = null;
-    for (const arm of arms) {
-      for (let k = 1; k < arm.stations.length; k++) {
-        const s = arm.stations[k];
+      return best;
+    };
+    // Grow a trunk outward from station s (already placed), leaving along
+    // dir: one station at a time, now and then dividing in two.
+    const grow = (s, dir, heading, splits, side) => {
+      const cands = [];
+      for (let i = 1; i < N; i++) {
+        if (taken[i]) continue;
         const v = sub(P[i], SP[s]);
         const D = len(v);
         if (D < SPACING[0] || D > SPACING[1]) continue;
-        if (dot(v, dirOut.get(s)) <= 0) continue;
+        if (Math.abs(wrap(angleOf(v) - heading)) > REACH) continue;
+        if (s !== 0 && !outward(SP[s], i)) continue;
         if (!dryRun(SP[s], P[i])) continue;
-        const r = reach(SP[s], dirOut.get(s), i, false);
-        if (!r || r.t.turn > BRANCH_TURN) continue;
-        const score = D * (1 + 1.3 * r.t.turn);
-        if (!best || score < best.score) best = { score, arm, k, v, t: r.t, q: r.q };
+        const r = reach(SP[s], dir, i, s === 0);
+        if (!r) continue;
+        const dev = Math.abs(wrap(angleOf(v) - heading));
+        cands.push({ i, D, v, r, score: D * (1 + 1.4 * r.t.turn + keep * dev) });
+      }
+      cands.sort((a, b) => a.score - b.score);
+      if (!cands.length) return;
+      const picks = [cands[0]];
+      // Divide here if a second district lies well off to one side, not
+      // much farther, while this line may still divide.
+      if (splits > 0 && s !== 0) {
+        const two = cands.find((c) => c !== cands[0] && angleBetween(c.v, cands[0].v) > SPLIT_APART && c.score < cands[0].score * splitRatio && len(sub(P[c.i], P[cands[0].i])) > NEAR * 0.7);
+        if (two) picks.push(two);
+      }
+      for (const c of picks) {
+        // (Re-checked: the first pick's track may now crowd the second's.)
+        const r = picks.length > 1 && c !== picks[0] ? reach(SP[s], dir, c.i, false) : c.r;
+        if (!r || taken[c.i]) continue;
+        taken[c.i] = 1;
+        SP[c.i] = r.q;
+        dirOut.set(c.i, r.t.arrive);
+        segs.push({ a: s, b: c.i, pts: r.t.pts });
+        samples.push(...inner(r.t.pts));
+        nodes.push({ s: c.i, parent: s, side, splits: splits - (picks.length - 1) });
+      }
+      for (const c of picks) {
+        if (!dirOut.has(c.i) || nodes.find((n) => n.s === c.i).parent !== s) continue;
+        grow(c.i, dirOut.get(c.i), heading + wrap(angleOf(c.v) - heading) * 0.5, splits - (picks.length - 1), side);
+      }
+    };
+    const sides = [];
+    for (const th of axes) for (const sg of [1, -1]) sides.push({ th, dir: [Math.cos(th) * sg, Math.sin(th) * sg], heading: th + (sg < 0 ? Math.PI : 0) });
+    // Grow the trunks a station at a time in turn, so they share the
+    // districts fairly: done by growing each fully in an order that
+    // alternates sides (good enough with the outward-only rule).
+    sides.forEach((sd, k) => grow(0, sd.dir, sd.heading, SPLITS, k));
+
+    // ---- Repair ----
+    // A district with no station in it or next to it: reached by carrying a
+    // line on from its end, or by a line dividing in two at a station on the
+    // way (if that keeps every line to its divisions, and the station is not
+    // already a division).
+    const kids = (s) => nodes.filter((n) => n.parent === s);
+    const nodeOf = (s) => nodes.find((n) => n.s === s);
+    const above = (s) => {
+      let k = 0;
+      for (let n = nodeOf(s); n; n = nodeOf(n.parent)) if (n.parent !== 0 && kids(n.parent).length === 2) k++;
+      return k;
+    };
+    const below = (s) => {
+      const ks = kids(s);
+      if (!ks.length) return 0;
+      return Math.max(...ks.map((c) => below(c.s))) + (ks.length === 2 ? 1 : 0);
+    };
+    const served = () => new Set([0, ...nodes.map((n) => n.s)]);
+    const uncovered = (i, on) => !on.has(i) && ![...on].some((j) => len(sub(P[i], P[j])) < NEAR);
+    for (let changed = true; changed; ) {
+      changed = false;
+      const on = served();
+      const want = [];
+      for (let i = 1; i < N; i++) if (!taken[i] && uncovered(i, on)) want.push(i);
+      want.sort((a, b) => len(sub(P[a], cp)) - len(sub(P[b], cp)));
+      for (const w of want) {
+        let best = null;
+        // A station in it, or in a district next to it.
+        for (let i = 1; i < N; i++) {
+          if (taken[i] || len(sub(P[i], P[w])) >= NEAR) continue;
+          for (const n of nodes) {
+            const ks = kids(n.s);
+            if (ks.length > 1) continue;
+            const used = ks.length ? above(n.s) + 1 + below(ks[0].s) : 0;
+            if (used > SPLITS) continue;
+            const v = sub(P[i], SP[n.s]);
+            const D = len(v);
+            if (D < SPACING[0] || D > SPACING[1]) continue;
+            if (!outward(SP[n.s], i)) continue;
+            const dir = dirOut.get(n.s);
+            if (angleBetween(v, dir) > (75 * Math.PI) / 180) continue;
+            if (ks.length && angleBetween(v, sub(SP[ks[0].s], SP[n.s])) < SPLIT_APART * 0.7) continue;
+            if (!dryRun(SP[n.s], P[i])) continue;
+            const r = reach(SP[n.s], dir, i, false);
+            if (!r) continue;
+            const score = D * (1 + 1.4 * r.t.turn) * (ks.length ? 1.3 : 1) * (i === w ? 1 : 1.15);
+            if (!best || score < best.score) best = { i, n, r, v, score, split: ks.length > 0 };
+          }
+        }
+        if (!best) continue;
+        const { i, n, r, v } = best;
+        const left = SPLITS - (best.split ? above(n.s) + 1 : above(n.s));
+        taken[i] = 1;
+        SP[i] = r.q;
+        dirOut.set(i, r.t.arrive);
+        segs.push({ a: n.s, b: i, pts: r.t.pts });
+        samples.push(...inner(r.t.pts));
+        nodes.push({ s: i, parent: n.s, side: n.side, splits: left });
+        grow(i, r.t.arrive, angleOf(v), left, n.side);
+        changed = true;
+        break;
       }
     }
-    // Or a new arm, straight out of the central station either way.
-    for (const sg of [1, -1]) {
-      if (arms.filter((a) => a.side === sg && a.stations[0] === 0 && a.stations.length > 1 && !arms.some((o) => o !== a && o.stations.length < a.stations.length && a.stations.slice(0, o.stations.length).every((x, j) => x === o.stations[j]))).length >= TRUNKS) continue;
-      const v = sub(P[i], cp);
-      const D = len(v);
-      if (D < SPACING[0] || D > SPACING[1] || !dryRun(cp, P[i])) continue;
-      const r = reach(cp, mul(axis, sg), i, true);
-      if (!r) continue;
-      // (A branch off a line is better than one more line through the centre.)
-      const score = D * (1 + 1.3 * r.t.turn) * 1.6;
-      if (!best || score < best.score) best = { score, arm: { stations: [0], side: sg }, k: 0, v, t: r.t, q: r.q };
+    for (const n of nodes) n.dir = dirOut.get(n.s);
+
+    // ---- Score ----
+    const onRail = new Set([0, ...nodes.map((n) => n.s)]);
+    let covered = 0;
+    for (let i = 0; i < N; i++) if (onRail.has(i) || [...onRail].some((j) => len(sub(P[i], P[j])) < NEAR)) covered++;
+    // Reach in every direction: the widest gap between the lines' ends.
+    const tails = nodes.filter((n) => !nodes.some((m) => m.parent === n.s)).map((n) => angleOf(sub(SP[n.s], cp))).sort((a, b) => a - b);
+    let widest = 2 * Math.PI;
+    if (tails.length > 1) {
+      widest = tails[0] + 2 * Math.PI - tails[tails.length - 1];
+      for (let k = 1; k < tails.length; k++) widest = Math.max(widest, tails[k] - tails[k - 1]);
     }
-    if (!best) continue;
-    const branch = { stations: best.arm.stations.slice(0, best.k + 1), heading: angleOf(best.v), side: best.arm.side, open: true };
-    take(branch, { i, v: best.v, t: best.t, q: best.q });
-    for (let more = 0; more < cores.length; more++) {
-      const s = step(branch);
-      if (!s) break;
-      take(branch, s);
-    }
-    arms.push(branch);
+    const km = segs.reduce((a, s) => a + lengthOf(s.pts), 0) / 1000;
+    const score = (10 * covered) / N + (2 * onRail.size) / N - 0.5 * Math.min(2, widest) - km * 0.01;
+    return { theta, axes, SP, dirOut, segs, nodes, score, onRail };
   }
 
-  // Out into the country from the last station of each arm, and from the
-  // centre on any side no arm leaves by: on as straight as the land allows,
-  // turning gently off the water.
+  // Lay out the network with the axes turned a step at a time; keep the best.
+  const tries = N < 2 ? [[u(1) * Math.PI, 1.8, 1]] : Array.from({ length: LAYOUTS }, (_, k) => [(k / LAYOUTS) * (N < 6 ? Math.PI : Math.PI / 2) + u(2) * 0.2, 1.3 + 1.4 * u(3, k), 2 * u(4, k)]);
+  let best = null;
+  for (const th of tries) {
+    const L = layout(...th);
+    if (!best || L.score > best.score) best = L;
+  }
+  const { SP, dirOut, segs, nodes, axes } = best;
+
+  // ---- The ring ----
+  // Round the inner districts, through those about halfway out, smoothed
+  // into a loop no tighter than the line's curves allow.
+  const ringSegs = [];
+  let ring = null;
+  if (N >= RING_CITY) {
+    let ids = [];
+    for (let i = 1; i < N; i++) {
+      const r = len(sub(P[i], cp)) / farthest;
+      if (r > 0.25 && r < 0.62) ids.push(i);
+    }
+    ids.sort((a, b) => angleOf(sub(P[a], cp)) - angleOf(sub(P[b], cp)));
+    // Thin out stations too close together, then drop the sharpest corner
+    // until the loop is smooth enough.
+    const pos = (i) => SP[i];
+    for (let changed = true; changed && ids.length > 6; ) {
+      changed = false;
+      for (let k = 0; k < ids.length && ids.length > 6; k++) {
+        if (len(sub(pos(ids[k]), pos(ids[(k + 1) % ids.length]))) < SPACING[0]) {
+          ids.splice((k + 1) % ids.length, 1);
+          changed = true;
+        }
+      }
+    }
+    for (let guard = 0; guard < 30 && ids.length >= 6; guard++) {
+      const curve = closedCurve(ids.map(pos));
+      if (minRadius(curve) >= MIN_RADIUS * 0.85 && !curve.some((q) => wet(q))) {
+        ring = { ids, pts: curve.concat([curve[0]]) };
+        break;
+      }
+      let worst = 0;
+      let wa = -1;
+      ids.forEach((id, k) => {
+        const a = pos(ids[(k - 1 + ids.length) % ids.length]);
+        const b = pos(id);
+        const c = pos(ids[(k + 1) % ids.length]);
+        const t = angleBetween(sub(b, a), sub(c, b));
+        if (t > wa) [wa, worst] = [t, k];
+      });
+      ids.splice(worst, 1);
+    }
+    if (ring) {
+      // The ring in stretches from station to station.
+      const R = ring.pts;
+      const at = ring.ids.map((id) => {
+        let bi = 0;
+        let bd = Infinity;
+        R.forEach((q, j) => {
+          const dd = len(sub(q, pos(id)));
+          if (dd < bd) [bd, bi] = [dd, j];
+        });
+        return bi;
+      });
+      for (let k = 0; k < ring.ids.length; k++) {
+        const a = at[k];
+        const b = at[(k + 1) % ring.ids.length];
+        const pts = b > a ? R.slice(a, b + 1) : R.slice(a).concat(R.slice(1, b + 1));
+        ringSegs.push({ a: ring.ids[k], b: ring.ids[(k + 1) % ring.ids.length], pts, ring: true });
+      }
+    }
+  }
+
+  // ---- Out into the country ----
+  // From each trunk's end, on as straight as the land allows; but a line
+  // that would have to turn back off the sea ends at its station.
   const country = (from, dir, salt) => {
     const out = [from];
     let p = from;
     let h = angleOf(dir);
+    const h0 = h;
     let drift = 0;
     for (let s = 0; s < COUNTRY; s += STEP * 5) {
+      // (Where the land turns it too far, or it cannot get by, it stops.)
+      if (Math.abs(wrap(h - h0)) > TAIL_TURN || wet(add(p, mul([Math.cos(h), Math.sin(h)], 200)))) break;
       drift += (u(10, salt, s) - 0.5) * 0.02;
       drift *= 0.9;
-      let nh = h + drift;
-      // Steer away from the sea, a little at a time.
+      // Bending gently away from the centre, so lines out of the city
+      // spread apart.
+      let nh = h + drift + Math.max(-0.02, Math.min(0.02, wrap(angleOf(sub(p, cp)) - h) * 0.05));
       for (let k = 0; k < 9 && wet(add(p, mul([Math.cos(nh), Math.sin(nh)], 600))); k++) {
         const l = wet(add(p, mul([Math.cos(nh + 0.3), Math.sin(nh + 0.3)], 600)));
         nh += l ? -0.05 : 0.05;
       }
-      // Never tighter than the tightest curve.
       const maxTurn = (STEP * 5) / MIN_RADIUS;
       h += Math.max(-maxTurn, Math.min(maxTurn, wrap(nh - h)));
       p = add(p, mul([Math.cos(h), Math.sin(h)], STEP * 5));
@@ -316,89 +442,166 @@ export function createRail(seed, { cores, terrain }) {
     }
     return out;
   };
-  const ends = [];
-  for (const arm of arms) {
-    const last = arm.stations[arm.stations.length - 1];
-    // A branch's parent goes on past the branch station; this one ends here.
-    if (arms.some((o) => o !== arm && o.stations.length > arm.stations.length && o.stations.slice(0, arm.stations.length).every((s, i) => s === arm.stations[i]))) continue;
-    ends.push({ key: `${last}>out`, from: SP[last], dir: dirOut.get(last), station: last, arm });
+  const segments = [];
+  const segOf = new Map();
+  const keyOf = (a, b) => `${a}>${b}`;
+  for (const s of segs) {
+    const sg = { key: keyOf(s.a, s.b), a: s.a, b: s.b, pts: s.pts };
+    segments.push(sg);
+    segOf.set(sg.key, sg);
   }
-  const sides = new Set(arms.map((a) => a.side));
-  for (const sg of [1, -1]) if (!sides.has(sg)) ends.push({ key: `0>out${sg}`, from: cp, dir: mul(axis, sg), station: 0, arm: null });
+  for (const s of ringSegs) {
+    const sg = { key: `r${s.a}>${s.b}`, a: s.a, b: s.b, pts: s.pts, ring: true };
+    segments.push(sg);
+    segOf.set(sg.key, sg);
+  }
   const termini = [];
-  ends.forEach((e, i) => {
-    // A straight platform first, then out; but a line that would have to
-    // turn back off the sea ends at its station, a terminus by the water.
-    const pl = add(e.from, mul(e.dir, PLATFORM));
-    const run = country(pl, e.dir, i);
-    const ahead = run.slice(0, Math.ceil(4000 / (STEP * 5)));
-    const h0 = angleOf(e.dir);
-    const turned = ahead.some((q, k) => k > 0 && Math.abs(wrap(angleOf(sub(q, ahead[k - 1])) - h0)) > Math.PI / 2);
-    if (turned || ahead.some((q) => wet(q))) {
-      termini.push({ p: e.from, dir: e.dir, station: e.station });
-      return;
+  const tailOf = new Map(); // station -> its country segment's key, or null for a terminus
+  const tailsFrom = (from, dir, station, salt) => {
+    const pl = add(from, mul(dir, PLATFORM));
+    const run = country(pl, dir, salt);
+    if (lengthOf(run) < 4000) {
+      termini.push({ p: from, dir, station });
+      return null;
     }
-    segments.set(e.key, { key: e.key, a: e.station, b: null, pts: [e.from, ...run], radius: MIN_RADIUS, country: true });
+    const key = `${station}>out${salt}`;
+    const sg = { key, a: station, b: null, pts: [from, ...run], country: true };
+    segments.push(sg);
+    segOf.set(key, sg);
+    return key;
+  };
+  const leaves = nodes.filter((n) => !nodes.some((m) => m.parent === n.s));
+  leaves.forEach((n, k) => tailOf.set(n.s, tailsFrom(SP[n.s], n.dir, n.s, k)));
+  // A side of an axis with no trunk at all: the line runs straight out.
+  const sideDirs = [];
+  for (const th of axes) for (const sg of [1, -1]) sideDirs.push([Math.cos(th) * sg, Math.sin(th) * sg]);
+  const sideRoots = sideDirs.map((d, k) => {
+    const first = nodes.filter((n) => n.parent === 0 && dot(unit(sub(SP[n.s], cp)), d) > Math.cos(Math.PI / 2.2));
+    if (first.length) return { dir: d, roots: first };
+    return { dir: d, roots: [], out: tailsFrom(cp, d, 0, 100 + k) };
   });
 
   // ---- Lines ----
-  // Arms paired across the centre, one from each side; arms left over are
-  // paired with one already in a line (the two share its track).
-  const plus = arms.filter((a) => a.side > 0);
-  const minus = arms.filter((a) => a.side < 0);
+  // Every path from the centre out to a trunk's end, on each side of an
+  // axis, paired with one on the other side: a line through the centre.
+  const pathTo = (s) => {
+    const out = [];
+    for (let n = nodes.find((m) => m.s === s); n; n = nodes.find((m) => m.s === n.parent)) out.unshift(n.s);
+    return [0, ...out];
+  };
+  const tipsOf = (sr) => {
+    if (!sr.roots.length) return [{ path: [0], out: sr.out, angle: angleOf(sr.dir) }];
+    const rootSet = new Set(sr.roots.map((r) => r.s));
+    return leaves.filter((l) => pathTo(l.s).some((s) => rootSet.has(s))).map((l) => ({ path: pathTo(l.s), out: tailOf.get(l.s), angle: angleOf(sub(SP[l.s], cp)) }));
+  };
   const lines = [];
-  const outEnd = (sg) => `0>out${sg}`;
-  const longer = (A, B) => (A.length >= B.length ? A : B);
-  const count = Math.max(plus.length, minus.length, 1);
-  for (let k = 0; k < count; k++) {
-    const a = plus.length ? plus[k % plus.length] : null;
-    const b = minus.length ? minus[k % minus.length] : null;
-    lines.push({ id: lines.length, arms: [a, b], ends: [a ? null : outEnd(1), b ? null : outEnd(-1)] });
+  for (let a = 0; a < axes.length; a++) {
+    const A = tipsOf(sideRoots[a * 2]).sort((x, y) => x.angle - y.angle);
+    const B = tipsOf(sideRoots[a * 2 + 1]).sort((x, y) => y.angle - x.angle);
+    const n = Math.max(A.length, B.length);
+    for (let k = 0; k < n; k++) {
+      const x = A[k % A.length];
+      const y = B[k % B.length];
+      // Stations from x's far end in to the centre, then out to y's.
+      const stations = [...x.path.slice().reverse(), ...y.path.slice(1)];
+      const keys = [];
+      if (x.out) keys.push(x.out);
+      for (let i = 0; i + 1 < stations.length; i++) {
+        const k1 = keyOf(stations[i], stations[i + 1]);
+        const k2 = keyOf(stations[i + 1], stations[i]);
+        keys.push(segOf.has(k1) ? k1 : k2);
+      }
+      if (y.out) keys.push(y.out);
+      lines.push({ stations, segments: keys });
+    }
   }
-  void longer;
+  if (ring) lines.push({ stations: ring.ids.concat([ring.ids[0]]), segments: ringSegs.map((s) => `r${s.a}>${s.b}`), ring: true });
+  lines.forEach((l, k) => {
+    l.id = k;
+    l.name = l.ring ? 'R' : String.fromCharCode(65 + k);
+    l.colour = l.ring ? '#7a8792' : RAIL_COLOURS[k % RAIL_COLOURS.length];
+  });
+  // Which lines run on each stretch, in order across it (for drawing them
+  // side by side).
+  for (const sg of segments) sg.lines = lines.filter((l) => l.segments.includes(sg.key)).map((l) => l.id);
 
   // ---- Stations ----
   const stations = new Map();
-  const station = (s, extra = {}) => {
-    if (!stations.has(s)) stations.set(s, { id: s, p: SP[s], key: cores[s].key, central: s === 0, dir: s === 0 ? axis : dirOut.get(s), ...extra });
+  const station = (s) => {
+    if (!stations.has(s)) {
+      const ringHere = ring && ring.ids.includes(s);
+      stations.set(s, { id: s, p: SP[s], key: cores[s].key, central: s === 0, dir: s === 0 ? sideDirs[0] : dirOut.get(s) || (ringHere ? unit(sub(SP[ring.ids[(ring.ids.indexOf(s) + 1) % ring.ids.length]], SP[s])) : [1, 0]), lines: [] });
+    }
     return stations.get(s);
   };
   station(0);
-  for (const arm of arms) for (const s of arm.stations) station(s);
-  // Stops in the middle of long stretches between district stations.
-  const stops = [];
-  for (const sg of segments.values()) {
-    if (sg.country) continue;
-    const L = lengthOf(sg.pts);
-    if (L < EXTRA_STOP) continue;
-    const p = pointAlong(sg.pts, L / 2);
-    if (terrain.isWater(p[0], p[1])) continue;
-    const q = pointAlong(sg.pts, L / 2 + 20);
-    stops.push({ id: `m${sg.key}`, p, key: null, central: false, dir: unit(sub(q, p)), stop: true, segment: sg.key });
-  }
-
-  const segs = [...segments.values()];
-  for (const sg of segs) {
+  for (const n of nodes) station(n.s);
+  if (ring) for (const s of ring.ids) station(s);
+  for (const l of lines) for (const s of l.stations) station(s).lines.includes(l.id) || station(s).lines.push(l.id);
+  for (const sg of segments) {
     let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
     for (const [x, y] of sg.pts) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
     sg.bbox = { x0, y0, x1, y1 };
   }
+  // Where the ring crosses a radial line away from a station, an
+  // interchange station at the crossing (as at Akihabara: rare, since the
+  // ring runs through district stations the radial lines also serve).
+  const stops = [];
+  const stationAt = (q, r) => [...stations.values()].some((st) => len(sub(st.p, q)) < r);
+  const crossing = (A, B) => {
+    for (let i = 1; i < A.length; i++) {
+      const a = A[i - 1];
+      const ab = sub(A[i], a);
+      for (let j = 1; j < B.length; j++) {
+        const c = B[j - 1];
+        const cd = sub(B[j], c);
+        const den = ab[0] * cd[1] - ab[1] * cd[0];
+        if (!den) continue;
+        const ac = sub(c, a);
+        const t = (ac[0] * cd[1] - ac[1] * cd[0]) / den;
+        const v = (ac[0] * ab[1] - ac[1] * ab[0]) / den;
+        if (t >= 0 && t <= 1 && v >= 0 && v <= 1) return { p: add(a, mul(ab, t)), dir: unit(ab) };
+      }
+    }
+    return null;
+  };
+  for (const rs of segments.filter((sg) => sg.ring)) {
+    for (const sg of segments) {
+      if (sg.ring || sg.country || rs.bbox.x1 < sg.bbox.x0 || rs.bbox.x0 > sg.bbox.x1 || rs.bbox.y1 < sg.bbox.y0 || rs.bbox.y0 > sg.bbox.y1) continue;
+      const x = crossing(rs.pts, sg.pts);
+      if (!x || stationAt(x.p, 600) || wet(x.p)) continue;
+      stops.push({ id: `x${rs.key}|${sg.key}`, p: x.p, key: null, central: false, dir: x.dir, stop: true, interchange: true, segment: rs.key, lines: [...rs.lines, ...sg.lines] });
+    }
+  }
+  // Infill stops on long stretches between district stations, where people
+  // live (but not just by another station).
+  for (const sg of segments) {
+    if (sg.country) continue;
+    const L = lengthOf(sg.pts);
+    if (L < INFILL) continue;
+    const p = pointAlong(sg.pts, L / 2);
+    if (terrain.isWater(p[0], p[1]) || stationAt(p, 1000) || stops.some((o) => len(sub(o.p, p)) < 1000)) continue;
+    const q = pointAlong(sg.pts, L / 2 + 20);
+    stops.push({ id: `m${sg.key}`, p, key: null, central: false, dir: unit(sub(q, p)), stop: true, segment: sg.key, lines: sg.lines.slice() });
+  }
+
   // Track touching a rectangle.
-  const near = (x0, y0, x1, y1) => segs.filter((s) => !(s.bbox.x1 < x0 || s.bbox.x0 > x1 || s.bbox.y1 < y0 || s.bbox.y0 > y1));
+  const near = (x0, y0, x1, y1) => segments.filter((s) => !(s.bbox.x1 < x0 || s.bbox.x0 > x1 || s.bbox.y1 < y0 || s.bbox.y0 > y1));
   // Districts joined directly by a stretch of track.
   const joined = new Set();
-  for (const sg of segs) if (sg.b !== null) {
+  for (const sg of segments) if (sg.b !== null) {
     joined.add(`${cores[sg.a].key}|${cores[sg.b].key}`);
     joined.add(`${cores[sg.b].key}|${cores[sg.a].key}`);
   }
   return {
-    segments: segs,
+    segments,
     stations: [...stations.values(), ...stops],
     lines,
-    arms,
     termini,
-    axis,
+    axes,
     near,
     joins: (ka, kb) => joined.has(`${ka}|${kb}`),
+    // Which districts have a station, and which only one next door.
+    served: best.onRail,
   };
 }

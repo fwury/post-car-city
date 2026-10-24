@@ -331,6 +331,39 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
         }
       }
     }
+    // Land cut off by the rail with no centre of its own (between tracks
+    // fanning out of a station, say) gets one, else the core would take it.
+    {
+      const has = new Set(centres.slice(1).map((c) => side[cellOf(c[0], c[1])]));
+      const sum = new Map();
+      for (const n of land) {
+        const k = side[n];
+        if (k < 0 || has.has(k)) continue;
+        const e = sum.get(k) || { people: 0, x: 0, y: 0, w: 0 };
+        const wt = dens[n] * CELL * CELL;
+        e.people += wt;
+        e.x += cx(n) * wt;
+        e.y += cy(n) * wt;
+        e.w += wt;
+        sum.set(k, e);
+      }
+      for (const [k, e] of [...sum].sort((a, b) => a[0] - b[0])) {
+        if (e.people < NEIGHBOURHOOD_PEOPLE * 0.4) continue;
+        const tx = e.x / e.w;
+        const ty = e.y / e.w;
+        let b = -1;
+        let bd = Infinity;
+        for (const n of land) {
+          if (side[n] !== k) continue;
+          const dd = Math.hypot(cx(n) - tx, cy(n) - ty) - Math.min(fromEdge[n], 200);
+          if (dd < bd) [bd, b] = [dd, n];
+        }
+        if (b >= 0) {
+          centres.push([cx(b), cy(b)]);
+          onBoulevard.push({ t: null });
+        }
+      }
+    }
     const housing = (k) => (centres[k] === campus ? 1 - CAMPUS_SHARE : 1);
     // People living in each neighbourhood of a labelling.
     const peopleOf = (lab, m) => {
