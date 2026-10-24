@@ -3,11 +3,16 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { seedFromText } from '../src/core/hash.js';
 import { createWorld } from '../src/world/districts.js';
+import { isDistrictKey } from '../src/world/growth.js';
 import { MIN_SHARED_EDGE, MIN_RADIUS, minRadius, distToLine } from '../src/world/boulevards.js';
 
-const SEED = seedFromText('1');
-const AREA = [0, 0, 14000, 14000];
-const world = createWorld(SEED, { population: Infinity });
+// A big city on flat land, so a wide square of it is all districts.
+const SEED = seedFromText('20');
+const POPULATION = 1e7;
+
+const world = createWorld(SEED, { population: POPULATION });
+const [CX, CY] = world.centre;
+const AREA = [CX - 7000, CY - 7000, CX + 7000, CY + 7000];
 const inner = () => world.districtsInRect(...AREA).filter((d) => d.station[0] > AREA[0] && d.station[0] < AREA[2] && d.station[1] > AREA[1] && d.station[1] < AREA[3]);
 const other = (key) => world.district(world.growth.coreOf(key));
 const ends = (l) => [l.points[0], l.points[l.points.length - 1]];
@@ -21,7 +26,8 @@ test('nearly every pair of neighbouring districts is linked by a boulevard', () 
       if (d.network.links.some((l) => l.neighbour === n)) linked++;
     }
     for (const c of d.chains) {
-      if (world.boulevards.crossingOf(c.geo).length > MIN_SHARED_EDGE * 1.6) assert.ok(d.network.links.some((l) => l.neighbour === c.neighbour), `${d.key} has no link to ${c.neighbour}`);
+      // (The city's edge, with the country, water or mountains beyond, has no links.)
+      if (isDistrictKey(c.neighbour) && world.boulevards.crossingOf(c.geo).length > MIN_SHARED_EDGE * 1.6) assert.ok(d.network.links.some((l) => l.neighbour === c.neighbour), `${d.key} has no link to ${c.neighbour}`);
     }
   }
   assert.ok(linked / pairs > 0.85, `only ${linked} of ${pairs} neighbour pairs linked`);
@@ -100,6 +106,6 @@ test('boulevards bend, but never tighter than the minimum radius', () => {
 });
 
 test('roundabouts are kept for roads outside the city', () => {
-  const ds = world.districtsInRect(-10000, -10000, 30000, 30000);
+  const ds = world.districtsInRect(CX - 12000, CY - 12000, CX + 12000, CY + 12000);
   assert.equal(ds.filter((d) => d.network.roundabout).length, 0);
 });

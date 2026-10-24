@@ -19,14 +19,18 @@ import { resample, chaikin } from '../util/geom.js';
 
 const STEP = 6; // metres between points along a greenway
 const STREAM_WIDTH = [4, 7];
+const JOIN = 70; // metres downstream of a junction a tributary stream joins the main one
+const TRIB_REACH = 110; // metres out along it that a tributary starts to swing round
 export const TRAIL_WIDTH = 4;
 
 const BANK_PATH = 0.45; // the bank paths' place across the bank, from the water
-const SHORE_PATH = 10; // metres from the water's edge to the promenade
+const SHORE_PATH = 10; // metres from the water's edge to the promenade (or from the back of the beach)
+export const BEACH = 24; // metres of sand from the water's edge
 
-export function createGreenways(seed, { greenwayWidth, terrain = null }) {
+export function createGreenways(seed, { greenwayWidth, terrain = null, armsAt = () => [] }) {
   const cache = new LruCache(4000);
   const drift = createNoise(seed, 'stream-drift');
+  const beachNoise = createNoise(seed, 'beaches');
 
   // A line split where it runs into water: the pieces on land.
   const dry = (L) => {
@@ -94,7 +98,10 @@ export function createGreenways(seed, { greenwayWidth, terrain = null }) {
         s += terrain.shore(q[0] + N[i][0] * 20, q[1] + N[i][1] * 20) - terrain.shore(q[0] - N[i][0] * 20, q[1] - N[i][1] * 20);
       }
       const sd = s < 0 ? 1 : -1;
-      const off = half.map((h) => sd * Math.max(0, h - SHORE_PATH));
+      // On the ocean, much of the shore is beach: sand from the water's
+      // edge, the promenade behind it.
+      const sandy = P.map(([x, y]) => terrain.ocean && beachNoise.fbm(x / 900, y / 900, 2) > -0.1);
+      const off = half.map((h, i) => sd * (sandy[i] ? h - BEACH - SHORE_PATH : Math.max(0, h - SHORE_PATH)));
       const sm = off.map((_, i) => {
         let a = 0;
         let c = 0;
@@ -105,7 +112,19 @@ export function createGreenways(seed, { greenwayWidth, terrain = null }) {
         return a / c;
       });
       const trail = chaikin(P.map((q, i) => [q[0] + N[i][0] * sm[i], q[1] + N[i][1] * sm[i]]), false);
-      return { stream: null, trail, trails: [trail], centre: P, half, side: sd, water: 'sea' };
+      const beaches = [];
+      let run = null;
+      for (let i = 0; i < n; i++) {
+        if (!sandy[i]) {
+          run = null;
+          continue;
+        }
+        // (Along the water's edge; drawn twice as wide, the water covers the outer half.)
+        const o = sd * (half[i] - 8);
+        if (!run) beaches.push((run = []));
+        run.push([P[i][0] + N[i][0] * o, P[i][1] + N[i][1] * o]);
+      }
+      return { stream: null, trail, trails: [trail], centre: P, half, side: sd, water: 'sea', beaches: beaches.filter((b) => b.length > 3).map((b) => chaikin(b, false)) };
     }
     // The trail keeps to one side.
     const side = u(1) < 0.5 ? 1 : -1;
@@ -126,7 +145,43 @@ export function createGreenways(seed, { greenwayWidth, terrain = null }) {
     }
     // Smoothed, so it bends gently.
     for (let r = 0; r < 3; r++) for (let i = 1; i < n - 1; i++) mOff[i] = (mOff[i - 1] + 2 * mOff[i] + mOff[i + 1]) / 4;
-    const stream = P.map((q, i) => [q[0] + N[i][0] * mOff[i], q[1] + N[i][1] * mOff[i]]);
+    let stream = P.map((q, i) => [q[0] + N[i][0] * mOff[i], q[1] + N[i][1] * mOff[i]]);
+    // Where three or more greenways meet, the two that run most nearly
+    // straight on carry the stream through; any other is a tributary,
+    // curving round to join it a little downstream rather than meeting it
+    // square at the junction.
+    for (const [end, k] of (geo.ends || []).map((k, e) => [e, k])) {
+      const arms = armsAt(k);
+      if (arms.length < 3) continue;
+      let pair = null;
+      for (let a = 0; a < arms.length; a++) {
+        for (let b = a + 1; b < arms.length; b++) {
+          const dd = arms[a].dir[0] * arms[b].dir[0] + arms[a].dir[1] * arms[b].dir[1];
+          if (!pair || dd < pair.dd || (dd === pair.dd && arms[a].key + arms[b].key < pair.k)) pair = { dd, a: arms[a], b: arms[b], k: arms[a].key + arms[b].key };
+        }
+      }
+      if (!pair || pair.a.key === geo.key || pair.b.key === geo.key) continue;
+      const mine = arms.find((q) => q.key === geo.key);
+      if (!mine) continue;
+      // Join the main stream on the side it flows on with this one.
+      const t = mine.dir;
+      const m = [pair.a, pair.b].sort((x, y) => (x.dir[0] * -t[0] + x.dir[1] * -t[1] > y.dir[0] * -t[0] + y.dir[1] * -t[1] ? -1 : 1))[0];
+      const J = [mine.p[0] + m.dir[0] * JOIN, mine.p[1] + m.dir[1] * JOIN];
+      // The last stretch of this stream, from REACH out, swung round to J.
+      const S = end === 0 ? stream : stream.slice().reverse();
+      const iFrom = Math.min(S.length - 1, Math.ceil(TRIB_REACH / STEP));
+      const A = S[iFrom];
+      const c1 = [A[0] - t[0] * TRIB_REACH * 0.45, A[1] - t[1] * TRIB_REACH * 0.45];
+      const c2 = [J[0] - m.dir[0] * JOIN * 0.6, J[1] - m.dir[1] * JOIN * 0.6];
+      const bend = [];
+      for (let q = 0; q <= 16; q++) {
+        const u0 = q / 16;
+        const v0 = 1 - u0;
+        bend.push([0, 1].map((c) => v0 ** 3 * A[c] + 3 * v0 * v0 * u0 * c1[c] + 3 * v0 * u0 * u0 * c2[c] + u0 ** 3 * J[c]));
+      }
+      const joined = bend.reverse().concat(S.slice(iFrom + 1));
+      stream = end === 0 ? joined : joined.reverse();
+    }
     const trail = [];
     const tOff = mOff.map((m, i) => side * Math.max(half[i] * 0.55, Math.min(half[i] - 9, Math.abs(m) + 16)) + m * 0.2);
     // Smooth the trail's offsets so it bends less than the stream.

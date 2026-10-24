@@ -26,7 +26,8 @@ const RIVER_NEAR = 700; // metres: parcels this near a river check each step for
 // round the city.
 export const SEA = 'W';
 export const COUNTRY = 'C';
-export const isDistrictKey = (k) => !!k && k !== SEA && k !== COUNTRY;
+export const MOUNTAIN = 'M';
+export const isDistrictKey = (k) => !!k && k !== SEA && k !== COUNTRY && k !== MOUNTAIN;
 
 // Binary min-heap of (key, value) pairs.
 export class Heap {
@@ -125,8 +126,9 @@ export function createGrowth(seed, cores, { terrain = null, inCity = () => true 
         if (!terrain) continue;
         // The sea cannot be crossed; nor can a river, so each step to a
         // neighbour that crosses one is cut (a bit per neighbour).
-        if (terrain.isSea(x, y)) {
-          t.sea[m] = 1;
+        // (Mountains cannot be built on or crossed either.)
+        if (terrain.isSea(x, y) || (terrain.isHigh && terrain.isHigh(x, y))) {
+          t.sea[m] = terrain.isSea(x, y) ? 1 : 2;
           t.fr[m] = Infinity;
         }
         const r = terrain.nearestRiver(x, y);
@@ -218,7 +220,7 @@ export function createGrowth(seed, cores, { terrain = null, inCity = () => true 
       for (let a = 0; a < CHUNK; a++) {
         const n = (b + MARGIN) * W + (a + MARGIN);
         const l = label[n];
-        out[b * CHUNK + a] = sea[n] ? SEA : l && inCity(l) ? l : COUNTRY;
+        out[b * CHUNK + a] = sea[n] === 1 ? SEA : sea[n] === 2 ? MOUNTAIN : l && inCity(l) ? l : COUNTRY;
       }
     }
     for (const core of list) coreIndex.set(core.key, core);

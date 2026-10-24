@@ -51,9 +51,19 @@ export function createPlaceCard(el) {
     show(hit, hood) {
       const q = hit.plot;
       const b = q.bldg;
-      const st = STYLES[b.style];
-      const title = label(q.dedicated) || (q.cls === 'podium' && b.tower ? 'Tower over shops and offices' : KINDS[q.cls]) || 'Building';
+      // The place tapped, and the building it is in.
+      const title = label(hit.use) || label(q.dedicated) || (q.cls === 'podium' && b && b.tower ? 'Tower over shops and offices' : KINDS[q.cls]) || 'Building';
       const rows = [];
+      if (!b) {
+        if (hood) rows.push(['Neighbourhood', hood]);
+        el.innerHTML = `<div class="card-head"><h2>${title}</h2><button type="button" class="card-close" data-close aria-label="Close">×</button></div>`
+          + `<dl>${rows.map(([k, v]) => `<div><dt>${k}</dt><dd>${v}</dd></div>`).join('')}</dl>`;
+        el.hidden = false;
+        el.dataset.open = '1';
+        return;
+      }
+      const st = STYLES[b.style];
+      if (hit.use && hit.use !== q.dedicated) rows.push(['In', label(q.dedicated) || KINDS[q.cls] || 'Building']);
       const storeys = b.tower ? `${b.tower.storeys} storeys (tower), podium ${b.storeys}` : `${b.storeys} storey${b.storeys === 1 ? '' : 's'}`;
       const height = Math.round((b.tower ? b.tower.h : b.h) + (b.ridge ? 2.5 : 0));
       rows.push(['Height', `${storeys}, about ${height} m`]);

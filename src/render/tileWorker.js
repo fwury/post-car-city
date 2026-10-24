@@ -24,6 +24,7 @@ self.onmessage = (e) => {
         hoodLines: b.hoodLines,
         tramStops: b.tramStops,
         junctions: b.junctions,
+        intersections: b.intersections,
         greenLinks: b.greenLinks,
         districtParks: b.districtParks,
         linearParks: b.linearParks,

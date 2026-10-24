@@ -3,6 +3,7 @@
 // they are drawn as vectors straight to the screen.
 
 import { createNoise, createWarp } from '../core/noise.js';
+import { placesOf, drawPlaces, PLACE_MIN_ZOOM } from './places.js';
 import { drawDistricts, drawDistrictOutlines, renderDistrictTile } from './districtLayer.js';
 import { palette, fonts } from './styles.js';
 import { TileManager } from './tiles.js';
@@ -215,6 +216,17 @@ export class Renderer {
       ctx.globalAlpha = 1;
     }
     if (L.transit && camera.zoom >= STATION_MIN_ZOOM) this.drawStations();
+    // Places of note, as markers; close in, everyday ones too.
+    this.placesDrawn = [];
+    if (L.blocks && camera.zoom >= PLACE_MIN_ZOOM && this.blocksFor) {
+      const b = camera.bounds();
+      const lists = [];
+      for (const d of this.getWorld().districtsInRect(b.x0, b.y0, b.x1, b.y1)) {
+        const bl = this.blocksFor(d);
+        if (bl) lists.push(placesOf(bl).map((pl) => ({ ...pl, d })));
+      }
+      this.placesDrawn = drawPlaces(ctx, camera, lists, this.dpr);
+    }
     if (L.grid) this.drawGrid();
     if (L.tiles) this.drawTileOutlines(dvis);
     this.drawScaleBar();

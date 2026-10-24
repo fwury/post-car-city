@@ -20,6 +20,19 @@ function hexToRgb(h) {
   const n = parseInt(h.slice(1), 16);
   return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
 }
+// Materials as a map shows them: their hue, muted toward a light stone, so
+// the map reads calm (as Apple's and Google's do) rather than painted.
+const MUTE = [236, 232, 225];
+const MUTE_SHARE = 0.45;
+const muteCache = new Map();
+function mute(hex) {
+  let v = muteCache.get(hex);
+  if (v) return v;
+  const c = hexToRgb(hex).map((x, i) => Math.round(x + (MUTE[i] - x) * MUTE_SHARE));
+  v = `#${c.map((x) => x.toString(16).padStart(2, '0')).join('')}`;
+  muteCache.set(hex, v);
+  return v;
+}
 const shadeCache = new Map();
 // A colour made lighter (f > 1) or darker (f < 1).
 function shade(hex, f) {
@@ -164,8 +177,8 @@ export function drawBuildings(ctx, view, list, place, mode, materials) {
         place(d);
         placed = d;
       }
-      const wall = materials ? it.b.wall : PLAIN.wall;
-      const roofC = materials ? it.b.roofColour : PLAIN.roof;
+      const wall = materials ? mute(it.b.wall) : PLAIN.wall;
+      const roofC = materials ? mute(it.b.roofColour) : PLAIN.roof;
       ctx.fillStyle = shade(wall, 1);
       ctx.fill(it.walls.light);
       ctx.fillStyle = shade(wall, 0.88);
@@ -194,7 +207,7 @@ export function drawBuildings(ctx, view, list, place, mode, materials) {
     return;
   }
   // 2D
-  ctx.fillStyle = 'rgba(60, 50, 40, 0.10)';
+  ctx.fillStyle = 'rgba(70, 64, 56, 0.08)';
   for (const { d, p } of list) {
     place(d);
     ctx.fill(p.shadow);
@@ -203,7 +216,7 @@ export function drawBuildings(ctx, view, list, place, mode, materials) {
     for (const { d, p } of list) {
       place(d);
       for (const [colour, path] of p.roofs) {
-        ctx.fillStyle = colour;
+        ctx.fillStyle = mute(colour);
         ctx.fill(path, 'evenodd');
       }
     }
@@ -214,8 +227,8 @@ export function drawBuildings(ctx, view, list, place, mode, materials) {
       ctx.fill(p.plain, 'evenodd');
     }
   }
-  ctx.strokeStyle = 'rgba(40, 35, 30, 0.22)';
-  ctx.lineWidth = px(0.6);
+  ctx.strokeStyle = 'rgba(90, 80, 68, 0.2)';
+  ctx.lineWidth = px(0.5);
   for (const { d, p } of list) {
     place(d);
     ctx.stroke(p.edges);

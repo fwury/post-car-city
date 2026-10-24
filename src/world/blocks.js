@@ -34,6 +34,7 @@ import { plotsOfBlock, rectness, TERRACE_RECT } from './plots.js';
 import { assignProgramme } from './programme.js';
 import { assignBuildings } from './buildings.js';
 import { tramStops } from './tram.js';
+import { planIntersections } from './intersections.js';
 import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
 import { createNames } from './names.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample } from '../util/geom.js';
@@ -76,11 +77,15 @@ const LINEAR_PARK_SHARE = 0.5; // of such stretches of boundary, those made line
 const LINEAR_PARK_WIDTH = [28, 40]; // metres
 const ROW_AWKWARD_AREA = 0.9e4; // m²: a rowhouse block bigger than this that is far from rectangular is split again ...
 const TERRACE_RECT_GOOD = 0.78; // ... (rectangular enough, by this measure); a smaller one is a green
+const STADIUM_SHARE = 0.6; // of districts, those with a stadium
+const STADIUM_SITE = [250, 200]; // metres, centreline: a stadium's block (a 60 000-seat bowl and its concourse)
+const STADIUM_REACH = [300, 1500]; // metres from the station
 const ROW_STRIP = 74; // metres, centreline to centreline: a rowhouse block's width (two houses, gardens and the lane)
 const OVERSIZE = 1.5; // a block this many times its usual area must split, one way or another
 const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
 const SQUARE_FORMS = { corner: 0.3, against: 0.35 }; // shares of squares by form; the rest stand on their own
 const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school takes
+const PEDESTRIAN_ZONE = 300; // metres from the district's square: its pedestrian zone
 const PEDESTRIAN_REACH = 220; // metres from its square a pedestrian street runs
 const FALLBACK_REACH = 250; // metres from a centre a square may stand if none was found by it
 const EDGE_CELL = 4; // metres: the raster the greenway-side streets are found on
@@ -1241,6 +1246,30 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       return null;
     };
 
+    // About three districts in five have a stadium.
+    const wantStadium = toUnit(hash(seed, 'stadium', ...keyInts(d.coreInfo))) < STADIUM_SHARE;
+    let stadiumPlaced = false;
+    // Cut a block of a stadium's size from a node: a strip of its width
+    // along one side, then that strip cut to its length. Returns the block
+    // and the pieces left, or null.
+    function carve(node, ax, zone) {
+      const [SL, SW] = STADIUM_SITE;
+      for (const t of [SW / ax.W, 1 - SW / ax.W]) {
+        const kids = split(node, ax, zone, { at: t, along: true, force: true });
+        if (!kids) continue;
+        const [strip, other] = kids.map((k) => ({ k, a: axes(k.pts) })).sort((x, y) => Math.abs(x.a.W - SW) - Math.abs(y.a.W - SW));
+        if (Math.abs(strip.a.W - SW) > 18) continue;
+        for (const u of [SL / strip.a.L, 1 - SL / strip.a.L, 0.5]) {
+          if (u <= 0 || u >= 1) continue;
+          const parts = split(strip.k, strip.a, zone, { at: u, along: false, force: true });
+          if (!parts) continue;
+          const [blk, rest] = parts.map((k) => ({ k, a: axes(k.pts) })).sort((x, y) => Math.abs(x.a.L - SL) - Math.abs(y.a.L - SL));
+          if (Math.abs(blk.a.L - SL) > 45 || blk.a.W < SW - 18 || rectness(blk.k.pts) < 0.85) continue;
+          return { block: blk.k, rest: [other.k, rest.k] };
+        }
+      }
+      return null;
+    }
     const leaves = [];
     let queue = supers.map((f) => ({ pts: f.pts, tags: f.tags }));
     queue.sort((a, b) => a.pts[0][0] - b.pts[0][0] || a.pts[0][1] - b.pts[0][1]);
@@ -1255,6 +1284,20 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
           squareOf.set(sq.id, leaf);
           leaves.push(leaf);
           continue;
+        }
+        // A stadium's own block, cut to its size from a large piece of land
+        // near the core: a rectangle, the stadium filling it.
+        if (wantStadium && !stadiumPlaced && zone !== 'campus') {
+          const r = len(sub(ax.c, d.station));
+          if (r > STADIUM_REACH[0] && r < STADIUM_REACH[1] && ax.W >= STADIUM_SITE[1] + 70 && ax.L >= STADIUM_SITE[0] + 70) {
+            const site = carve(node, ax, zone);
+            if (site) {
+              stadiumPlaced = true;
+              leaves.push({ ...site.block, ax: axes(site.block.pts), use: 'stadium', hood: hoodAt(site.block.ax ? site.block.ax.c : axes(site.block.pts).c)?.id ?? 0 });
+              next.push(...site.rest);
+              continue;
+            }
+          }
         }
         const pk = parkFor(node, ax.area);
         if (pk) {
@@ -1424,10 +1467,30 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       }
     }
 
+    // The district centre is a pedestrian zone: every local street within
+    // a few hundred metres of its square is given over to people on foot
+    // (and bikes), as in the old centre of a European city; main streets
+    // and boulevards still cross it.
+    const coreSquare = squareOf.get(0);
+    if (coreSquare) {
+      const c = axes(coreSquare.pts).c;
+      for (const lf of leaves) {
+        lf.tags.forEach((t, i) => {
+          if (t.kind !== 'local') return;
+          const a = lf.pts[i];
+          const b = lf.pts[(i + 1) % lf.pts.length];
+          if (len(sub([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], c)) < PEDESTRIAN_ZONE) {
+            pedestrianise(t, c);
+            t.reach = PEDESTRIAN_ZONE + 40;
+          }
+        });
+      }
+    }
+
     // ---- Blocks ----
     // A pedestrian street runs a block or two from its square, then goes on
-    // as a local street.
-    const kindAt = (t, p) => (t.kind === 'pedestrian' && len(sub(p, t.square)) > PEDESTRIAN_REACH ? 'local' : t.kind);
+    // as a local street (in the centre's pedestrian zone, to its edge).
+    const kindAt = (t, p) => (t.kind === 'pedestrian' && len(sub(p, t.square)) > (t.reach ?? PEDESTRIAN_REACH) ? 'local' : t.kind);
     const half = (t, p) => {
       if (t.kind === 'pedestrian') return (kindAt(t, p) === 'pedestrian' ? PEDESTRIAN : LOCAL) / 2;
       if (t.kind === 'greenway') return PARKSIDE / 2;
@@ -1631,7 +1694,13 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
-    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks };
+    // How each junction is laid out, by the streets that meet there.
+    const intersections = planIntersections(
+      [...st.lines.map((l) => ({ pts: l.points, type: 'mainStreet' })), ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => ({ pts: l.points, type: 'boulevard' }))],
+      tram.junctions,
+      local,
+    );
+    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks };
   }
 
   // Forget a district's blocks (a worker that has handed them on keeps none).

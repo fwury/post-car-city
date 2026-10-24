@@ -27,7 +27,7 @@ import { createNeighbourhoods } from './neighbourhoods.js';
 export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
 import { createBlocks } from './blocks.js';
-import { createGrowth, PARCEL, SEA, COUNTRY, isDistrictKey } from './growth.js';
+import { createGrowth, PARCEL, SEA, COUNTRY, MOUNTAIN, isDistrictKey } from './growth.js';
 import { createTerrain, DEFAULT_POPULATION } from './terrain.js';
 import { dist, pointInPolygon, polygonArea, signedArea, polylineNormals, bboxOf, simplify, chaikin, resample } from '../util/geom.js';
 
@@ -142,7 +142,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     let v = dryMemo.get(c.key);
     if (v === undefined) {
       const r = terrain.nearestRiver(c.x, c.y);
-      v = terrain.shore(c.x, c.y) > DRY && !(r && r.d < r.width / 2 + DRY);
+      v = terrain.shore(c.x, c.y) > DRY && !(r && r.d < r.width / 2 + DRY) && !terrain.isHigh(c.x, c.y) && !terrain.isHigh(c.x + 600, c.y) && !terrain.isHigh(c.x - 600, c.y) && !terrain.isHigh(c.x, c.y + 600) && !terrain.isHigh(c.x, c.y - 600);
       dryMemo.set(c.key, v);
     }
     return v;
@@ -155,9 +155,8 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   // centre (by a distance stretched a little by direction, so the city is
   // not round).
   const shapeNoise = createNoise(seed, 'city-shape');
-  const bounded = Number.isFinite(terrain.districts);
-  const reach = bounded ? terrain.radius * 2.2 + 4000 : 0;
-  const ranked = (bounded ? cores.coresInRect(-reach, -reach, reach, reach) : [])
+  const reach = terrain.radius * 2.2 + 4000;
+  const ranked = cores.coresInRect(-reach, -reach, reach, reach)
     .map((c) => {
       const a = Math.atan2(c.y, c.x);
       const k = 1 + CITY_SHAPE * shapeNoise.fbm(Math.cos(a) * 1.3 + 5, Math.sin(a) * 1.3, 2);
@@ -176,7 +175,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     cityCores.unshift(...cityCores.splice(best, 1));
   }
   const keys = new Set(cityCores.map((c) => c.key));
-  const city = { has: (k) => !bounded || keys.has(k) };
+  const city = { has: (k) => keys.has(k) };
   const centre = cityCores.length ? [cityCores[0].x, cityCores[0].y] : [0, 0];
   const growth = createGrowth(seed, cores, { terrain, inCity: (k) => city.has(k) });
   // Regional rail, for the whole city: it comes before the neighbourhoods,
@@ -201,7 +200,34 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     return warpFine(p[0], p[1], p);
   };
   const widthNoise = createNoise(seed, 'greenway-width');
-  const greenways = createGreenways(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), terrain });
+  const greenways = createGreenways(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), terrain, armsAt: (k) => armsAt(k) });
+  // The greenways leaving a junction (by its point key): each one's key
+  // and its direction out of the junction.
+  const armsCache = new LruCache(20000);
+  function armsAt(k) {
+    let arms = armsCache.get(k);
+    if (arms) return arms;
+    arms = new Map();
+    if (k[0] === 'q') {
+      const [i, j] = k.slice(1).split(',').map(Number);
+      const labels = new Set([[i, j], [i + 1, j], [i + 1, j + 1], [i, j + 1]].map(([a, c]) => label(a, c)));
+      for (const l of labels) {
+        const b = baseOf(l);
+        if (!b) continue;
+        for (const c of b.chains) {
+          const g = c.geo;
+          if (!g.ends || !g.ends.includes(k) || arms.has(g.key)) continue;
+          const P = g.ends[0] === k ? g.points : g.points.slice().reverse();
+          const q = P[Math.min(P.length - 1, 5)];
+          const L = Math.hypot(q[0] - P[0][0], q[1] - P[0][1]) || 1;
+          arms.set(g.key, { key: g.key, p: P[0], dir: [(q[0] - P[0][0]) / L, (q[1] - P[0][1]) / L] });
+        }
+      }
+    }
+    arms = [...arms.values()];
+    armsCache.set(k, arms);
+    return arms;
+  }
   const names = createNames(seed);
   const transit = createTransit({ rail });
 
@@ -420,7 +446,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
         const r = terrain.nearestRiver(x, y);
         return r && r.d < 2;
       }).length;
-      const kind = D === SEA || E === SEA ? 'shore' : onRiver > pts.length * 0.5 ? 'river' : D === COUNTRY || E === COUNTRY ? 'edge' : 'green';
+      const kind = D === SEA || E === SEA ? 'shore' : onRiver > pts.length * 0.5 ? 'river' : D === COUNTRY || E === COUNTRY || D === MOUNTAIN || E === MOUNTAIN ? 'edge' : 'green';
       // Water's edges keep their own line; the others run straight between bends.
       const shaped = kind === 'river' || kind === 'shore' ? { points: pts, runs: [] } : straightRuns(pts, rngFor(seed, 'greenway-runs', hashString(key)));
       pts = resample(shaped.points, FINE_SPACING);
@@ -432,6 +458,8 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
         points: pts,
         runs: shaped.runs,
         first,
+        // The junctions it runs between (none for a closed loop).
+        ends: loop ? [] : [canon[0], canon[canon.length - 1]],
         // Points running from `start` (orientation only matters for open stretches).
         oriented(start) {
           return start === first ? pts : pts.slice().reverse();
