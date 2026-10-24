@@ -165,6 +165,9 @@ function ridgeOf(P, roof) {
   return [[ax.c[0] - ax.u[0] * half, ax.c[1] - ax.u[1] * half], [ax.c[0] + ax.u[0] * half, ax.c[1] + ax.u[1] * half]];
 }
 
+const HOOD_LEAD = 0.8; // share of a neighbourhood's blocks built in its own style
+const HOOD_MODERN = 0.05; // and modern infill
+
 export function assignBuildings(seed, d, blocks) {
   const ints = keyInts(d.coreInfo);
   const u = (...k) => toUnit(hash(seed, 'building', ...ints, ...k));
@@ -173,22 +176,35 @@ export function assignBuildings(seed, d, blocks) {
   const family = FAMILIES[Math.floor(u(1) * FAMILIES.length) % FAMILIES.length];
   const next = FAMILIES[(FAMILIES.indexOf(family) + 1) % FAMILIES.length];
   const hoodStyles = new Map();
+  // A neighbourhood was mostly built at one time, by builders working in
+  // one style: that style takes most of its blocks, another from the
+  // district's family a few, and there is a little modern infill. (Its
+  // churches, schools and civic buildings keep their own styles.)
+  const ROW_STYLES = ['georgian', 'victorian', 'neoclassical', 'artDeco'];
+  const rowStyleOf = new Map();
   for (const h of d.stage3.hoods) {
     const lead = family[Math.floor(u(2, h.id) * 3) % 3];
-    const w = [[lead, 0.5], ...family.filter((s) => s !== lead).map((s) => [s, 0.15]), [next[Math.floor(u(3, h.id) * 3) % 3], 0.08], ['modern', 0.12]];
-    hoodStyles.set(h.id, w);
+    const others = family.filter((s) => s !== lead).concat([next[Math.floor(u(3, h.id) * 3) % 3]]);
+    const second = others[Math.floor(u(4, h.id) * others.length) % others.length];
+    hoodStyles.set(h.id, [[lead, HOOD_LEAD], [second, 1 - HOOD_LEAD - HOOD_MODERN], ['modern', HOOD_MODERN]]);
+    rowStyleOf.set(h.id, ROW_STYLES.includes(lead) ? lead : ROW_STYLES.includes(second) ? second : u(5, h.id) < 0.6 ? 'victorian' : 'georgian');
   }
+  // The core's buildings: one style for its podiums, towers modern.
+  const coreStyle = pick(['modern', 'artDeco', 'beauxArts', 'modern'], 24);
   const weighted = (w, r) => {
     let t = r * w.reduce((a, [, x]) => a + x, 0);
     for (const [s, x] of w) if ((t -= x) <= 0) return s;
     return w[0][0];
   };
-  const shade = (list, ...k) => list[Math.floor(u(...k) * list.length) % list.length];
+  // Colours: a block's buildings take neighbouring shades of one palette,
+  // so a street reads as of a piece without every front alike.
+  let blockShade = 0;
   const make = (pts, storeys, style, k, extra = {}) => {
     const st = STYLES[style];
+    const tone = (list, salt) => list[(blockShade + (u(salt, ...k) < 0.35 ? 1 : 0)) % list.length];
     const floor = extra.floor || st.floor;
     const h = storeys * floor + (extra.shop ? GROUND_EXTRA : 0);
-    const out = { pts, storeys, h, style, wall: shade(st.walls, 4, ...k), roofColour: shade(st.roofs, 5, ...k), roof: st.roof, ridge: ridgeOf(pts, st.roof), ...extra };
+    const out = { pts, storeys, h, style, wall: tone(st.walls, 4), roofColour: tone(st.roofs, 5), roof: st.roof, ridge: ridgeOf(pts, st.roof), ...extra };
     if (extra.ridge === undefined) out.ridge = ridgeOf(pts, st.roof);
     return out;
   };
@@ -233,6 +249,7 @@ export function assignBuildings(seed, d, blocks) {
     if (!b.plots) continue;
     const hs = hoodStyles.get(b.hood) || [['modern', 1]];
     const blockStyle = weighted(hs, u(6, bi));
+    blockShade = Math.floor(u(25, bi) * 4);
     b.plots.forEach((p, pi) => {
       const k = [bi, pi];
       p.bldg = null;
@@ -249,7 +266,8 @@ export function assignBuildings(seed, d, blocks) {
       if (p.cls === 'open' && !(own && own.floor === 'dedicated')) return;
       // A building's plots share its style and colours.
       const gk = p.group ? [hashString(p.group)] : k;
-      let style = u(7, ...gk) < 0.25 ? weighted(hs, u(8, ...gk)) : blockStyle;
+      // (Now and then one building in a block differs from the rest.)
+      let style = u(7, ...gk) < 0.08 ? weighted(hs, u(8, ...gk)) : blockStyle;
 
       // ---- Buildings of their own ----
       if (p.cls === 'dedicated' || (own && own.floor === 'dedicated')) {
@@ -326,7 +344,7 @@ export function assignBuildings(seed, d, blocks) {
       const ridge = (pts) => ridgeAlong(pts, p.frontA, p.frontB, STYLES[style].roof);
       // ---- Rowhouses: front gardens, a house, a back garden ----
       if (p.kind === 'rowhouse' || ['house', 'rowCorner', 'cornerShop'].includes(p.cls)) {
-        if (!['georgian', 'victorian', 'neoclassical', 'artDeco'].includes(style)) style = u(13, ...gk) < 0.6 ? 'victorian' : 'georgian';
+        if (!ROW_STYLES.includes(style)) style = rowStyleOf.get(b.hood) || 'victorian';
         // One builder, one terrace: the same garden and depth all along.
         // Toronto proportions: a front garden of 3 to 5 m, a house 14 to 17 m
         // deep (much longer than it is wide), a short backyard to the lane.
@@ -348,7 +366,7 @@ export function assignBuildings(seed, d, blocks) {
       // ---- The core: a street wall of podiums, towers rising from the
       // corners, now and then behind a forecourt ----
       if (p.cls === 'podium' || p.kind === 'podium') {
-        style = pick(['modern', 'modern', 'artDeco', 'beauxArts', 'artNouveau'], 16, ...gk);
+        style = coreStyle;
         let pts = p.pts;
         if (p.frontA && !p.corner) pts = band(p.pts, p.frontA, p.frontB, 0, p.depth || 1e3) || p.pts;
         // (The podium stands as high as the rest of its building.)
