@@ -59,7 +59,8 @@ export const GATEWAY_TWO = 2600; // a shared greenway this long gets two gateway
 const EDGE_END = 400; // crossings keep this far from the ends of a greenway stretch
 const EDGE_CLEAR = 380; // and this far from a boulevard crossing
 const CELL = 50;
-export const ROWHOUSE_DENSITY = 18500; // people per km²: a neighbourhood less dense than this is rowhouses
+export const ROWHOUSE_SHARE = 0.3; // of a district's neighbourhoods, the share built as rowhouses (the least dense)...
+export const ROWHOUSE_DENSITY = 20000; // ...if under this many people per km² (more than rowhouses can house)
 const NECK = 130; // metres: half the narrowest a neighbourhood may be, away from its middle
 const SMOOTH_TOL = 32; // metres of raster staircase removed before smoothing
 const OUTSIDE = -1;
@@ -841,8 +842,15 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       h.campus = centres[h.id] === campus;
       // People per km² of the neighbourhood's land, and the housing that implies.
       h.density = h.area > 0 ? Math.round(pop[h.id] / (h.area / 1e6)) : 0;
-      // One form of housing to a neighbourhood: the less dense are rowhouses.
-      h.character = h.core ? 'core' : h.campus ? 'campus' : h.density < ROWHOUSE_DENSITY ? 'rowhouses' : 'perimeter blocks';
+      h.character = h.core ? 'core' : h.campus ? 'campus' : 'perimeter blocks';
+    }
+    // One form of housing to a neighbourhood: perimeter blocks mostly, and
+    // rowhouses (for families after a quieter street) in the least dense
+    // three in ten of a district's, if not too dense for them.
+    {
+      const plain = hoods.filter((h) => h.character === 'perimeter blocks').sort((a, b) => a.density - b.density || a.id - b.id);
+      const k = Math.round(plain.length * ROWHOUSE_SHARE);
+      for (const h of plain.slice(0, k)) if (h.density < ROWHOUSE_DENSITY) h.character = 'rowhouses';
     }
     // Neighbourhoods with a metro station.
     for (const st of metroIn(d)) {
