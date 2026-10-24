@@ -55,7 +55,7 @@ const RAIL_CORRIDOR = 21; // metres between building lines either side of a rail
 // never split into a piece narrower than `min` (or shorter than `minLong`).
 export const BLOCK_SIZES = {
   perimeter: { long: 175, short: 140, min: 80 },
-  rowhouse: { long: 175, short: 86, min: 60, minLong: 95 },
+  rowhouse: { long: 240, short: 86, min: 60, minLong: 95 },
   podium: { long: 165, short: 135, min: 80 },
   campus: { long: 270, short: 220, min: 110 },
 };
@@ -1250,7 +1250,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // their gardens. Too wide a piece is cut into strips that wide first,
     // by streets along its length (as many as fit, not halved and halved
     // again); then each strip is cut across where it is too long, so cross
-    // streets come every 100 to 175 m.
+    // streets come every 120 to 240 m: long, narrow blocks.
     function splitRows(node, ax) {
       const size = BLOCK_SIZES.rowhouse;
       if (ax.W > size.short) {
@@ -1275,7 +1275,15 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
           if (kids && kids.every((q) => axes(q.pts).W >= size.min - 4)) return kids;
         }
       }
+      // Too long: cut across into equal lengths, long ones (their terraces
+      // broken by parkettes through to the lane), the first cut a length
+      // in from one end.
       if (ax.L > size.long) {
+        const k = Math.ceil(ax.L / size.long);
+        for (const t of [1 / k, 1 - 1 / k, 0.5]) {
+          const kids = split(node, ax, 'rowhouse', { at: t, along: false });
+          if (kids) return kids;
+        }
         const kids = split(node, ax, 'rowhouse', { along: false });
         if (kids) return kids;
       }
@@ -1469,6 +1477,10 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
         // block is left several times the size of its neighbours.
         if (!kids && ax.area > size.long * size.short * OVERSIZE) {
           for (const along of [false, true]) if (!kids) kids = split(node, ax, sizeZone, { force: true, along });
+        }
+        // (Nor a rowhouse block wider than two houses and their gardens.)
+        if (!kids && zone === 'rowhouse' && ax.W > size.short * 1.05) {
+          for (const at of [0.5, 0.42, 0.58, undefined]) if (!kids) kids = split(node, ax, 'rowhouse', { force: true, along: true, at });
         }
         if (kids) next.push(...kids);
         else leaves.push({ ...node, ax, zone, stuck: true });

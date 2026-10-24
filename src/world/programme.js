@@ -50,8 +50,8 @@ const HEIGHTS = {
   unit: { base: 5, storeys: [3, 9] },
   unitShop: { base: 5, storeys: [3, 9] },
   corner: { base: 5, storeys: [3, 9] },
-  podium: { base: 7, storeys: [5, 10] }, // a core building without a tower: shops, offices, flats above
-  podiumTower: { base: 22, storeys: [12, 40], tower: true }, // a podium of shops and offices with a tower of flats over it
+  podium: { base: 7, storeys: [4, 10] }, // a core building without a tower: shops, offices, flats above
+  podiumTower: { base: 22, storeys: [8, 40], tower: true }, // a podium of shops and offices with a tower of flats over it
   house: { base: 3, storeys: [2, 5], depth: 15, house: true },
   rowCorner: { base: 3, storeys: [2, 5], depth: 15, house: true },
   cornerShop: { base: 3, storeys: [2, 5], depth: 15, house: true },
@@ -146,6 +146,11 @@ export function assignProgramme(seed, d, blocks, planned = null) {
       p.upper = null;
       p.dedicated = null;
       if (p.kind === 'passage') p.cls = 'passage';
+      // (A parkette through a terrace, from the street to the lane.)
+      else if (p.kind === 'parkette') {
+        p.cls = 'open';
+        p.dedicated = 'parkette';
+      }
       else if (b.use === 'square') p.cls = 'open';
       else if (['park', 'green', 'school', 'campus'].includes(b.use)) p.cls = 'open';
       else if (p.kind === 'podium') p.cls = 'podium';
