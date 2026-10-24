@@ -51,6 +51,7 @@ const unit = (v) => {
 };
 
 export const SETBACK = 5.0; // metres from the carriageway turned out of to a cycle crossing
+export const TURN_ROOM = 3.5; // and from the cycle lane turned out of (room for the corner island)
 export const ZEBRA = 4.0; // metres: a zebra's width
 export const CYCLE_CROSSING = 2.1; // one-way, as the cycle lane
 export const TWO_WAY_CROSSING = 3.0; // for cyclists from a local street
@@ -161,7 +162,9 @@ function armsAlong(line, s, type0, extra = {}) {
 // ---- Crossing bands at a signalised junction ----
 // For each arm: its neighbours either side (by angle); the cycle crossing
 // set back 5 m beyond where the nearer neighbour's carriageway edge crosses
-// the arm's width; then the zebra; the stop line beyond.
+// the arm's width, and 3.5 m beyond its cycle lane (so a corner island fits
+// inside the cycle track turning between them); then the zebra; the stop
+// line beyond.
 export function layOutCrossings(j) {
   const arms = j.arms;
   arms.sort((a, b) => Math.atan2(a.dir[1], a.dir[0]) - Math.atan2(b.dir[1], b.dir[0]));
@@ -171,20 +174,27 @@ export function layOutCrossings(j) {
     const X = arms[i];
     const PX = profile(X.type);
     let reach = 0;
+    // (How far out a line at lateral `off` on Y's side facing X crosses X's
+    // width.)
+    const cross = (Y, off) => {
+      const sg = Math.sign(dot(X.dir, Y.n)) || 1;
+      const q = add(j.p, mul(Y.n, sg * off));
+      let r = 0;
+      for (const o of [-PX.edge, PX.edge]) {
+        const t = meetT(add(j.p, mul(X.n, o)), X.dir, q, Y.dir);
+        if (t !== null) r = Math.max(r, t);
+      }
+      return r;
+    };
     for (const k of [-1, 1]) {
       const Y = arms[(i + k + n) % n];
       if (Y === X || dot(X.dir, Y.dir) < -0.85) continue;
       const PY = profile(Y.type);
-      // Y's carriageway edge on the side facing X.
-      const sg = Math.sign(dot(X.dir, Y.n)) || 1;
-      const q = add(j.p, mul(Y.n, sg * PY.drive));
-      for (const o of [-PX.edge, PX.edge]) {
-        const p = add(j.p, mul(X.n, o));
-        const t = meetT(p, X.dir, q, Y.dir);
-        if (t !== null) reach = Math.max(reach, t);
-      }
+      // Y's carriageway edge on the side facing X, and its cycle lane.
+      reach = Math.max(reach, cross(Y, PY.drive) + SETBACK);
+      if (PY.cycle) reach = Math.max(reach, cross(Y, PY.cycle.outer) + TURN_ROOM);
     }
-    X.s = Math.max(reach, PX.drive * 0.5) + SETBACK;
+    X.s = Math.max(reach, PX.drive * 0.5 + SETBACK);
   }
   // What each crossing carries: the cycle lanes of the street across it, or
   // (where that street has none) a two-way crossing for its cyclists.
