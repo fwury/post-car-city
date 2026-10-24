@@ -24,7 +24,7 @@ import { palette } from './styles.js';
 import { TRAIL_WIDTH } from '../world/greenway.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
-import { DETAIL_MIN_ZOOM, drawSections, carriageway, streetExtras, drawRails, drawJunctions, drawStops, offsetLine } from './streetDetail.js';
+import { DETAIL_MIN_ZOOM, drawIntersections, drawSections, carriageway, streetExtras, drawRails, drawJunctions, drawStops, offsetLine } from './streetDetail.js';
 
 export const LOD_STEPS = [
   [0.4, 25],
@@ -634,6 +634,7 @@ function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
       const e = streetExtras(l.points, 'boulevard');
       drawRails(ctx, e.rails, ox, oy, px);
     }
+    if (b && b.intersections) drawIntersections(ctx, b.intersections, ox, oy, px);
     if (b && b.tramStops) drawStops(ctx, b.tramStops, ox, oy, px);
   }
 }

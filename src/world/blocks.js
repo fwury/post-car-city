@@ -34,6 +34,7 @@ import { plotsOfBlock, rectness, TERRACE_RECT } from './plots.js';
 import { assignProgramme } from './programme.js';
 import { assignBuildings } from './buildings.js';
 import { tramStops } from './tram.js';
+import { planIntersections } from './intersections.js';
 import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
 import { createNames } from './names.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample } from '../util/geom.js';
@@ -1672,7 +1673,13 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
-    return { blocks, streets: local, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks };
+    // How each junction is laid out, by the streets that meet there.
+    const intersections = planIntersections(
+      [...st.lines.map((l) => ({ pts: l.points, type: 'mainStreet' })), ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => ({ pts: l.points, type: 'boulevard' }))],
+      tram.junctions,
+      local,
+    );
+    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks };
   }
 
   // Forget a district's blocks (a worker that has handed them on keeps none).
