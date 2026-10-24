@@ -461,8 +461,9 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
         for (const n of land) if (label[n] === k && back[n] > R + CELL * 0.5) drop.push(n);
         // (The core is always kept compact round its station.)
         if (k !== 0 && drop.length > cells * 0.6) continue;
-        const c = cellOf(centres[k][0], centres[k][1]);
-        for (const n of drop) if (n !== c) removed.push([n, k]);
+        // (Never where it grows from.)
+        const keepAt = new Set([cellOf(centres[k][0], centres[k][1]), ...(hoods ? [cellOf(hoods[k].centre[0], hoods[k].centre[1]), hoods[k].seed && cellOf(hoods[k].seed[0], hoods[k].seed[1])] : [])]);
+        for (const n of drop) if (!keepAt.has(n)) removed.push([n, k]);
       }
       for (const [n] of removed) label[n] = OUTSIDE;
       // Each goes to the neighbourhood its edge touches most, never back
@@ -498,7 +499,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
       const pop = peopleOf(label, total);
       const share = pop.reduce((a, b) => a + b, 0) / total;
       const isCentre = new Uint8Array(N);
-      for (const c of centres) {
+      for (const c of [...centres, ...hoods.map((h) => h.centre), ...hoods.filter((h) => h.seed).map((h) => h.seed)]) {
         const n = cellOf(c[0], c[1]);
         if (n >= 0) isCentre[n] = 1;
       }
@@ -691,7 +692,28 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [] }) {
       // Start from where it first grew (always its own now), else its centre.
       let start = cellOf(h.seed[0], h.seed[1]);
       if (start < 0 || label[start] !== h.id) start = cellOf(h.centre[0], h.centre[1]);
-      if (start < 0 || label[start] !== h.id) continue;
+      if (start < 0 || label[start] !== h.id) {
+        // Else from the largest piece it has.
+        start = -1;
+        let bestSize = 0;
+        const seen = new Uint8Array(N);
+        for (const n0 of land) {
+          if (label[n0] !== h.id || seen[n0]) continue;
+          const stack = [n0];
+          seen[n0] = 1;
+          let size = 0;
+          while (stack.length) {
+            const n = stack.pop();
+            size++;
+            for (const m of [n - 1, n + 1, n - W, n + W]) if (!seen[m] && label[m] === h.id) {
+              seen[m] = 1;
+              stack.push(m);
+            }
+          }
+          if (size > bestSize) [bestSize, start] = [size, n0];
+        }
+        if (start < 0) continue;
+      }
       const stack = [start];
       keep[start] = 1;
       while (stack.length) {

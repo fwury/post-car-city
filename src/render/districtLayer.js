@@ -11,7 +11,7 @@ import { ROUNDABOUT_RADIUS } from '../world/boulevards.js';
 import { STREET_TYPES } from '../world/streetTypes.js';
 
 const MAIN_STREET_WIDTH = STREET_TYPES.mainStreet.width;
-const TRAM_WIDTH = 7;
+const TRAM_WIDTH = 5;
 export const MAIN_STREET_MIN_ZOOM = 0.02;
 const TRAM_MIN_ZOOM = 0.2;
 const TUNNEL_MIN_ZOOM = 0.05;
@@ -21,7 +21,7 @@ const TRANSIT_MIN_ZOOM = 0.008;
 const VIADUCT = 11; // metres: a two-track viaduct's width
 const VIADUCT_HEIGHT = 8; // tram stops as markers from here (to scale from DETAIL_MIN_ZOOM)
 import { palette } from './styles.js';
-import { TRAIL_WIDTH } from '../world/greenway.js';
+import { TRAIL_WIDTH, BEACH } from '../world/greenway.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
 import { DETAIL_MIN_ZOOM, drawIntersections, drawSections, carriageway, streetExtras, drawRails, drawJunctions, drawStops, offsetLine } from './streetDetail.js';
@@ -152,6 +152,8 @@ export function drawDistricts(ctx, view, world, layers) {
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = palette.country;
     ctx.fillRect(0, 0, view.w, view.h);
+    drawHighGround(ctx, view, terrain, px);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = palette.land;
     for (const { d, p } of items) {
       place(d);
@@ -201,9 +203,13 @@ export function drawDistricts(ctx, view, world, layers) {
   if (layers.streets && zoom >= DETAIL_MIN_ZOOM) {
     drawDetailedStreets(ctx, view, world, hoods, lines, place, px);
   } else if (layers.streets) {
+    // Main streets white and boulevards pale yellow, each in a light
+    // casing; farther out, without casings, a little darker to show.
     const casing = zoom >= 0.05;
-    const passes = casing ? [[palette.roadCasing, px(1.5)], [palette.road, 0]] : [[palette.road, 0]];
-    for (const [colour, extra] of passes) {
+    const passes = casing
+      ? [[palette.roadCasing, palette.boulevardCasing, px(1.5)], [palette.road, palette.boulevard, 0]]
+      : [[palette.roadFar, palette.boulevardCasing, 0]];
+    for (const [colour, blvd, extra] of passes) {
       ctx.strokeStyle = colour;
       if (layers.streets && zoom >= MAIN_STREET_MIN_ZOOM) {
         ctx.lineWidth = mw + extra;
@@ -212,6 +218,7 @@ export function drawDistricts(ctx, view, world, layers) {
           ctx.stroke(h.streets);
         }
       }
+      ctx.strokeStyle = blvd;
       ctx.lineWidth = w + extra;
       for (const { b, path } of lines) {
         ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
@@ -296,6 +303,21 @@ export function drawDistricts(ctx, view, world, layers) {
     drawLayouts(ctx, lays, place, zoom, px);
   }
 
+  // Beaches along the ocean shore, under the water's edge.
+  if (layers.green && terrain && terrain.ocean && zoom >= 0.04) {
+    ctx.strokeStyle = palette.sand;
+    ctx.lineWidth = BEACH * 2.3;
+    ctx.lineCap = 'round';
+    for (const { d } of items) {
+      for (const c of d.chains) {
+        if (c.geo.kind !== 'shore') continue;
+        const p = greenwayPathsFor(world.greenway(c.geo), d.origin);
+        if (!p.beaches) continue;
+        place(d);
+        ctx.stroke(p.beaches);
+      }
+    }
+  }
   // Water: the sea (or lake) and the rivers.
   if (terrain) drawWater(ctx, view, terrain, px);
 
@@ -528,7 +550,7 @@ function greenwayPathsFor(g, origin) {
     for (const L of list) addPoly(path, L, ox, oy, false);
     return path;
   };
-  p = { origin, stream: g.streams.length ? lines(g.streams) : null, trails: lines(g.trails) };
+  p = { origin, stream: g.streams.length ? lines(g.streams) : null, trails: lines(g.trails), beaches: g.beaches && g.beaches.length ? lines(g.beaches) : null };
   greenwayPaths.set(g, p);
   return p;
 }
@@ -576,6 +598,33 @@ function drawGreenwayDetail(ctx, view, world, items, place, px) {
       }
     }
   }
+}
+
+// Mountains: the high ground, shaded, with contours.
+const highCache = new WeakMap();
+function drawHighGround(ctx, view, terrain, px) {
+  if (!terrain.highShapes) return;
+  let h = highCache.get(terrain);
+  if (!h) {
+    const sh = terrain.highShapes();
+    const poly = (list) => {
+      const path = new Path2D();
+      for (const L of list) addPoly(path, L, 0, 0, true);
+      return path;
+    };
+    h = { fill: poly(sh.fill), contours: poly(sh.contours), tiers: sh.tiers.map(poly) };
+    highCache.set(terrain, h);
+  }
+  const { x0, y0, s } = view;
+  ctx.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
+  ctx.fillStyle = palette.hills;
+  ctx.fill(h.fill, 'evenodd');
+  // Each hundred metres up a shade darker.
+  ctx.fillStyle = palette.hillTint;
+  for (const t of h.tiers) ctx.fill(t, 'evenodd');
+  ctx.strokeStyle = palette.contour;
+  ctx.lineWidth = px(0.8);
+  ctx.stroke(h.contours);
 }
 
 // The sea and the rivers, in world coordinates.

@@ -449,8 +449,16 @@ export function createBoulevards(seed) {
     let fallback = null;
     for (const c of cands.slice(0, 24)) {
       const pts = curve([{ p: l.p, d: l.n, edge: true }, { p: c.q, d: c.a }], salt + 5);
-      if (!fallback) fallback = pts;
-      if (minRadius(pts) < MIN_RADIUS) continue;
+      // (Failing all else, the gentlest that crosses nothing.)
+      const r = minRadius(pts);
+      if (r < MIN_RADIUS) {
+        // A gentler way in, meeting the boulevard a little off square.
+        const dir = unit(sub(c.q, l.p));
+        const soft = curve([{ p: l.p, d: l.n, edge: true }, { p: c.q, d: unit([c.a[0] * 2 + dir[0], c.a[1] * 2 + dir[1]]) }], salt + 5);
+        const rs = minRadius(soft);
+        if (!crossesAny(soft, lines, c.q, 40) && (!fallback || rs > fallback.r)) fallback = { pts: soft, r: rs, q: c.q };
+        continue;
+      }
       if (crossesAny(pts, lines, c.q, 40)) continue;
       // Stay clear of the district's greenways past the crossing itself (and
       // so inside the district: leaving it would mean passing close by them).
@@ -463,7 +471,7 @@ export function createBoulevards(seed) {
       if (bad) continue;
       return { pts, at: c.q };
     }
-    if (fallback) return { pts: fallback, at: cands[0].q };
+    if (fallback) return { pts: fallback.pts, at: fallback.q };
     return { pts: curve([{ p: S, d: unit(sub(l.p, S)) }, { p: l.p, d: [-l.n[0], -l.n[1]], edge: true }], salt + 7), at: S };
   }
 

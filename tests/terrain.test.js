@@ -25,8 +25,8 @@ const seedFor = (kind) => {
   for (let i = 0; ; i++) if (siteOf(seedFromText(String(i))) === kind) return seedFromText(String(i));
 };
 
-for (const kind of ['river', 'coast', 'inland']) {
-  test(`a city of 1.5 million ${kind === 'inland' ? 'inland' : `on a ${kind}`} has 10 districts, all on dry land`, () => {
+for (const kind of ['river', 'shore', 'inland']) {
+  test(`a city of 1.5 million (${kind}) has 10 districts, all on dry land`, () => {
     const w = createWorld(seedFor(kind), { population: 1.5e6 });
     const R = w.terrain.radius + 6000;
     const ds = w.districtsInRect(-R, -R, R, R);
@@ -55,4 +55,25 @@ for (const kind of ['river', 'coast', 'inland']) {
 test('the smallest city is one district', () => {
   const w = createWorld(seedFor('inland'), { population: 150000 });
   assert.equal(w.districtsInRect(-20000, -20000, 20000, 20000).length, 1);
+});
+
+test('mountains are never built on, and the city stops at them', () => {
+  for (let i = 0; i < 60; i++) {
+    const w = createWorld(seedFromText(String(i)), { population: 1.5e6 });
+    if (!w.terrain.label.includes('mountains')) continue;
+    const R = w.terrain.radius + 6000;
+    for (const d of w.districtsInRect(-R, -R, R, R)) assert.ok(!w.terrain.isHigh(...d.station), `${d.key} stands on the mountains`);
+    return;
+  }
+  assert.fail('no seed with mountains');
+});
+
+test('an island is cut off by a channel the streets bridge', () => {
+  for (let i = 0; i < 60; i++) {
+    const w = createWorld(seedFromText(String(i)), { population: 1.5e6 });
+    if (!w.terrain.label.includes('an island')) continue;
+    assert.ok(w.terrain.rivers.some((r) => r.channel), 'no channel');
+    return;
+  }
+  assert.fail('no seed with an island');
 });

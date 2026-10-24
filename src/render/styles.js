@@ -1,57 +1,64 @@
-// Map colours: a light, semi-realistic palette in the spirit of Apple Maps.
-// Pedestrian surfaces light grey, vehicle lanes darker grey, small green
-// spaces light green, large parks and natural areas darker green, transit
-// lanes red, bike lanes dark green.
+// Map colours: a light, calm palette in the spirit of Apple Maps. Warm
+// off-white land, soft greens for parks (deeper for the large ones), clear
+// light blue water; streets white with light casings and boulevards pale
+// yellow; buildings light stone, their materials muted.
 
 export const palette = {
-  land: '#f2f0eb',
-  country: '#e7ebdc', // the land round the city
-  bridgeCasing: '#7d848b',
-  core: '#f3e5d2',
-  natural: '#a9d59a', // primary greenways, district parks
-  green: '#cde9bd', // parkettes, neighbourhood parks, courtyards (later stages)
-  water: '#9fcff2',
+  land: '#f7f4ee',
+  country: '#eef0e3', // the land round the city
+  hills: '#e8e5d4', // mountains
+  contour: 'rgba(150, 140, 110, 0.35)',
+  hillTint: 'rgba(150, 136, 98, 0.06)',
+  sand: '#f3e6c4',
+  bridgeCasing: '#b4ada1',
+  core: '#f8ecdc',
+  natural: '#bde2a9', // primary greenways, district parks
+  green: '#d4ecc6', // parkettes, neighbourhood parks, courtyards (later stages)
+  water: '#a6d5f7',
   metro: '#8a5cc2',
   railFill: '#959ca2',
   railEdge: '#5f676e',
   railTrack: '#5f666c',
-  waterEdge: '#86bfe8',
-  road: '#a7adb3',
-  roadCasing: '#8c939a',
-  tunnel: '#dfe3e5', // a street under a greenway
-  tunnelCasing: '#8c939a',
+  waterEdge: '#93c8ef',
+  road: '#ffffff', // main streets: white, as map apps draw them
+  roadCasing: '#d9d3c8',
+  roadFar: '#dcd5c8',
+  boulevard: '#fde9a8', // boulevards: a pale yellow, the next rank of road
+  boulevardCasing: '#e6c97a',
+  tunnel: '#f1f2ee', // a street under a greenway
+  tunnelCasing: '#c9c6bd',
   pedestrian: '#e2e4e6',
-  tram: '#d65a4e',
+  tram: '#e2786c',
   bike: '#3e8a52',
   rail: '#2f6db5',
-  hoodTints: ['#f2f0eb', '#efebe3', '#f4f1ea', '#ece8df'],
-  hoodLine: 'rgba(120, 104, 84, 0.45)',
+  hoodTints: ['#f7f4ee', '#f4f0e8', '#f8f6f1', '#f2eee6'],
+  hoodLine: 'rgba(120, 110, 96, 0.35)',
   hoodCentre: '#b9a88f',
   stationRing: '#ffffff',
   // Stage 4: blocks and local streets
-  building: '#e3ddd3',
-  podium: '#dcd5ca',
+  building: '#e9e5de',
+  podium: '#e3ded6',
   buildingEdge: 'rgba(150, 136, 118, 0.55)',
   plotLine: 'rgba(150, 136, 118, 0.45)',
-  courtyard: '#e6eedb',
-  garden: '#e9efdc',
+  courtyard: '#e9f1df',
+  garden: '#ebf2e0',
   plaza: '#dedad3',
   school: '#f1e3c8',
   localStreet: '#ffffff',
-  localCasing: '#dcd9d3',
-  pavement: '#f2f0ec',
+  localCasing: '#e2ded6',
+  pavement: '#f5f3ef',
   selection: '#0a7aff',
-  water: '#9fcff2',
+  water: '#a6d5f7',
   metro: '#8a5cc2',
   railFill: '#959ca2',
   railEdge: '#5f676e',
   railTrack: '#5f666c',
-  streamBank: '#8fc39a',
+  streamBank: '#a6d3a6',
   trail: '#f3eee4',
-  trailEdge: '#cfd9c1',
+  trailEdge: '#d6e2c8',
   woods: '#93c784',
-  yard: '#ebe7df', // the ground round buildings: yards, light wells, forecourts
-  pedestrianStreet: '#e9dfcc',
+  yard: '#efebe4', // the ground round buildings: yards, light wells, forecourts
+  pedestrianStreet: '#efe6d6',
   // Dedicated buildings, by what they are for.
   dedicated: {
     education: '#f1e3c8',

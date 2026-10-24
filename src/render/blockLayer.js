@@ -13,7 +13,6 @@ import { ALLEY } from '../world/plots.js';
 
 export const BLOCK_MIN_ZOOM = 0.25;
 export const PLOT_MIN_ZOOM = 1;
-export const USE_MIN_ZOOM = 1.6; // shop-floor dots from here in
 const PERIMETER_DEPTH = 14; // metres of building along a perimeter block's streets
 const ROWHOUSE_DEPTH = 19; // front garden and house
 const CAMPUS_DEPTH = 18;
@@ -329,7 +328,6 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
     place(d);
     ctx.stroke(p.edge);
   }
-  if (zoom >= USE_MIN_ZOOM && !buildings) drawDots(ctx, list, place, px(2.6));
   // Buildings go on top of everything on the ground (main streets and
   // greens included), so the caller draws them last.
   if (!buildings) return null;
@@ -338,23 +336,7 @@ export function drawBlocks(ctx, view, world, items, place, layers = {}) {
       if (mode === '3d') return { d, items: ch.b3d || (ch.b3d = items3D(d, ch)) };
       return { d, p: ch.b2d || (ch.b2d = paths2D(d, ch)) };
     });
+    // (What is in them is shown by the place markers.)
     drawBuildings(ctx, view, blist, place, mode, layers.materials !== false);
-    if (zoom >= USE_MIN_ZOOM) drawDots(ctx, list, place, px(2.6));
   };
-}
-
-// A dot on each shop floor, coloured by what is sold there.
-function drawDots(ctx, list, place, r) {
-  for (const { d, p } of list) {
-    place(d);
-    for (const [cat, pts] of p.dots) {
-      ctx.fillStyle = palette.uses[cat] || palette.inkSoft;
-      ctx.beginPath();
-      for (const [x, y] of pts) {
-        ctx.moveTo(x + r, y);
-        ctx.arc(x, y, r, 0, Math.PI * 2);
-      }
-      ctx.fill();
-    }
-  }
 }

@@ -1,10 +1,15 @@
 // The city's site: how big it is and what it is built on.
 //
 // A seed picks a kind of site, in about the shares major cities have them:
-// on a river, where two rivers meet, on a lake shore, on an ocean coast, at
-// a river's mouth, on a peninsula, or inland with no river at all. The
-// population picks how many districts the city has (one to about 150 000
-// people), the ones nearest the centre.
+// on flat land with no river (Mexico City), on a river (Paris, London,
+// Cairo), where two rivers meet (Pittsburgh, Belgrade, Khartoum), where a
+// river flows into the sea or a great lake (New York, Shanghai, Buenos
+// Aires), or on the shore of one (Toronto, San Francisco, Rio, Athens). A
+// shore may have a peninsula the city stands on or reaches out along, and
+// an island cut off by a channel; an ocean shore has beaches. Any city may
+// be bounded on one side by a mountain range. The population picks how
+// many districts the city has (one to about 150 000 people), the ones
+// nearest the centre.
 //
 // Water comes in two kinds. Rivers are lines with a width: districts do not
 // grow across them, so a boundary between districts forms along each, which
@@ -28,14 +33,16 @@ const BANK = 45; // metres of green bank either side of a river
 
 // Kinds of site, with their shares among the world's major cities (rough).
 export const SITES = [
-  ['river', 0.34, 'On a river'],
+  ['river', 0.3, 'On a river'],
   ['confluence', 0.1, 'Where two rivers meet'],
-  ['lake', 0.08, 'On a lake shore'],
-  ['coast', 0.16, 'On an ocean coast'],
-  ['estuary', 0.16, 'Where a river meets the sea'],
-  ['peninsula', 0.06, 'On a peninsula'],
-  ['inland', 0.1, 'Inland, no river'],
+  ['estuary', 0.27, 'Where a river meets the'],
+  ['shore', 0.25, 'On the shore of'],
+  ['inland', 0.08, 'On flat land, no river'],
 ];
+const OCEAN = { estuary: 0.85, shore: 0.7 }; // shares of water sites on the ocean (the rest on a great lake)
+const PENINSULA = { estuary: 0.2, shore: 0.35 }; // ... with a peninsula
+const ISLAND = { estuary: 0.4, shore: 0.3 }; // ... with an island cut off by a channel
+const MOUNTAINS = 0.22; // shares of cities with a mountain range on one side
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const len = (v) => Math.hypot(v[0], v[1]);
@@ -57,23 +64,18 @@ export function siteOf(seed) {
   return SITES[SITES.length - 1][0];
 }
 
-// No water and no end: every district is the city's (population Infinity).
-function unbounded(population) {
-  return {
-    site: 'inland', label: 'Endless, flat', population, districts: Infinity, radius: Infinity, rivers: [], hasSea: false,
-    shore: () => 1e6, toShore: (p) => p, nearestRiver: () => null, crossesRiver: () => false,
-    isSea: () => false, isWater: () => false, seaShapes: () => [], riverShapes: () => [], riverWidth: () => 0, BANK,
-  };
-}
-
 export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
-  if (!Number.isFinite(population)) return unbounded(population);
   const u = (...k) => toUnit(hash(seed, 'terrain', ...k));
   const noise = createNoise(seed, 'terrain-shape');
   const districts = Math.max(1, Math.round(population / PEOPLE_PER_DISTRICT));
   // A district takes about 4 km²; the city reaches about this far.
   const radius = Math.sqrt((districts * 4.2e6) / Math.PI) + 800;
   const site = siteOf(seed);
+  const watery = site === 'estuary' || site === 'shore';
+  const ocean = watery && u(20) < OCEAN[site];
+  const peninsula = watery && u(21) < PENINSULA[site];
+  const island = watery && u(22) < ISLAND[site];
+  const mountains = u(23) < MOUNTAINS;
   const ext = radius + MARGIN;
   const x0 = -ext;
   const y0 = -ext;
@@ -115,6 +117,31 @@ export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
     }
     return { pts: chaikin(pts, false), width };
   };
+  // A point a given distance back up a line from its end.
+  const pointAlongBack = (P, d) => {
+    let left = d;
+    for (let i = P.length - 1; i > 0; i--) {
+      const l = len(sub(P[i], P[i - 1]));
+      if (l >= left) return [P[i][0] + ((P[i - 1][0] - P[i][0]) * left) / l, P[i][1] + ((P[i - 1][1] - P[i][1]) * left) / l];
+      left -= l;
+    }
+    return P[0];
+  };
+  // A channel from a to b, bowing out to one side (bow metres) and
+  // wandering a little.
+  const channel = (a, b, side, width, salt, bow = null) => {
+    const d = sub(b, a);
+    const L = len(d);
+    const n = [(-d[1] / L) * side, (d[0] / L) * side];
+    const B = bow ?? L * 0.3;
+    const pts = [];
+    for (let k = 0; k <= 60; k++) {
+      const t = k / 60;
+      const off = B * 4 * t * (1 - t) + noise.fbm(t * 4 + salt * 5.1, salt * 2.3, 2) * 180;
+      pts.push([a[0] + d[0] * t + n[0] * off, a[1] + d[1] * t + n[1] * off]);
+    }
+    return { pts: chaikin(pts, false), width, channel: true };
+  };
   // ---- Sea: the side of a coastline away from the city ----
   let seaAt = null;
   const coastDir = theta + Math.PI / 2;
@@ -136,48 +163,114 @@ export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
     for (const p of main) if (len(p) < len(meet)) meet = p;
     const side = u(6) < 0.5 ? 1 : -1;
     rivers.push(riverLine(theta + side * (0.9 + u(7) * 0.7), 0, big * (0.45 + 0.2 * u(8)), 2, meet));
-  } else if (site === 'lake' || site === 'coast' || site === 'estuary') {
-    const amp = site === 'lake' ? 900 : 1800;
-    seaAt = (q) => dot(q, cn) > coastLine(q, amp);
+  } else if (watery) {
+    const amp = ocean ? 1800 : 900;
+    if (peninsula && site === 'shore') {
+      // Land: the mainland well behind the centre, and a broad tongue of
+      // land reaching out past it, water on three sides.
+      const half = radius * (0.85 + 0.3 * u(12));
+      const tip = radius * (0.9 + 0.4 * u(13));
+      seaAt = (q) => {
+        const a = dot(q, cn); // out along the peninsula
+        const b = dot(q, ct);
+        const wob = noise.fbm(a / 3000 + 3, b / 3000, 3) * half * 0.35;
+        if (a < -radius * 0.9 + wob) return false;
+        const w = half * (a > tip * 0.5 ? Math.max(0, 1 - ((a - tip * 0.5) / (tip * 0.6)) ** 2) ** 0.5 : 1);
+        return Math.abs(b) > w + wob;
+      };
+    } else if (peninsula) {
+      // A headland reaching out from the shore beside the river's mouth.
+      const at = (u(14) < 0.5 ? -1 : 1) * radius * (0.35 + 0.3 * u(15));
+      const reach = radius * (0.5 + 0.4 * u(16));
+      const w = radius * (0.22 + 0.12 * u(17));
+      seaAt = (q) => dot(q, cn) > coastLine(q, amp) + reach * Math.exp(-(((dot(q, ct) - at) / w) ** 2));
+    } else {
+      seaAt = (q) => dot(q, cn) > coastLine(q, amp);
+    }
     if (site === 'estuary') {
-      // A river running down to the sea near the centre, widening to its mouth.
+      // A river running down to the water near the centre, widening to its mouth.
       const mouth = [cn[0] * coastOffset, cn[1] * coastOffset];
       const rv = riverLine(coastDir, 0, big, 3, [mouth[0] + cn[0] * 900, mouth[1] + cn[1] * 900]);
       rv.widenTo = { p: mouth, width: Math.min(900, big * 3), reach: 3500 };
       rivers.push(rv);
-    } else if (u(9) < 0.5) {
-      // Often a smaller river reaching the shore too.
-      const along = (u(10) - 0.5) * radius * 1.2;
-      const mouth = [cn[0] * coastOffset + ct[0] * along, cn[1] * coastOffset + ct[1] * along];
-      rivers.push(riverLine(coastDir + (u(11) - 0.5) * 0.8, 0, big * 0.5, 4, [mouth[0] + cn[0] * 600, mouth[1] + cn[1] * 600]));
+      if (island) {
+        // A channel leaving the river above its mouth and running out to
+        // the water to one side: the land between is an island.
+        const sideK = u(18) < 0.5 ? 1 : -1;
+        const a = pointAlongBack(rv.pts, radius * (0.45 + 0.25 * u(19)));
+        const b = [mouth[0] + ct[0] * sideK * radius * (0.5 + 0.3 * u(24)) + cn[0] * 1500, mouth[1] + ct[1] * sideK * radius * (0.5 + 0.3 * u(24)) + cn[1] * 1500];
+        rivers.push(channel(a, b, sideK, big * 0.55, 5));
+      }
+    } else {
+      if (u(9) < 0.4) {
+        // Now and then a smaller river reaching the shore too.
+        const along = (u(10) - 0.5) * radius * 1.2;
+        const mouth = [cn[0] * coastOffset + ct[0] * along, cn[1] * coastOffset + ct[1] * along];
+        rivers.push(riverLine(coastDir + (u(11) - 0.5) * 0.8, 0, big * 0.5, 4, [mouth[0] + cn[0] * 600, mouth[1] + cn[1] * 600]));
+      }
+      if (island && !peninsula) {
+        // A channel from the water, round behind a stretch of shore and back
+        // out to it: the land it cuts off is an island.
+        const along = (u(25) - 0.5) * radius * 0.8;
+        const span = radius * (0.55 + 0.35 * u(26));
+        const base = (t) => [cn[0] * (coastOffset + 1500) + ct[0] * (along + t), cn[1] * (coastOffset + 1500) + ct[1] * (along + t)];
+        rivers.push(channel(base(-span / 2), base(span / 2), -1, big * 0.5, 6, radius * (0.45 + 0.2 * u(27))));
+      }
     }
-  } else if (site === 'peninsula') {
-    // Land: the mainland well behind the centre, and a broad tongue of land
-    // reaching out past it.
-    const half = radius * (0.85 + 0.3 * u(12));
-    const tip = radius * (0.9 + 0.4 * u(13));
-    seaAt = (q) => {
-      const a = dot(q, cn); // out along the peninsula
-      const b = dot(q, ct);
-      const wob = noise.fbm(a / 3000 + 3, b / 3000, 3) * half * 0.35;
-      if (a < -radius * 0.9 + wob) return false;
-      const w = half * (a > tip * 0.5 ? Math.max(0, 1 - ((a - tip * 0.5) / (tip * 0.6)) ** 2) ** 0.5 : 1);
-      return Math.abs(b) > w + wob;
-    };
   }
+
+  // ---- Mountains: high ground the city stops at, on one side ----
+  let highAt = null;
+  let depthIn = null;
+  if (mountains) {
+    // Away from the water if there is any.
+    const md = watery ? coastDir + Math.PI + (u(28) - 0.5) * 1.6 : u(28) * Math.PI * 2;
+    const mn = [Math.cos(md), Math.sin(md)];
+    const mt = [-mn[1], mn[0]];
+    const foot = radius * (0.95 + 0.3 * u(29));
+    // How far a point stands in past the foot of the mountains.
+    depthIn = (q) => dot(q, mn) - foot - noise.fbm(dot(q, mt) / 3000 + 71, 3.3, 3, 2, 0.55) * radius * 0.25;
+    highAt = (q) => depthIn(q) > 0;
+  }
+  // How high the ground stands (metres), for drawing: rising from the foot
+  // into ridges and valleys.
+  const ridges = createNoise(seed, 'terrain-ridges');
+  const heightAt = (x, y) => {
+    if (!highAt) return 0;
+    const rise = Math.min(1, Math.max(0, depthIn([x, y]) / 4000));
+    const n = ridges.fbm(x / 3800, y / 3800, 2, 2, 0.5);
+    return 120 + rise * 650 + n * 220 * (0.4 + rise);
+  };
 
   // ---- The raster: sea, rivers, and distances ----
   const sea = new Uint8Array(W * H);
   if (seaAt) for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) sea[j * W + i] = seaAt([x0 + (i + 0.5) * CELL, y0 + (j + 0.5) * CELL]) ? 1 : 0;
-  // Rivers end where they reach the sea.
+  // Rivers end where they reach the sea (a channel that starts out in the
+  // water starts where it reaches land).
   for (const rv of rivers) {
     const out = [];
-    for (const p of rv.pts) {
+    let onLand = false;
+    for (let i = 0; i < rv.pts.length; i++) {
+      const p = rv.pts[i];
+      const wet = seaIndex(p);
+      if (!onLand) {
+        if (wet) continue;
+        onLand = true;
+        if (i > 0) out.push(rv.pts[i - 1]);
+      }
       out.push(p);
-      if (seaIndex(p)) break;
+      if (wet) break;
     }
-    rv.pts = out;
+    rv.pts = out.length > 1 ? out : rv.pts;
   }
+  // High ground, on the same raster.
+  const high = new Uint8Array(W * H);
+  if (highAt) for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) high[j * W + i] = highAt([x0 + (i + 0.5) * CELL, y0 + (j + 0.5) * CELL]) ? 1 : 0;
+  const highIndex = (x, y) => {
+    const i = Math.floor((x - x0) / CELL);
+    const j = Math.floor((y - y0) / CELL);
+    return i >= 0 && j >= 0 && i < W && j < H ? high[j * W + i] : highAt ? (highAt([x, y]) ? 1 : 0) : 0;
+  };
   function seaIndex(p) {
     const i = Math.floor((p[0] - x0) / CELL);
     const j = Math.floor((p[1] - y0) / CELL);
@@ -335,6 +428,42 @@ export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
     return seaOutlines;
   }
 
+  // Mountains for drawing: their outline, and contours of the ground.
+  let highOutlines = null;
+  function highShapes() {
+    if (highOutlines) return highOutlines;
+    highOutlines = { fill: [], contours: [], tiers: [] };
+    if (!highAt) return highOutlines;
+    const xe = x0 + W * CELL;
+    const ye = y0 + H * CELL;
+    const FAR = 2e5;
+    const smooth = (loop) => {
+      const pin = loop.map(([x, y]) => x <= x0 || y <= y0 || x >= xe || y >= ye);
+      let P = loop;
+      for (let r = 0; r < 6; r++) {
+        const n = P.length;
+        P = P.map((p, i) => (pin[i] ? p : [(P[(i - 1 + n) % n][0] + 2 * p[0] + P[(i + 1) % n][0]) / 4, (P[(i - 1 + n) % n][1] + 2 * p[1] + P[(i + 1) % n][1]) / 4]));
+      }
+      return P.map(([x, y], i) => (pin[i] ? [x <= x0 ? x - FAR : x >= xe ? x + FAR : x, y <= y0 ? y - FAR : y >= ye ? y + FAR : y] : [x, y]));
+    };
+    highOutlines.fill = contours(CELL, high, W, H, x0, y0).map(smooth);
+    // Contour lines every 100 m of height, on the high ground only.
+    for (let level = 200; level <= 800; level += 100) {
+      const m = new Uint8Array(W * H);
+      for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) if (high[j * W + i]) m[j * W + i] = heightAt(x0 + (i + 0.5) * CELL, y0 + (j + 0.5) * CELL) >= level ? 1 : 0;
+      // (Loops cut off at the raster's edge are left out.)
+      const tier = [];
+      for (const loop of contours(CELL, m, W, H, x0, y0)) {
+        if (loop.length < 30) continue;
+        const L = smooth(loop);
+        tier.push(L);
+        if (!loop.some(([x, y]) => x <= x0 || y <= y0 || x >= xe || y >= ye)) highOutlines.contours.push(L);
+      }
+      highOutlines.tiers.push(tier);
+    }
+    return highOutlines;
+  }
+
   // Rivers as filled outlines, for drawing.
   let riverOutlines = null;
   function riverShapes() {
@@ -357,14 +486,29 @@ export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
     return riverOutlines;
   }
 
-  const water = (x, y) => (seaAt && shore(x, y) < 0) || (() => {
+  const isWater = (x, y) => (seaAt && shore(x, y) < 0) || (() => {
     const r = nearestRiver(x, y);
     return !!r && r.d < r.width / 2;
   })();
 
+  // What the site is, in a few words.
+  let label = SITES.find((q) => q[0] === site)[2];
+  if (site === 'estuary') label += ocean ? ' ocean' : ' lake';
+  if (site === 'shore') label += ocean ? ' the ocean' : ' a great lake';
+  const withs = [];
+  if (peninsula && site === 'shore') label += ', on a peninsula';
+  else if (peninsula) withs.push('a headland');
+  if (island && !(peninsula && site === 'shore')) withs.push('an island');
+  if (ocean) withs.push('beaches');
+  if (mountains) withs.push('mountains on one side');
+  if (withs.length) label += `, with ${withs.length > 1 ? `${withs.slice(0, -1).join(', ')} and ${withs[withs.length - 1]}` : withs[0]}`;
   return {
     site,
-    label: SITES.find((s) => s[0] === site)[2],
+    label,
+    ocean,
+    isHigh: (x, y) => !!highIndex(x, y),
+    heightAt,
+    highShapes,
     population,
     districts,
     radius,
@@ -375,7 +519,7 @@ export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
     nearestRiver,
     crossesRiver,
     isSea: (x, y) => !!seaAt && shore(x, y) < 0,
-    isWater: water,
+    isWater,
     seaShapes,
     riverShapes,
     riverWidth: (x, y) => {

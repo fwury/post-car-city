@@ -85,6 +85,7 @@ const OVERSIZE = 1.5; // a block this many times its usual area must split, one 
 const SQUARE_SIDE = 30; // metres: shortest side along which a square may take in its street
 const SQUARE_FORMS = { corner: 0.3, against: 0.35 }; // shares of squares by form; the rest stand on their own
 const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school takes
+const PEDESTRIAN_ZONE = 300; // metres from the district's square: its pedestrian zone
 const PEDESTRIAN_REACH = 220; // metres from its square a pedestrian street runs
 const FALLBACK_REACH = 250; // metres from a centre a square may stand if none was found by it
 const EDGE_CELL = 4; // metres: the raster the greenway-side streets are found on
@@ -1466,10 +1467,30 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       }
     }
 
+    // The district centre is a pedestrian zone: every local street within
+    // a few hundred metres of its square is given over to people on foot
+    // (and bikes), as in the old centre of a European city; main streets
+    // and boulevards still cross it.
+    const coreSquare = squareOf.get(0);
+    if (coreSquare) {
+      const c = axes(coreSquare.pts).c;
+      for (const lf of leaves) {
+        lf.tags.forEach((t, i) => {
+          if (t.kind !== 'local') return;
+          const a = lf.pts[i];
+          const b = lf.pts[(i + 1) % lf.pts.length];
+          if (len(sub([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], c)) < PEDESTRIAN_ZONE) {
+            pedestrianise(t, c);
+            t.reach = PEDESTRIAN_ZONE + 40;
+          }
+        });
+      }
+    }
+
     // ---- Blocks ----
     // A pedestrian street runs a block or two from its square, then goes on
-    // as a local street.
-    const kindAt = (t, p) => (t.kind === 'pedestrian' && len(sub(p, t.square)) > PEDESTRIAN_REACH ? 'local' : t.kind);
+    // as a local street (in the centre's pedestrian zone, to its edge).
+    const kindAt = (t, p) => (t.kind === 'pedestrian' && len(sub(p, t.square)) > (t.reach ?? PEDESTRIAN_REACH) ? 'local' : t.kind);
     const half = (t, p) => {
       if (t.kind === 'pedestrian') return (kindAt(t, p) === 'pedestrian' ? PEDESTRIAN : LOCAL) / 2;
       if (t.kind === 'greenway') return PARKSIDE / 2;
