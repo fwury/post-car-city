@@ -72,6 +72,7 @@ const OVERSHOOT = 4; // metres a street ending in a T runs past the street it me
 const STUB = 70; // straight metres from a greenway crossing before following the field
 const STUB_POS = 5; // positions along a crossing street taken up by its stub
 const NEIGHBOUR_EDGE = 150; // shared boundary for two neighbourhoods to count as neighbours
+const RAIL_GAP = 90; // closest a street may run alongside the rail above ground
 const EDGE_GAP = 170; // closest a street may run alongside a greenway (centreline)
 const PARALLEL = 0.8; // |cos| above which two streets count as running the same way
 const THROUGH = 2; // positions (about 40 m) a street must carry on past a junction to end another there
@@ -250,6 +251,24 @@ export function createMainStreets(seed) {
         }
       }
     }
+    // Regional rail above ground: streets cross under it but never run
+    // alongside it.
+    const railSegs = [];
+    const railBuckets = new Map();
+    for (const L of grid.rail || []) {
+      for (let i = 0; i < L.length - 1; i++) {
+        const [ax, ay] = L[i];
+        const [bx, by] = L[i + 1];
+        const l = Math.hypot(bx - ax, by - ay) || 1;
+        const k = railSegs.length;
+        railSegs.push([ax, ay, bx, by, (bx - ax) / l, (by - ay) / l]);
+        for (const key of bucketKeys(ax, ay, bx, by, 0)) {
+          let b = railBuckets.get(key);
+          if (!b) railBuckets.set(key, (b = []));
+          b.push(k);
+        }
+      }
+    }
     // The nearest stretch of greenway edge within r of p: its tangent, the
     // way away from it, and how far it is.
     function edgeAlong(p, r) {
@@ -280,6 +299,13 @@ export function createMainStreets(seed) {
     }
     // Is a street running the same way within r of p (other than line `own`)?
     function crowded(p, dir, r, own, edgeGap = EDGE_GAP) {
+      // Not alongside the rail.
+      for (const key of bucketKeys(p[0], p[1], p[0], p[1], RAIL_GAP)) {
+        for (const k of railBuckets.get(key) || []) {
+          const g = railSegs[k];
+          if (Math.abs(g[4] * dir[0] + g[5] * dir[1]) >= PARALLEL && segDist(p[0], p[1], g[0], g[1], g[2], g[3]) < RAIL_GAP) return true;
+        }
+      }
       // Not along a greenway edge either.
       for (const k of edgeNear(p[0], p[1], edgeGap)) {
         const g = edgeSegs[k];

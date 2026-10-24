@@ -181,7 +181,8 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   const growth = createGrowth(seed, cores, { terrain, inCity: (k) => city.has(k) });
   // Regional rail, for the whole city: it comes before the neighbourhoods,
   // whose boundaries follow it.
-  const rail = createRail(seed, { cores: cityCores, terrain });
+  // (Its track goes underground where it would run alongside a boulevard.)
+  const rail = createRail(seed, { cores: cityCores, terrain, streetsNear: (x0, y0, x1, y1) => boulevardLinesNear(x0, y0, x1, y1) });
   const boulevards = createBoulevards(seed);
   // The metro, for the whole city: from the districts' boulevards, before
   // the neighbourhoods, whose centres its stations are.
@@ -667,6 +668,24 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
       }
     }
     return best;
+  }
+
+  // Boulevard centrelines touching a rectangle, from the districts' own
+  // networks (which need nothing of the rail or the neighbourhoods).
+  function boulevardLinesNear(x0, y0, x1, y1) {
+    const keys = new Set();
+    for (let j = Math.floor(y0 / PARCEL) - 1; j <= Math.floor(y1 / PARCEL) + 1; j++) for (let i = Math.floor(x0 / PARCEL) - 1; i <= Math.floor(x1 / PARCEL) + 1; i++) keys.add(label(i, j));
+    const out = [];
+    for (const k of [...keys].sort()) {
+      const b = baseOf(k);
+      if (!b) continue;
+      for (const l of boulevards.network(b).lines) {
+        const bb = l.bbox;
+        if (bb.x1 < x0 || bb.x0 > x1 || bb.y1 < y0 || bb.y0 > y1) continue;
+        out.push(l.points);
+      }
+    }
+    return out;
   }
 
   // The district containing a point.

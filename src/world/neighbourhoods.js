@@ -653,7 +653,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       }
     }
     for (const h of hoods) h.seed = h.centre;
-    const streets = mainStreets(d, hoods, chains, { mask, label, W, H, x0, y0, N, fromEdge, cellOf }, crossings);
+    const streets = mainStreets(d, hoods, chains, { mask, label, W, H, x0, y0, N, fromEdge, cellOf, rail: railIn(d) }, crossings);
 
     // ---- Regrow around the main streets ----
     // Each neighbourhood now grows out from its own main street (the stretch
