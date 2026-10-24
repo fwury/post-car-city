@@ -4,6 +4,6 @@
   "type": "module",
   "scripts": {
     "start": "python3 -m http.server 8123",
-    "test": "node --test"
+    "test": "node --test --test-concurrency=1"
   }
 }

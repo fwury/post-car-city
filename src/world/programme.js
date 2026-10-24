@@ -13,7 +13,8 @@
 // worship (in about Toronto's mix), and the list of shops, food, services,
 // health, entertainment and arts along its main street out from the square.
 // About one neighbourhood in three is a subdistrict centre (library, fire
-// station, recreation centre, performing arts, cinema...), and the core takes
+// station, recreation centre, performing arts, cinema...), those with metro
+// stations first, and the core takes
 // the district's own (hotels, office towers, department store, courthouse,
 // hospitals nearby...). Then every home is put within about 400 m of each
 // everyday need (grocery, convenience store, café, bank, gym, daycare,
@@ -131,7 +132,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
 
   // ---- Plots, by what they face ----
   const plots = [];
-  const squares = blocks.filter((b) => b.use === 'square');
+  const squares = blocks.filter((b) => b.use === 'square' && !b.stationPlaza);
   const sqCentre = new Map(squares.map((b) => [b.hood, centroid(b.pts)]));
   const sqCentres = [...sqCentre.values()];
   for (const b of blocks) {
@@ -145,7 +146,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
       p.upper = null;
       p.dedicated = null;
       if (p.kind === 'passage') p.cls = 'passage';
-      else if (b.use === 'square') p.cls = 'open';
+      else if (b.use === 'square' || b.use === 'station') p.cls = 'open';
       else if (['park', 'green', 'school', 'campus'].includes(b.use)) p.cls = 'open';
       else if (p.kind === 'podium') p.cls = 'podium';
       // Facing a main street or a square.
@@ -191,7 +192,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   };
   for (const b of blocks) {
     if (!b.plots) continue;
-    if (b.use === 'square') b.plots[0].dedicated = b.hood === 0 ? 'districtPlaza' : 'market';
+    if (b.use === 'square') b.plots[0].dedicated = b.stationPlaza ? 'stationPlaza' : b.hood === 0 ? 'districtPlaza' : 'market';
+    if (b.use === 'station') b.plots[0].dedicated = 'railStation';
     if (b.use === 'park') b.plots[0].dedicated = 'neighbourhoodPark';
     if (b.use === 'school') b.plots[0].dedicated = 'secondarySchool';
     if (b.use === 'campus') b.plots[0].dedicated = 'college';
@@ -241,9 +243,13 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   const rest = hoods.filter((h) => !h.core);
   const nSub = Math.max(rest.length >= 2 ? 1 : 0, Math.round(rest.length / SUBDISTRICT_HOODS));
   const subs = [];
+  // (Neighbourhoods with a metro station first: a subdistrict's library
+  // and the rest are for people from round about.)
+  const byMetro = rest.filter((h) => h.metro && h.metro.length);
   while (subs.length < nSub) {
     let best = null;
-    for (const h of rest) {
+    const pool = byMetro.some((h) => !subs.includes(h)) ? byMetro : rest;
+    for (const h of pool) {
       if (subs.includes(h)) continue;
       const r = Math.min(len(sub(h.centre, S)), ...subs.map((o) => len(sub(o.centre, h.centre))));
       if (!best || r > best.r) best = { r, h };
@@ -590,8 +596,9 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     // (Under a tower every floor above the shops is offices; otherwise one is.)
     const officeFloors = p.towerSite ? Math.max(1, (p.baseStoreys || PODIUM_STOREYS) - 1) : 1;
     const perFloor = Math.max(2, Math.min(6, Math.round(polygonArea(p.pts) / 450)));
-    p.offices = [];
-    for (let k = 0; k < officeFloors * perFloor; k++) p.offices.push(pick(OFFICE_MIX, r));
+    // (Whatever was put upstairs already, a gym or a clinic, stays among them.)
+    p.offices = p.upper ? [p.upper] : [];
+    while (p.offices.length < officeFloors * perFloor) p.offices.push(pick(OFFICE_MIX, r));
     p.upper = p.offices[0];
   }
   return { subdistricts: subs.map((h) => h.id), parkettes: parkettes.length, housed: Object.fromEntries(built) };
