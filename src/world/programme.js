@@ -37,6 +37,7 @@ const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
 const CATHEDRAL_BLOCK = [0.45e4, 1.8e4];
 // m², a cathedral's block, beside a square
 const REC_BLOCK = [0.5e4, 1.6e4];
+const PARKETTE_WALK = 400; // metres: three parkettes within this of every rowhouse
 const PARKETTE_GAP = 210; // metres between parkettes in rowhouse areas (about four within 400 m)
 const SUBDISTRICT_HOODS = 3; // neighbourhoods to a subdistrict centre
 const QUIET_UNITS = 0.3; // share of off-main perimeter plots with a shop floor
@@ -419,7 +420,10 @@ export function assignProgramme(seed, d, blocks, planned = null) {
         const at = [S[0] + Math.cos(a) * 700, S[1] + Math.sin(a) * 700];
         dedicate(at, use, ['main', 'corner', 'podium'], 1200, 1200);
       } else if (slot === 'dedicated') {
-        dedicate(core, use, ['podium', 'main'], 700, use === 'officeTower' || use === 'hotel' ? 900 : 1200);
+        // Towers and big stores among the podiums; the old civic buildings
+        // in the old town round the square.
+        const modern = use === 'officeTower' || use === 'hotel' || use === 'departmentStore';
+        dedicate(core, use, modern ? ['podium'] : ['podium', 'main', 'corner', 'unit'], 700, modern ? 900 : 1200);
       } else {
         const p = nearest(core, ['podium', 'main'], slot, 800);
         if (p) put(p, use, slot);
@@ -470,6 +474,26 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     p.dedicated = 'parkette';
     p.cls = 'open';
     parkettes.push(p);
+  }
+  // Then every house has three within a five-minute walk (counting those
+  // through the terraces): one more on the nearest free plot to any short.
+  {
+    const all = plots.filter((p) => p.dedicated === 'parkette' && p.cls !== 'merged').map((p) => p.c);
+    const count = (q) => all.filter((c) => len(sub(c, q)) <= PARKETTE_WALK).length;
+    for (const h of plots.filter((p) => p.kind === 'rowhouse')) {
+      if (h.dedicated || h.cls === 'merged' || count(h.c) >= 3) continue;
+      let best = null;
+      for (const p of rowPlots) {
+        if (p.dedicated || p.cls === 'merged' || taken(p, 'dedicated')) continue;
+        const r = len(sub(p.c, h.c));
+        if (r < PARKETTE_WALK * 0.8 && (!best || r < best.r)) best = { r, p };
+      }
+      if (!best) continue;
+      best.p.dedicated = 'parkette';
+      best.p.cls = 'open';
+      parkettes.push(best.p);
+      all.push(best.p.c);
+    }
   }
 
   // ---- The rest of the shop floors ----

@@ -92,7 +92,8 @@ const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school
 const SCHOOL_LONGEST = 220; // metres, centreline: a school's grounds longer than this are cut down...
 const SCHOOL_LENGTH = 185; // ...to about this (a track and field and the building beside it)
 const SCHOOL_WIDE = 70; // metres, centreline: narrowest a school's grounds should be (for its field)
-const PEDESTRIAN_ZONE = 300; // metres from the district's square: its pedestrian zone
+const OLD_TOWN = 190; // metres from the core neighbourhood's centre: its old town, a pedestrian zone
+const PEDESTRIAN_ZONE = 120; // metres from the district's square its pedestrian streets reach, at least
 const PEDESTRIAN_REACH = 220; // metres from its square a pedestrian street runs
 const FALLBACK_REACH = 250; // metres from a centre a square may stand if none was found by it
 const EDGE_CELL = 4; // metres: the raster the greenway-side streets are found on
@@ -929,10 +930,17 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     };
     // Rowhouse neighbourhoods are the less dense ones.
     const formOf = (h) => (h.character === 'rowhouses' ? 'rowhouse' : 'perimeter');
+    // The old town: the district's square in the middle of the core, and
+    // round it the old buildings (its places of worship, museum, library,
+    // courthouse...), traditional perimeter blocks with pedestrian streets
+    // between them; the podiums and towers stand round it.
+    const oldCentre = hoods[0] && hoods[0].core ? hoods[0].centre : d.station;
+    const inOldTown = (q) => !!(hoods[0] && hoods[0].core) && len(sub(q, oldCentre)) < OLD_TOWN;
     const zoneOf = (node, ax) => {
       const h = hoodAt(ax.c);
       // A campus takes the middle of its neighbourhood; homes round it.
       if (h && h.campus && len(sub(ax.c, h.centre)) < Math.sqrt((CAMPUS_SHARE * h.area) / Math.PI)) return 'campus';
+      if (h && h.core && inOldTown(ax.c)) return 'perimeter';
       if (h && h.core && len(sub(ax.c, d.station)) < d.coreReach * 1.25) return 'podium';
       // A neighbourhood is built in one form throughout: rowhouses or
       // perimeter blocks (its main streets mixed use either way).
@@ -1497,20 +1505,20 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       if (squareOf.has(h.id)) continue;
       let best = null;
       // (Failing one of about the right size, a larger block will do.)
-      for (const most of [1.3, 1.8]) {
+      for (const [most, far] of [[1.3, 1], [1.8, 1], [2.6, 1.6]]) {
         if (best) break;
         for (const lf of leaves) {
           // (On a campus, its own square.)
           // (It needs a local street to turn into its pedestrian street.)
           if (!lf.tags.some((t) => t.kind === 'local')) continue;
           if (!(plain(lf) || (!lf.use && lf.zone === 'campus')) || lf.ax.area < SQUARE_AREA[0] * 0.7 || lf.ax.area > SQUARE_AREA[1] * most || lf.ax.W < SQUARE_MIN * 0.9) continue;
-          if (len(sub(lf.ax.c, h.centre)) > FALLBACK_REACH + 150) continue;
+          if (len(sub(lf.ax.c, h.centre)) > FALLBACK_REACH * far + 150) continue;
           let r = Infinity;
           lf.tags.forEach((t, i) => {
             if (t.kind !== 'main' && t.kind !== 'boulevard') return;
             r = Math.min(r, distToLine(h.centre[0], h.centre[1], [lf.pts[i], lf.pts[(i + 1) % lf.pts.length]]));
           });
-          if (r > FALLBACK_REACH) continue;
+          if (r > FALLBACK_REACH * far) continue;
           if (!best || r < best.r) best = { r, lf };
         }
       }
@@ -1590,7 +1598,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // such streets, against blocks on two adjacent sides. A street a square
     // takes in goes on beyond it as a pedestrian street; a square on its own
     // gets one too, off its longest local side.
-    const pedestrianise = (t, c) => {
+    const pedestrianiseStreet = (t, c) => {
       t.kind = 'pedestrian';
       t.w = PEDESTRIAN;
       t.square = c;
@@ -1599,6 +1607,12 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       const P = sqNode.pts;
       const n = P.length;
       const c = axes(P).c;
+      // (A pedestrian street runs at least the length of its square.)
+      const span = Math.max(...P.map((q) => len(sub(q, c)))) + 30;
+      const pedestrianise = (t, at) => {
+        pedestrianiseStreet(t, at);
+        if (t.reach !== Infinity) t.reach = Math.max(t.reach ?? PEDESTRIAN_REACH, span);
+      };
       // Local sides, by street, with their length and edges.
       const sides = new Map();
       sqNode.tags.forEach((t, i) => {
@@ -1632,10 +1646,9 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       }
     }
 
-    // The district centre is a pedestrian zone: every local street within
-    // a few hundred metres of its square is given over to people on foot
-    // (and bikes), as in the old centre of a European city; main streets
-    // and boulevards still cross it.
+    // The old town is a pedestrian zone: its local streets are given over
+    // to people on foot (and bikes), as in the old centre of a European
+    // city; main streets and boulevards still cross it.
     const coreSquare = squareOf.get(0);
     if (coreSquare) {
       const c = axes(coreSquare.pts).c;
@@ -1644,8 +1657,9 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
           if (t.kind !== 'local') return;
           const a = lf.pts[i];
           const b = lf.pts[(i + 1) % lf.pts.length];
-          if (len(sub([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], c)) < PEDESTRIAN_ZONE) {
-            pedestrianise(t, c);
+          const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          if (inOldTown(m) || len(sub(m, c)) < PEDESTRIAN_ZONE) {
+            pedestrianiseStreet(t, c);
             t.reach = Infinity; // (the whole street, not cut short partway)
           }
         });
@@ -1713,6 +1727,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       const awkward = net && ((area < AWKWARD_AREA && rectness(net) < AWKWARD_RECT) || (lf.zone === 'rowhouse' && !lf.use && area < ROW_AWKWARD_AREA && rectness(net) < TERRACE_RECT_GOOD - 0.1));
       const use = lf.use ?? (area < REMNANT || awkward ? 'green' : lf.zone === 'rowhouse' && front ? 'perimeter' : lf.zone);
       const b = { pts: net, centreline: P, dist, use, area, stuck: !!lf.stuck, raw: polygonArea(P), hood: lf.hood ?? (hoodAt(lf.ax.c) || {}).id, front: lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard') };
+      if (lf.zone === 'perimeter' && inOldTown(lf.ax.c)) b.oldTown = true;
       if (lf.form) b.form = lf.form;
       if (!net) b.use = 'green';
       else {
