@@ -235,7 +235,8 @@ test('perimeter blocks are several buildings, with a gap on every street', () =>
       }
     }
   }
-  assert.ok(miss <= n * 0.01, `${miss} of ${n} street frontages of 40 m or more have no gap`);
+  // (A few more along the paths under the viaducts.)
+  assert.ok(miss <= n * 0.015, `${miss} of ${n} street frontages of 40 m or more have no gap`);
 });
 
 test('plots in a rectangular block are cut square', () => {

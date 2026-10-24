@@ -45,6 +45,11 @@ const LOCAL = STREET_TYPES.localStreet.width;
 const PEDESTRIAN = STREET_TYPES.pedestrianStreet.width;
 const CORE_CROSS = STREET_TYPES.coreCrossStreet.width;
 const PARKSIDE = LOCAL; // the street along a greenway or park edge
+const ARCH = 9; // metres: one arch of a viaduct, and its stall
+const ARCH_CLEAR = 14; // metres a stall keeps from a way across under the viaduct
+const KIOSK_DEPTH = 6; // metres: a stall's depth across the viaduct
+const PASSAGE_EVERY = 160; // metres between streets running across under a viaduct
+const PASSAGE_REACH = 320; // metres out either side a passage looks for a street to join
 const RAIL_CORRIDOR = 21; // metres between building lines either side of a rail viaduct (the viaduct and a lane each side)
 
 // Block sizes, centreline to centreline: stop splitting once both sides fit;
@@ -301,14 +306,19 @@ function joinRuns(runs) {
 export const STATION_HALL = { district: [220, 44], central: [300, 60], stop: [150, 36] };
 const STATION_PLAZA = [130, 60]; // metres along the hall and out from it
 const PLAZA_CLEAR = 220; // metres a station plaza keeps from the district's plaza
-export function hallOf(st) {
-  const [L, W] = st.central ? STATION_HALL.central : st.second ? STATION_HALL.stop : STATION_HALL.district;
+// (Slid along the platforms beneath, or shortened, to keep off the main
+// streets: shift metres along the track, scale of its length.)
+export function hallOf(st, shift = 0, scale = 1) {
+  const [L0, W] = st.central ? STATION_HALL.central : st.second ? STATION_HALL.stop : STATION_HALL.district;
+  const L = L0 * scale;
   const t = unit(st.dir || [1, 0]);
   const n = [-t[1], t[0]];
-  const at = (a, b) => [st.p[0] + t[0] * a + n[0] * b, st.p[1] + t[1] * a + n[1] * b];
+  const at = (a, b) => [st.p[0] + t[0] * (a + shift) + n[0] * b, st.p[1] + t[1] * (a + shift) + n[1] * b];
   return { pts: [at(-L / 2, -W / 2), at(L / 2, -W / 2), at(L / 2, W / 2), at(-L / 2, W / 2)], t, n, L, W, at };
 }
-function stationSites(d, stations, plazaAt, noPlaza = () => false) {
+function stationSites(d, stations, plazaAt, noPlaza = () => false, streets = []) {
+  // Does a rectangle take in any of the main streets?
+  const crosses = (R) => streets.some((P) => P.some((q, i) => pointInPolygon(q[0], q[1], R) || (i && R.some((a, k) => segHit(a, R[(k + 1) % 4], P[i - 1], q)))));
   const onLand = (q) => {
     let inside = false;
     for (const r of d.rings) if (pointInPolygon(q[0], q[1], r)) inside = !inside;
@@ -316,8 +326,18 @@ function stationSites(d, stations, plazaAt, noPlaza = () => false) {
   };
   const out = [];
   for (const st of stations) {
-    const h = hallOf(st);
-    if (!h.pts.every(onLand)) continue;
+    let h = null;
+    for (const scale of [1, 0.75, 0.55]) {
+      for (const shift of [0, 40, -40, 80, -80, 120, -120, 160, -160]) {
+        const c = hallOf(st, shift, scale);
+        if (c.pts.every(onLand) && !crosses(c.pts)) {
+          h = c;
+          break;
+        }
+      }
+      if (h) break;
+    }
+    if (!h) continue;
     const [PL, PD] = st.central ? [STATION_PLAZA[0] * 1.4, STATION_PLAZA[1] * 1.2] : STATION_PLAZA;
     const sides = [];
     for (const sg of [1, -1]) {
@@ -331,7 +351,7 @@ function stationSites(d, stations, plazaAt, noPlaza = () => false) {
       sides.push({ rect, outline, c, far: len(sub(c, plazaAt)) });
     }
     sides.sort((x, y) => y.far - x.far);
-    out.push({ p: st.p, hall: h.pts, plazas: st.central ? sides : sides.slice(0, 1) });
+    out.push({ p: st.p, hall: h.pts, central: !!st.central, t: h.t, plazas: sides.slice(0, 1) });
   }
   return out;
 }
@@ -779,39 +799,114 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // cleanly where the land narrows to a neck.
     const sideLoops = parksideLines(d);
     for (const loop of sideLoops) lines.push({ pts: loop, closed: true, tag: street('greenway', PARKSIDE) });
-    // Regional rail on its viaduct, with a lane along each side under it:
-    // blocks face it as they would a street. Only the stretches over the
-    // district's land, each run on a little past the parkside street so
-    // they meet it.
+    // Regional rail on its viaduct, over a path for walking and cycling (a
+    // lane each side under it): blocks face it as they would a street. Only
+    // the stretches over the district's land, each run on a little past the
+    // parkside street so they meet it; at a tunnel's mouth the path carries
+    // on over the tunnel to the next street.
     const railLines = [];
-    for (const L of railIn(d)) {
+    for (const C of railIn(d)) {
       const inside = (q) => sideLoops.some((lp) => pointInPolygon(q[0], q[1], lp));
       let run = null;
       const flush = () => {
-        if (run && run.length > 1) {
+        if (run && run.pts.length > 1) {
           const ext = (a, b) => {
             const t = unit(sub(a, b));
             return [a[0] + t[0] * 8, a[1] + t[1] * 8];
           };
-          run.unshift(ext(run[0], run[1]));
-          run.push(ext(run[run.length - 1], run[run.length - 2]));
+          run.pts.unshift(ext(run.pts[0], run.pts[1]));
+          run.kinds.unshift(run.kinds[0]);
+          run.pts.push(ext(run.pts[run.pts.length - 1], run.pts[run.pts.length - 2]));
+          run.kinds.push(run.kinds[run.kinds.length - 1]);
           railLines.push(run);
         }
         run = null;
       };
-      for (const q of resample(L, 10)) {
-        if (inside(q)) (run ||= []).push(q);
-        else flush();
-      }
+      C.pts.forEach((q, k) => {
+        if (inside(q)) {
+          run ||= { pts: [], kinds: [] };
+          run.pts.push(q);
+          run.kinds.push(C.kinds[k]);
+        } else flush();
+      });
       flush();
     }
-    for (const L of railLines) lines.push({ pts: L, tag: street('rail', RAIL_CORRIDOR) });
+    // Under the viaduct, the streets either side join up: every so often a
+    // street runs across under it, from the first street (or other edge) on
+    // one side to the first on the other; nothing is built across it.
+    const passages = [];
+    {
+      const others = lines.map((l) => (l.closed ? l.pts.concat([l.pts[0]]) : l.pts));
+      const firstHit = (q, dir) => {
+        let best = null;
+        const b = [q[0] + dir[0] * PASSAGE_REACH, q[1] + dir[1] * PASSAGE_REACH];
+        for (const P of others) {
+          for (let i = 1; i < P.length; i++) {
+            const h = segHit(q, b, P[i - 1], P[i]);
+            const x = h && h[0];
+            if (h && x * PASSAGE_REACH > RAIL_CORRIDOR / 2 && (best === null || x < best)) best = x;
+          }
+        }
+        return best === null ? null : [q[0] + dir[0] * best * PASSAGE_REACH, q[1] + dir[1] * best * PASSAGE_REACH];
+      };
+      for (const R of railLines) {
+        // Where a street already crosses (so a passage keeps clear of it).
+        const crossed = [];
+        let along = 0;
+        for (let i = 1; i < R.pts.length; i++) {
+          along += len(sub(R.pts[i], R.pts[i - 1]));
+          for (const P of others) for (let j = 1; j < P.length; j++) if (segHit(R.pts[i - 1], R.pts[i], P[j - 1], P[j]) !== null) crossed.push(along);
+        }
+        R.crossed = crossed;
+        let s = 0;
+        let last = -Infinity;
+        for (let i = 1; i < R.pts.length - 1; i++) {
+          s += len(sub(R.pts[i], R.pts[i - 1]));
+          if (R.kinds[i] !== 'viaduct' || s - last < PASSAGE_EVERY || crossed.some((c) => Math.abs(c - s) < PASSAGE_EVERY * 0.5)) continue;
+          const t = unit(sub(R.pts[i + 1], R.pts[i - 1]));
+          const n = [-t[1], t[0]];
+          const a = firstHit(R.pts[i], n);
+          const b = firstHit(R.pts[i], [-n[0], -n[1]]);
+          if (!a || !b) continue;
+          last = s;
+          passages.push({ pts: [a, R.pts[i], b], at: s, rail: R });
+        }
+      }
+      for (const pg of passages) lines.push({ pts: pg.pts, tag: street('local', LOCAL, { passage: true }) });
+    }
+    // Between the crossings, little shops and food stalls in the arches
+    // under the viaduct, clear of every way across.
+    const arcades = [];
+    for (const R of railLines) {
+      const clearOf = [...R.crossed, ...passages.filter((pg) => pg.rail === R).map((pg) => pg.at)];
+      let s = 0;
+      for (let i = 1; i < R.pts.length; i++) {
+        const a = R.pts[i - 1];
+        const seg = len(sub(R.pts[i], a));
+        const t = unit(sub(R.pts[i], a));
+        const n = [-t[1], t[0]];
+        for (let x = Math.ceil(s / ARCH) * ARCH; x + ARCH <= s + seg; x += ARCH) {
+          const mid = x + ARCH / 2;
+          if (R.kinds[i - 1] !== 'viaduct' || R.kinds[i] !== 'viaduct' || clearOf.some((c) => Math.abs(c - mid) < ARCH_CLEAR)) continue;
+          const c = [a[0] + t[0] * (mid - s), a[1] + t[1] * (mid - s)];
+          const hl = (ARCH - 1.5) / 2;
+          const hw = KIOSK_DEPTH / 2;
+          arcades.push([0, 1, 2, 3].map((k) => {
+            const u = k === 0 || k === 3 ? -hl : hl;
+            const v = k < 2 ? -hw : hw;
+            return [c[0] + t[0] * u + n[0] * v, c[1] + t[1] * u + n[1] * v];
+          }));
+        }
+        s += seg;
+      }
+    }
+    for (const L of railLines) lines.push({ pts: L.pts, tag: street('rail', RAIL_CORRIDOR) });
     // Rail stations: a hall across the tracks, with its entrances on both
     // sides, ringed by a pedestrian street; and a station plaza before it on
-    // one side (both, at the central station), off where the district's own
+    // one side, off where the district's own
     // plaza is.
     // (A campus's station has no plaza: the campus is its forecourt.)
-    const sites = stationSites(d, stationsIn(d), hoods[0] ? hoods[0].centre : d.station, (q) => (hoodAt(q) || {}).campus);
+    const sites = stationSites(d, stationsIn(d), hoods[0] ? hoods[0].centre : d.station, (q) => (hoodAt(q) || {}).campus, mains.map((m) => m.pts));
     for (const site of sites) {
       const tag = () => street('pedestrian', PEDESTRIAN, { square: site.p, reach: Infinity });
       lines.push({ pts: site.hall, closed: true, tag: tag() });
@@ -1761,7 +1856,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       tram.junctions,
       local,
     );
-    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks };
+    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks, arcades, halls: sites.map((st) => ({ pts: st.hall, central: st.central, t: st.t })) };
   }
 
   // Forget a district's blocks (a worker that has handed them on keeps none).

@@ -28,6 +28,7 @@ import { rngFor } from '../core/rng.js';
 import { createNoise } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { keyInts } from './cores.js';
+import { PEOPLE_PER_DISTRICT } from './terrain.js';
 import { Heap, isDistrictKey } from './growth.js';
 import { createMainStreets } from './mainStreets.js';
 import { fill, distanceField, stamp } from '../util/raster.js';
@@ -36,6 +37,8 @@ import { polygonArea, signedArea, simplify, chaikin, pointInPolygon } from '../u
 
 export const NEIGHBOURHOOD_AREA = 0.75e6; // m², typical
 export const NEIGHBOURHOOD_PEOPLE = 15000; // residents a neighbourhood's shops, schools and services are planned for
+const DISTRICT_SPREAD = [0.8, 1.2]; // of PEOPLE_PER_DISTRICT a district houses
+const DENSITY_SCALE = [0.4, 1]; // the most a district's densities are scaled to house them (a small district is never built denser)
 const BASE_DENSITY = 0.0182; // residents per m² of neighbourhood land, before the variations below
 const CORE_BOOST = 0.8; // the core is this much denser (mid-rise around the station)...
 const CORE_FADE = 900; // ...fading out over about this many metres
@@ -217,6 +220,13 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       dens[n] = BASE_DENSITY * (1 + CORE_BOOST * Math.exp(-((r / CORE_FADE) ** 2))) * (FORM_LOW + (FORM_HIGH - FORM_LOW) * f) * (1 + BOULEVARD_BOOST * Math.exp(-fromBlvd[n] / 250));
       people += dens[n] * CELL * CELL;
     }
+    // Every district houses about as many people (more or less dense as its
+    // land is less or more), within what its housing allows: a large outer
+    // district is rowhouses, a small one built up.
+    const want = PEOPLE_PER_DISTRICT * (DISTRICT_SPREAD[0] + (DISTRICT_SPREAD[1] - DISTRICT_SPREAD[0]) * toUnit(hash(seed, 'district-people', ...keyInts(d.coreInfo))));
+    const scale = Math.max(DENSITY_SCALE[0], Math.min(DENSITY_SCALE[1], want / Math.max(1, people)));
+    for (const n of land) dens[n] *= scale;
+    people *= scale;
     // A campus takes in a university or hospital, so it houses fewer people
     // for its size.
     const hasCampus = toUnit(hash(seed, 'campus', ...keyInts(d.coreInfo))) < CAMPUS_CHANCE;
@@ -686,7 +696,8 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       claim(h.centre[0], h.centre[1], h.id, 0);
       if (h.core) {
         // The core: round its station, not out along its boulevards.
-        const r = Math.max(200, d.coreRadius * 0.8);
+        // (Smaller where the district is built denser.)
+        const r = Math.max(200, (d.coreRadius * 0.8) / Math.sqrt(Math.max(1, scale)));
         for (let j = -r; j <= r; j += CELL / 2) for (let i = -r; i <= r; i += CELL / 2) {
           const q = Math.hypot(i, j);
           if (q <= r) claim(S[0] + i, S[1] + j, 0, q);

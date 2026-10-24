@@ -19,6 +19,13 @@ const GREENWAY_DETAIL_ZOOM = 0.15; // streams from here; trails and paths closer
 const STOP_MIN_ZOOM = 0.25;
 const TRANSIT_MIN_ZOOM = 0.008;
 const VIADUCT = 11; // metres: a two-track viaduct's width
+const RAIL_BUILDING_ZOOM = 0.5; // station halls and stalls under the viaducts from here
+const CENTRAL_TRACKS = [4, 12]; // platform tracks at the central station, fewest and most
+const TRACK_GAP = 4.6; // metres between neighbouring tracks with no platform between
+const ISLAND = 9; // metres: an island platform's width
+const PLATFORM_LENGTH = 400; // metres: the central station's platforms
+const THROAT = 260; // metres over which its tracks fan out
+const CYCLE_TRACK = 7.5; // metres off the viaduct's centreline: the cycle track on the path beneath
 const VIADUCT_HEIGHT = 8; // tram stops as markers from here (to scale from DETAIL_MIN_ZOOM)
 import { palette } from './styles.js';
 import { TRAIL_WIDTH, BEACH } from '../world/greenway.js';
@@ -397,7 +404,9 @@ export function drawDistricts(ctx, view, world, layers) {
   // rail runs on viaducts above everything.
   if (layers.transit && zoom >= TRANSIT_MIN_ZOOM) drawTransit(ctx, view, world, items, place, px, 'metro');
   if (drawBuildings) drawBuildings();
+  if (layers.transit) drawRailBuildings(ctx, view, items, place, px, 'arcades');
   if (layers.transit && zoom >= TRANSIT_MIN_ZOOM) drawTransit(ctx, view, world, items, place, px, 'rail');
+  if (layers.transit) drawRailBuildings(ctx, view, items, place, px, 'halls');
 
   if (layers.neighbourhoods) {
     ctx.strokeStyle = palette.hoodLine;
@@ -444,15 +453,16 @@ function offsetPath(pts, o) {
   return p;
 }
 
-// Regional rail, for the whole city: each stretch of track's paths, in
-// world coordinates.
+// Regional rail, for the whole city: each run of track's paths (on a
+// viaduct, a ramp or in tunnel), in world coordinates.
 const railCache = new WeakMap();
 function railPaths(sg) {
   let p = railCache.get(sg);
   if (p) return p;
   const L = sg.pts;
-  p = { rail: new Path2D(), rails: new Path2D(), shadow: new Path2D() };
+  p = { rail: new Path2D(), rails: new Path2D(), shadow: new Path2D(), walls: new Path2D() };
   addPoly(p.rail, L, 0, 0, false);
+  for (const o of [-VIADUCT / 2, VIADUCT / 2]) addPoly(p.walls, offsetLine(L, o), 0, 0, false);
   // Two tracks, each a pair of rails.
   for (const o of [-2.6, -1.1, 1.1, 2.6]) addPoly(p.rails, offsetLine(L, o), 0, 0, false);
   addPoly(p.shadow, L.map(([x, y]) => [x + VIADUCT_HEIGHT * 0.25, y + VIADUCT_HEIGHT * 0.32]), 0, 0, false);
@@ -487,10 +497,62 @@ function drawTransit(ctx, view, world, items, place, px, which) {
   }
   if (!world.rail) return;
   const segs = world.rail.near(vx0, vy0, vx1, vy1);
-  const list = segs.map(railPaths);
   ctx.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
+  const runsOf = (kinds) => segs.flatMap((sg) => (sg.runs || [{ kind: 'viaduct', pts: sg.pts }]).filter((r) => kinds.includes(r.kind)).map((r) => ({ sg, r, p: railPaths(r) })));
+  if (zoom < 0.3) {
+    // Far out, as on a transit map: each line in its colour, side by side
+    // where they share the track; in tunnel, dashed and paler. (Thicker
+    // than the metro; above ground cased in the viaduct's grey.)
+    const w = px(zoom < 0.05 ? 2.4 : 3.2);
+    ctx.strokeStyle = palette.railEdge;
+    for (const { sg, p } of runsOf(['viaduct', 'ramp'])) {
+      ctx.lineWidth = w * ((sg.lines || []).length || 1) + px(1.6);
+      ctx.stroke(p.rail);
+    }
+    for (const { sg, r } of runsOf(['tunnel', 'ramp', 'viaduct'])) {
+      const ids = sg.lines || [];
+      const under = r.kind === 'tunnel';
+      ctx.globalAlpha = under ? 0.6 : 1;
+      ctx.setLineDash(under ? [px(5), px(3)] : []);
+      ids.forEach((id, k) => {
+        ctx.strokeStyle = world.rail.lines[id].colour;
+        ctx.lineWidth = w;
+        ctx.stroke(offsetPath(r.pts, (k - (ids.length - 1) / 2) * w));
+      });
+    }
+    ctx.setLineDash([]);
+    ctx.globalAlpha = 1;
+    return;
+  }
   const close = zoom >= 0.5;
+  // In tunnel: the tracks underground, faint and dashed.
+  ctx.setLineDash([px(6), px(4)]);
+  ctx.lineCap = 'butt';
+  ctx.strokeStyle = 'rgba(95, 103, 110, 0.5)';
+  ctx.lineWidth = close ? Math.max(0.3, px(0.9)) : Math.max(VIADUCT * 0.6, px(1.6));
+  for (const { p } of runsOf(['tunnel'])) ctx.stroke(close ? p.rails : p.rail);
+  ctx.setLineDash([]);
+  ctx.lineCap = 'round';
+  if (close) drawCentralStation(ctx, world, px);
+  // On a ramp: an open cutting between retaining walls.
+  const ramps = runsOf(['ramp']);
+  ctx.strokeStyle = palette.railFill;
+  ctx.lineWidth = Math.max(VIADUCT, px(2));
+  ctx.globalAlpha = 0.75;
+  for (const { p } of ramps) ctx.stroke(p.rail);
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = palette.railEdge;
+  ctx.lineWidth = Math.max(0.6, px(1));
+  for (const { p } of ramps) ctx.stroke(p.walls);
+  // On a viaduct: the cycle track along the path beneath, its shadow, the
+  // deck, and the rails.
+  const list = runsOf(['viaduct']).map((x) => x.p);
   if (close) {
+    ctx.strokeStyle = palette.bike;
+    ctx.globalAlpha = 0.45;
+    ctx.lineWidth = 2.2;
+    for (const { r } of runsOf(['viaduct', 'ramp'])) ctx.stroke(offsetPath(r.pts, CYCLE_TRACK));
+    ctx.globalAlpha = 1;
     ctx.strokeStyle = 'rgba(40, 40, 40, 0.15)';
     ctx.lineWidth = VIADUCT;
     for (const p of list) ctx.stroke(p.shadow);
@@ -500,30 +562,11 @@ function drawTransit(ctx, view, world, items, place, px, which) {
     ctx.lineWidth = w;
     for (const p of list) ctx.stroke(p.rail);
   }
-  if (close) {
-    ctx.strokeStyle = palette.railTrack;
-    ctx.lineWidth = Math.max(0.15, px(0.6));
-    for (const p of list) ctx.stroke(p.rails);
-  } else if (zoom < 0.3) {
-    // Far out, as on a transit map: each line in its colour, side by side
-    // where they share the track.
-    // (Thicker than the metro, cased in the viaduct's grey.)
-    const w = px(zoom < 0.05 ? 2.4 : 3.2);
-    ctx.strokeStyle = palette.railEdge;
-    for (const sg of segs) {
-      ctx.lineWidth = w * ((sg.lines || []).length || 1) + px(1.6);
-      ctx.stroke(railPaths(sg).rail);
-    }
-    for (const sg of segs) {
-      const ids = sg.lines || [];
-      ids.forEach((id, k) => {
-        ctx.strokeStyle = world.rail.lines[id].colour;
-        ctx.lineWidth = w;
-        ctx.stroke(offsetPath(sg.pts, (k - (ids.length - 1) / 2) * w));
-      });
-    }
-  } else {
-    // Farther out, ties along the line, as maps draw railways.
+  ctx.strokeStyle = palette.railTrack;
+  ctx.lineWidth = Math.max(0.15, px(0.6));
+  for (const p of close ? list.concat(ramps.map((x) => x.p)) : []) ctx.stroke(p.rails);
+  if (!close) {
+    // Ties along the line, as maps draw railways.
     ctx.strokeStyle = '#ffffff';
     ctx.lineWidth = Math.max(VIADUCT, px(2)) * 0.45;
     ctx.setLineDash([px(1.2), px(5)]);
@@ -532,6 +575,79 @@ function drawTransit(ctx, view, world, items, place, px, which) {
     ctx.setLineDash([]);
     ctx.lineCap = 'round';
   }
+}
+
+// The central station, underground: the lines through it fan out from four
+// approach tracks (two either way) to a track for every line or two, along
+// island platforms, and back; ladders of crossovers in each throat let any
+// train reach any platform. Trains run through, not stopping long, so a
+// platform track for about every line does (as at Chatelet on the RER).
+const centralCache = new WeakMap();
+function centralTracks(st) {
+  let c = centralCache.get(st);
+  if (c) return c;
+  const t = st.dir;
+  const n = [-t[1], t[0]];
+  const at = (a, b) => [st.p[0] + t[0] * a + n[0] * b, st.p[1] + t[1] * a + n[1] * b];
+  const lines = (st.lines || []).length;
+  const k = Math.min(CENTRAL_TRACKS[1], Math.max(CENTRAL_TRACKS[0], 2 * Math.ceil(lines / 2) + 2));
+  // Tracks in pairs, an island platform between each pair.
+  const offs = [];
+  const platforms = [];
+  let y = -((k / 2) * TRACK_GAP + (k / 2) * ISLAND) / 2;
+  for (let q = 0; q < k / 2; q++) {
+    offs.push(y);
+    platforms.push(y + TRACK_GAP / 2 + ISLAND / 2);
+    offs.push(y + TRACK_GAP + ISLAND);
+    y += 2 * TRACK_GAP + ISLAND;
+  }
+  const approach = [-6, -2, 2, 6];
+  const tracks = new Path2D();
+  const half = PLATFORM_LENGTH / 2;
+  for (const o of offs) {
+    // The nearest approach track, eased across to the platform.
+    const a = approach.reduce((m, x) => (Math.abs(x - o) < Math.abs(m - o) ? x : m));
+    const pts = [];
+    for (let s = -half - THROAT; s <= half + THROAT; s += 10) {
+      const u = Math.abs(s) <= half ? 1 : 1 - (Math.abs(s) - half) / THROAT;
+      const e = u * u * (3 - 2 * u);
+      pts.push(at(s, a + (o - a) * e));
+    }
+    addPoly(tracks, pts, 0, 0, false);
+  }
+  // Crossovers between neighbouring approach tracks, a ladder each end.
+  const ladders = new Path2D();
+  for (const sg of [-1, 1]) {
+    for (let q = 0; q + 1 < approach.length; q++) {
+      const s0 = sg * (half + THROAT + 30 + q * 25);
+      addPoly(ladders, [at(s0, approach[q]), at(s0 + sg * 25, approach[q + 1])], 0, 0, false);
+      addPoly(ladders, [at(s0 + sg * 60, approach[q + 1]), at(s0 + sg * 85, approach[q])], 0, 0, false);
+    }
+    for (const a of approach) addPoly(ladders, [at(sg * (half + THROAT), a), at(sg * (half + THROAT + 160), a)], 0, 0, false);
+  }
+  const islands = new Path2D();
+  for (const y0 of platforms) {
+    const P = [at(-half, y0 - ISLAND / 2), at(half, y0 - ISLAND / 2), at(half, y0 + ISLAND / 2), at(-half, y0 + ISLAND / 2)];
+    addPoly(islands, P, 0, 0, true);
+  }
+  c = { tracks, ladders, islands };
+  centralCache.set(st, c);
+  return c;
+}
+function drawCentralStation(ctx, world, px) {
+  const st = world.rail.stations.find((x) => x.central);
+  if (!st || !st.dir) return;
+  const c = centralTracks(st);
+  ctx.globalAlpha = 0.85;
+  ctx.fillStyle = palette.platform;
+  ctx.fill(c.islands);
+  ctx.strokeStyle = palette.railEdge;
+  ctx.lineWidth = Math.max(0.5, px(1.1));
+  ctx.lineCap = 'butt';
+  ctx.stroke(c.tracks);
+  ctx.stroke(c.ladders);
+  ctx.lineCap = 'round';
+  ctx.globalAlpha = 1;
 }
 
 const linearCache = new WeakMap();
@@ -714,6 +830,73 @@ function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
     }
     if (b && b.intersections) drawIntersections(ctx, b.intersections, ox, oy, px);
     if (b && b.tramStops) drawStops(ctx, b.tramStops, ox, oy, px);
+  }
+}
+
+// Rail buildings at street level: the stalls in the arches under the
+// viaducts (before the viaducts are drawn over them), or the station halls
+// over the platforms (after the tracks).
+function drawRailBuildings(ctx, view, items, place, px, which) {
+  if (!view.blocks || view.zoom < RAIL_BUILDING_ZOOM) return;
+  for (const { d } of items) {
+    const b = view.blocks(d);
+    if (!b) continue;
+    place(d);
+    const [ox, oy] = d.origin;
+    if (which === 'halls') {
+      // Station halls over the platforms below: a glass roof, with an
+      // entrance in the middle of each long side.
+      for (const h of b.halls || []) {
+        const P = h.pts.map(([x, y]) => [x - ox, y - oy]);
+        ctx.beginPath();
+        P.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.fillStyle = palette.hallRoof;
+        // (The central station's hall, glass, shows its platforms below.)
+        ctx.globalAlpha = h.central ? 0.55 : 1;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = palette.hallEdge;
+        ctx.lineWidth = Math.max(0.4, px(1));
+        ctx.stroke();
+        // The roof's ridge, and the doors.
+        const mid = (a, c) => [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2];
+        ctx.beginPath();
+        const r0 = mid(P[0], P[3]);
+        const r1 = mid(P[1], P[2]);
+        ctx.moveTo(r0[0], r0[1]);
+        ctx.lineTo(r1[0], r1[1]);
+        ctx.stroke();
+        ctx.fillStyle = palette.hallEdge;
+        for (const [a, c] of [[P[0], P[1]], [P[3], P[2]]]) {
+          const m = mid(a, c);
+          const t = [h.t[0] * 7, h.t[1] * 7];
+          const inward = [(r0[0] + r1[0]) / 2 - m[0], (r0[1] + r1[1]) / 2 - m[1]];
+          const l = Math.hypot(inward[0], inward[1]) || 1;
+          const n = [(inward[0] / l) * 2.5, (inward[1] / l) * 2.5];
+          ctx.beginPath();
+          ctx.moveTo(m[0] - t[0], m[1] - t[1]);
+          ctx.lineTo(m[0] + t[0], m[1] + t[1]);
+          ctx.lineTo(m[0] + t[0] + n[0], m[1] + t[1] + n[1]);
+          ctx.lineTo(m[0] - t[0] + n[0], m[1] - t[1] + n[1]);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+      continue;
+    }
+    // Stalls in the arches under the viaducts (seen through the deck).
+    if (b.arcades && b.arcades.length) {
+      const path = new Path2D();
+      for (const q of b.arcades) addPoly(path, q, ox, oy, true);
+      ctx.globalAlpha = 0.6;
+      ctx.fillStyle = palette.kiosk;
+      ctx.fill(path);
+      ctx.strokeStyle = palette.kioskEdge;
+      ctx.lineWidth = Math.max(0.2, px(0.6));
+      ctx.stroke(path);
+      ctx.globalAlpha = 1;
+    }
   }
 }
 

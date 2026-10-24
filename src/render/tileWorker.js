@@ -28,6 +28,8 @@ self.onmessage = (e) => {
         greenLinks: b.greenLinks,
         districtParks: b.districtParks,
         linearParks: b.linearParks,
+        arcades: b.arcades,
+        halls: b.halls,
         planned: b.planned,
         housed: b.programme.housed,
       };

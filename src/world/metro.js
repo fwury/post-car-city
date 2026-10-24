@@ -565,6 +565,31 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
           if (more) break;
         }
       }
+      // A line ending one link short of another line or a rail station,
+      // where no other line meets it: carried on to it, so its end is an
+      // interchange rather than a near miss.
+      const meets = (n, l) => railServes(n) || lines.some((o) => o !== l && o.nodes.includes(n));
+      for (const l of lines) {
+        for (const end of [0, 1]) {
+          if (l.nodes.length >= MAX_DISTRICTS) break;
+          const n = end ? l.nodes[l.nodes.length - 1] : l.nodes[0];
+          if (meets(n, l)) continue;
+          const prev = end ? l.nodes[l.nodes.length - 2] : l.nodes[1];
+          const inE = end ? l.edges[l.edges.length - 1] : l.edges[0];
+          let best = null;
+          for (const e of adj[n]) {
+            const m = other(e, n);
+            if (l.nodes.includes(m) || !meets(m, l) || linesAtNode[m] >= cap(m) || usedEdge.get(e.id) > 0) continue;
+            const turn = angleBetween(mul(leave(inE, n), -1), leave(e, n));
+            if (turn > TURN * 1.35 || angleBetween(sub(S[n], S[prev]), sub(S[m], S[n])) > TURN * 1.6) continue;
+            if (!best || turn < best.turn) best = { turn, e, m };
+          }
+          if (!best) continue;
+          extend(l, { end, e: best.e, m: best.m });
+          usedEdge.set(best.e.id, 1);
+          linesAtNode[best.m]++;
+        }
+      }
       // Short lines meeting end to end, running on straight, become one.
       for (let merged = true; merged; ) {
         merged = false;

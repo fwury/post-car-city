@@ -188,7 +188,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   const metro = createMetro(seed, { cores: cityCores, base: (c) => base(c), network: (b) => boulevards.network(b), rail, population, isWater: terrain.isWater });
   const hoods = createNeighbourhoods(seed, {
     boulevards,
-    railIn: (d) => rail.near(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1).map((sg) => sg.pts),
+    railIn: (d) => rail.surfaceIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1),
     metroIn: (d) => metro.stationsIn(d.key),
   });
   const parks = createParks(seed, {
@@ -693,7 +693,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   }
 
   // Stage 4: local streets and blocks, worked out only when wanted.
-  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.near(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1).map((sg) => sg.pts), stationsIn: (d) => transit.of(d).railStops });
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops });
 
   return {
     seed, population, terrain, centre, cityCores, rail, metro, cores, growth, boulevards,

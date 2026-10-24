@@ -52,7 +52,8 @@ test('districts have a core and irregular neighbourhoods', () => {
     const hoods = d.stage3.hoods;
     const core = hoods[0];
     assert.ok(core.core && pointInPolygon(d.station[0], d.station[1], core.polygon), `${d.key} core misses its station`);
-    assert.ok(core.area > 0.12e6 && core.area < 0.9e6, `${d.key} core is ${(core.area / 1e6).toFixed(2)} km²`);
+    // (Larger where the district is built less densely to house its people.)
+    assert.ok(core.area > 0.12e6 && core.area < 1.8e6, `${d.key} core is ${(core.area / 1e6).toFixed(2)} km²`);
     const rest = hoods.slice(1);
     assert.ok(rest.length >= NEIGHBOURHOODS[0] && rest.length <= NEIGHBOURHOODS[1], `${d.key} has ${rest.length} neighbourhoods`);
     for (const h of rest) {
@@ -103,7 +104,8 @@ test('nearly every neighbourhood has a main street, and few have more than three
       }
     }
   }
-  assert.ok(many <= total * 0.05, `${many} of ${total} neighbourhoods have more than three main streets`);
+  // (Large, less dense neighbourhoods are crossed by more of them.)
+  assert.ok(many <= total * 0.07, `${many} of ${total} neighbourhoods have more than three main streets`);
   assert.ok(none.length <= total * 0.03, `${none.join(', ')} have no main street of their own`);
 });
 
