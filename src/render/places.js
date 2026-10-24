@@ -28,6 +28,7 @@ const KINDS = {
   lodging: ['#5a72d4', 'bed'],
   market: ['#c88a3a', 'square'],
   post: ['#6b7c93', 'letter'],
+  rail: ['#2f6db5', 'stairs'],
 };
 
 // Uses shown, with their kind and from which tier: 1 the district's own,
@@ -39,6 +40,7 @@ const SHOWN = {
   cinema: ['stage', 1.5], library: ['library', 1.5], districtLibrary: ['library', 1], police: ['police', 1], fireStation: ['fire', 1],
   courthouse: ['civic', 1], governmentOffice: ['civic', 1.5], communityCentre: ['civic', 1.5], employment: ['civic', 2], postOffice: ['post', 1.5],
   church: ['worship', 1.5], cathedral: ['worship', 1], mosque: ['mosque', 1.5], synagogue: ['synagogue', 1.5], temple: ['worship', 1.5],
+  stationEntrance: ['rail', 1.5],
   departmentStore: ['shop', 1], hotel: ['lodging', 1], inn: ['lodging', 1.5], market: ['market', 1.5], districtPlaza: ['market', 1],
   // Everyday places, close in only.
   grocery: ['shop', 2], convenience: ['shop', 2], ethnicGrocer: ['shop', 2], pharmacy: ['health', 2], clinic: ['health', 2],
@@ -76,8 +78,10 @@ export function placesOf(blocks) {
       const uses = [];
       if (plot.dedicated) uses.push(plot.dedicated);
       for (const a of plot.also || []) uses.push(a);
-      if (plot.ground) uses.push(plot.ground);
+      if (plot.ground && plot.ground !== 'stationEntrance') uses.push(plot.ground);
       if (plot.shops) for (const s of plot.shops.slice(1, 3)) uses.push(s);
+      // A rail station's entrances, each where it is on the frontage.
+      for (const q of plot.entrances || []) out.push({ p: q, use: 'stationEntrance', kind: 'rail', tier: SHOWN.stationEntrance[1], block, plot });
       let k = 0;
       for (const use of uses) {
         const shown = SHOWN[use];
@@ -173,6 +177,27 @@ function badge(ctx, x, y, colour, glyph) {
 
 // Glyphs, drawn in white about a 10 px box centred on the origin.
 const GLYPHS = {
+  // Stairs going down, and an arrow down them.
+  stairs(c) {
+    c.beginPath();
+    c.moveTo(-5, -3.5);
+    c.lineTo(-2.5, -3.5);
+    c.lineTo(-2.5, -1);
+    c.lineTo(0, -1);
+    c.lineTo(0, 1.5);
+    c.lineTo(2.5, 1.5);
+    c.lineTo(2.5, 4);
+    c.lineTo(5, 4);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(-3.5, 1);
+    c.lineTo(-1.5, 3.5);
+    c.moveTo(-1.5, 3.5);
+    c.lineTo(-1.5, 1.8);
+    c.moveTo(-1.5, 3.5);
+    c.lineTo(-3.2, 3.5);
+    c.stroke();
+  },
   cross(c) {
     c.fillRect(-1.6, -4.5, 3.2, 9);
     c.fillRect(-4.5, -1.6, 9, 3.2);

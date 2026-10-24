@@ -105,7 +105,8 @@ test('nearly every neighbourhood has a main street, and few have more than three
     }
   }
   // (Large, less dense neighbourhoods are crossed by more of them.)
-  assert.ok(many <= total * 0.07, `${many} of ${total} neighbourhoods have more than three main streets`);
+  // (More where streets are laid to bring every spot within reach of one.)
+  assert.ok(many <= total * 0.18, `${many} of ${total} neighbourhoods have more than three main streets`);
   assert.ok(none.length <= total * 0.03, `${none.join(', ')} have no main street of their own`);
 });
 
@@ -257,13 +258,19 @@ test('main streets run through the middle of their neighbourhoods', () => {
   assert.ok(inside / total > 0.9, `only ${inside} of ${total} centres lie inside their own neighbourhood`);
 });
 
-test('main streets never dead-end (they may end at a park gate)', () => {
+test('main streets never dead-end (they may end at a park gate, or the land\'s edge)', () => {
   for (const d of inner()) {
     const lines = streetsOf(d);
+    const ring = d.ring.concat([d.ring[0]]);
     for (const l of d.stage3.lines) {
       const ends = [[l.points[0], !!l.crossing, l.parkStart], [l.points[l.points.length - 1], !!l.crossingEnd, l.parkEnd]];
-      for (const [e, crossingStart, park] of ends) {
+      for (const [k, [e, crossingStart, park]] of ends.entries()) {
         if (crossingStart) continue; // carries on in the next district
+        // Meets the street along the greenway at the land's edge.
+        if (k === 1 && l.edgeEnd) {
+          assert.ok(distToLine(e[0], e[1], ring) < 40, `${l.key} ends away from the land's edge`);
+          continue;
+        }
         if (park) {
           // Or ends at the gate of one of the district's parks.
           const pk = d.parks.find((x) => x.key === park);
@@ -412,7 +419,27 @@ test('main streets are no denser than local trade can carry', () => {
   const density = km / area;
   assert.ok(density > 1.3 && density < 2.3, `${density.toFixed(2)} km of main street per km²`);
   const perKm = (hoods * 15000) / km;
-  assert.ok(perKm > 8000, `only ${perKm.toFixed(0)} people per km of main street`);
+  // (Somewhat less where every spot is kept within 600 m of one.)
+  assert.ok(perKm > 7000, `only ${perKm.toFixed(0)} people per km of main street`);
+});
+
+test('every spot is within 600 m of a main street or boulevard', () => {
+  let n = 0;
+  let far = 0;
+  for (const d of inner()) {
+    const R = d.stage3.raster;
+    const S = streetsOf(d);
+    for (let j = 1; j < R.H; j += 3) {
+      for (let i = 1; i < R.W; i += 3) {
+        if (R.label[j * R.W + i] < 0) continue;
+        const x = R.x0 + (i + 0.5) * R.cell;
+        const y = R.y0 + (j + 0.5) * R.cell;
+        n++;
+        if (!S.some((P) => distToLine(x, y, P) <= 600)) far++;
+      }
+    }
+  }
+  assert.ok(far <= n * 0.002, `${far} of ${n} spots more than 600 m from a main street`);
 });
 
 test('each shared greenway has one gateway for main streets, two if long', () => {

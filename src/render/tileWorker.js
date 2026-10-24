@@ -18,7 +18,7 @@ self.onmessage = (e) => {
       const result = {
         blocks: b.blocks.map(({ pts, centreline, use, hood, front, inner, court, alley, layout, plots }) => ({
           pts, centreline, use, hood, front, inner, court, alley, layout,
-          plots: plots && plots.map(({ pts: q, kind, cls, ground, upper, dedicated, storeys, baseStoreys, dwellings, corner, c, bldg, layout: pl, also, group, shops, offices, towerSite, walkway }) => ({ pts: q, kind, cls, ground, upper, dedicated, storeys, baseStoreys, dwellings, corner, c, bldg, layout: pl, also, group, shops, offices, towerSite, walkway })),
+          plots: plots && plots.map(({ pts: q, kind, cls, ground, upper, dedicated, storeys, baseStoreys, dwellings, corner, c, bldg, layout: pl, also, group, shops, offices, towerSite, walkway, entrances }) => ({ pts: q, kind, cls, ground, upper, dedicated, storeys, baseStoreys, dwellings, corner, c, bldg, layout: pl, also, group, shops, offices, towerSite, walkway, entrances })),
         })),
         streets: b.streets,
         hoodLines: b.hoodLines,
@@ -28,7 +28,7 @@ self.onmessage = (e) => {
         districtParks: b.districtParks,
         linearParks: b.linearParks,
         arcades: b.arcades,
-        halls: b.halls,
+        entrances: b.entrances,
         planned: b.planned,
         housed: b.programme.housed,
       };

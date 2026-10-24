@@ -1,5 +1,5 @@
-// Draws what is in parks and school grounds (stage 5): paths, pitches and
-// courts with their markings, playgrounds, water and gardens.
+// Draws what is in parks and school grounds (stage 5): woods, paths,
+// pitches and courts with their markings, playgrounds, water and gardens.
 
 export const PARK_DETAIL_ZOOM = 0.45; // features and paths from here
 
@@ -9,6 +9,7 @@ const FILL = {
   washroom: '#d8d0c3', kiosk: '#e3c7a5', fountain: '#a9d9f2', statue: '#b7b2aa', pond: '#9fcff2', pool: '#e6e0d4',
   cemetery: '#cfe0c1', plaza: '#f1ece2',
 };
+const WOODS = '#b4d59b';
 const MARKED = new Set(['pitch', 'tennis', 'basketball', 'court', 'trackField']);
 const FENCED = new Set(['dogRun', 'dogPark', 'gardens', 'cemetery']);
 
@@ -25,12 +26,17 @@ const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
 export function layoutPaths(layout, ox, oy) {
   let p = cache.get(layout);
   if (p) return p;
-  p = { kinds: new Map(), lines: new Path2D(), fences: new Path2D(), paths: new Map(), pool: new Path2D(), headstones: new Path2D() };
+  p = { kinds: new Map(), woods: new Path2D(), lines: new Path2D(), fences: new Path2D(), paths: new Map(), pool: new Path2D(), headstones: new Path2D() };
   const kind = (k) => {
     if (!p.kinds.has(k)) p.kinds.set(k, new Path2D());
     return p.kinds.get(k);
   };
   for (const f of layout.features) {
+    // (Woods lie under the paths running through them.)
+    if (f.kind === 'woods') {
+      addPoly(p.woods, f.pts, ox, oy);
+      continue;
+    }
     if (f.pts) {
       addPoly(kind(f.kind), f.pts, ox, oy);
       if (FENCED.has(f.kind)) addPoly(p.fences, f.pts, ox, oy);
@@ -87,7 +93,12 @@ export function drawLayouts(ctx, list, place, zoom, px) {
   if (zoom < PARK_DETAIL_ZOOM || !list.length) return;
   ctx.lineCap = 'round';
   ctx.lineJoin = 'round';
-  // Paths first, then what stands among them.
+  ctx.fillStyle = WOODS;
+  for (const { d, p } of list) {
+    place(d);
+    ctx.fill(p.woods);
+  }
+  // Paths, then what stands among them.
   for (const [colour, extra] of [['#dcd5c6', px(1)], ['#f1ece2', 0]]) {
     ctx.strokeStyle = colour;
     for (const { d, p } of list) {

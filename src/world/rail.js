@@ -51,6 +51,10 @@ const RING_SIZE = [0.24, 0.3, 0.36]; // the loop's radius, as a share of the cit
 const RING_CHOICES = 3; // loops laid out networks are tried round
 const UNDER = 260; // metres either side of a station the track is underground
 const RAMP = 420; // metres of ramp between tunnel and viaduct
+const ALONG_GAP = 45; // metres: track this close beside a street running the same way...
+const ALONG_COS = 0.88; // (within about 28 degrees of it)...
+const ALONG_MIN = 120; // ...for this far or more goes underground
+const ALONG_NEAR = 100; // (and on underground while within this of it)
 const OVER = 600; // metres the path beside the track runs on over a tunnel, at most (into a station hall's forecourt)
 const TUNNEL_CENTRE = [1400, 3200]; // metres: how far out from the central station the lines run in tunnel, at least and at most
 const COUNTRY = 14000; // metres the lines run on beyond the city
@@ -175,7 +179,7 @@ function closedCurve(Q, step = STEP) {
 }
 
 // cores: the city's cores, the central one first.
-export function createRail(seed, { cores, terrain }) {
+export function createRail(seed, { cores, terrain, streetsNear = () => [] }) {
   const u = (...k) => toUnit(hash(seed, 'rail', ...k));
   if (!cores.length) return { segments: [], stations: [], lines: [], near: () => [], surfaceIn: () => [], joins: () => false, termini: [] };
   const N = cores.length;
@@ -726,46 +730,111 @@ export function createRail(seed, { cores, terrain }) {
     }
     return r < 0 ? 'tunnel' : r < RAMP ? 'ramp' : 'viaduct';
   };
-  for (const sg of segments) {
+  // Track running alongside a street (a boulevard, say) above ground would
+  // wall it off from the blocks across it: such a stretch goes underground
+  // too. (Worked out for a stretch of track when it is first needed, by
+  // when the boulevards near it are known.)
+  function along(pts) {
+    let x0 = Infinity;
+    let y0 = Infinity;
+    let x1 = -Infinity;
+    let y1 = -Infinity;
+    for (const [x, y] of pts) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
+    const streets = streetsNear(x0 - ALONG_GAP, y0 - ALONG_GAP, x1 + ALONG_GAP, y1 + ALONG_GAP);
+    // How far each point is from a street running the same way.
+    const gap = pts.map((q, i) => {
+      const d = unit(sub(pts[Math.min(pts.length - 1, i + 1)], pts[Math.max(0, i - 1)]));
+      let best = Infinity;
+      for (const P of streets) {
+        for (let k = 0; k < P.length - 1; k++) {
+          const a = P[k];
+          const ab = sub(P[k + 1], a);
+          const l = len(ab);
+          if (!l || Math.abs(dot(ab, d)) / l < ALONG_COS) continue;
+          const t = Math.max(0, Math.min(1, dot(sub(q, a), ab) / (l * l)));
+          best = Math.min(best, len(sub(add(a, mul(ab, t)), q)));
+        }
+      }
+      return best;
+    });
+    // Stretches of some length right beside one (a street merely crossed
+    // is no matter), each carried on while the track stays near it, so it
+    // ramps up only once clear.
+    const out = pts.map(() => false);
+    for (let i = 0; i < pts.length; ) {
+      if (gap[i] >= ALONG_GAP) {
+        i++;
+        continue;
+      }
+      let j = i;
+      while (j + 1 < pts.length && gap[j + 1] < ALONG_GAP) j++;
+      if ((j - i) * STEP >= ALONG_MIN) {
+        let a = i;
+        let b = j;
+        while (a > 0 && gap[a - 1] < ALONG_NEAR) a--;
+        while (b + 1 < pts.length && gap[b + 1] < ALONG_NEAR) b++;
+        for (let k = a; k <= b; k++) out[k] = true;
+      }
+      i = j + 1;
+    }
+    return out;
+  }
+  function profile(sg) {
     const pts = resample(sg.pts, STEP);
+    const buried = sg.country ? pts.map(() => false) : along(pts);
+    const idx = buried.map((b, i) => (b ? i : -1)).filter((i) => i >= 0);
     const runs = [];
     let run = null;
-    for (const q of pts) {
-      const k = sg.country && len(sub(q, cp)) > farthest + 3000 ? 'viaduct' : depth(q);
+    pts.forEach((q, i) => {
+      let k = sg.country && len(sub(q, cp)) > farthest + 3000 ? 'viaduct' : depth(q);
+      if (idx.length && k !== 'tunnel') {
+        // (Ramping down to such a stretch as to a station.)
+        let r = Infinity;
+        for (const j of idx) r = Math.min(r, Math.abs(j - i) * STEP);
+        if (r === 0) k = 'tunnel';
+        else if (r < RAMP) k = 'ramp';
+      }
       if (!run || run.kind !== k) {
         const last = run ? run.pts[run.pts.length - 1] : null;
         run = { kind: k, pts: last ? [last] : [] };
         runs.push(run);
       }
       run.pts.push(q);
-    }
-    sg.runs = runs.filter((r) => r.pts.length > 1);
+    });
+    const kept = runs.filter((r) => r.pts.length > 1);
     // Above ground (viaduct and ramp together), each run on along the
     // tunnel a way at either end: the path beside the track carries on
     // over the tunnel until it meets a street. With what is under each
     // point of it.
-    sg.corridors = [];
-    for (let q = 0; q < sg.runs.length; q++) {
-      if (sg.runs[q].kind === 'tunnel') continue;
+    const corridors = [];
+    for (let q = 0; q < kept.length; q++) {
+      if (kept[q].kind === 'tunnel') continue;
       let e = q;
-      while (e + 1 < sg.runs.length && sg.runs[e + 1].kind !== 'tunnel') e++;
-      const pts = [];
+      while (e + 1 < kept.length && kept[e + 1].kind !== 'tunnel') e++;
+      const cpts = [];
       const kinds = [];
       const push = (list, kind) => {
         for (const x of list) {
-          if (pts.length && len(sub(pts[pts.length - 1], x)) < 1e-6) continue;
-          pts.push(x);
+          if (cpts.length && len(sub(cpts[cpts.length - 1], x)) < 1e-6) continue;
+          cpts.push(x);
           kinds.push(kind);
         }
       };
-      const before = q > 0 ? sg.runs[q - 1].pts : [];
+      const before = q > 0 ? kept[q - 1].pts : [];
       push(before.slice(Math.max(0, before.length - Math.round(OVER / STEP))), 'tunnel');
-      for (let k = q; k <= e; k++) push(sg.runs[k].pts, sg.runs[k].kind);
-      const after = e + 1 < sg.runs.length ? sg.runs[e + 1].pts : [];
+      for (let k = q; k <= e; k++) push(kept[k].pts, kept[k].kind);
+      const after = e + 1 < kept.length ? kept[e + 1].pts : [];
       push(after.slice(0, Math.round(OVER / STEP)), 'tunnel');
-      sg.corridors.push({ pts, kinds });
+      corridors.push({ pts: cpts, kinds });
       q = e;
     }
+    return { runs: kept, corridors };
+  }
+  for (const sg of segments) {
+    let done = null;
+    const get = () => done || (done = profile(sg));
+    Object.defineProperty(sg, 'runs', { get: () => get().runs, enumerable: true });
+    Object.defineProperty(sg, 'corridors', { get: () => get().corridors, enumerable: true });
   }
 
   // Track touching a rectangle.
