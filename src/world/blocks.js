@@ -33,11 +33,10 @@ import { insetWithSources, selfCrosses as selfCrossing } from '../util/offset.js
 import { plotsOfBlock, rectness, TERRACE_RECT } from './plots.js';
 import { assignProgramme } from './programme.js';
 import { assignBuildings } from './buildings.js';
-import { tramStops } from './tram.js';
-import { planIntersections } from './intersections.js';
+import { planJunctions } from './junctions.js';
 import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
 import { createNames } from './names.js';
-import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample } from '../util/geom.js';
+import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample, splitByPolygon } from '../util/geom.js';
 import { fill, distanceField, contours, stamp } from '../util/raster.js';
 import { distToLine } from './boulevards.js';
 
@@ -782,10 +781,15 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     const street = (kind, w, extra = {}) => ({ id: nextStreet++, kind, w, ...extra });
     const lines = [];
     const mains = [];
+    // (Through the core neighbourhood, a main street is a core main street:
+    // wider, with a frontage zone under the podiums.)
+    const corePoly = st.hoods[0] && st.hoods[0].core ? st.hoods[0].polygon : null;
     for (const l of st.lines) {
-      const t = street('main', STREET_TYPES.mainStreet.width, { key: l.key });
-      mains.push({ t, pts: l.points });
-      lines.push({ pts: l.points, tag: t });
+      for (const run of splitByPolygon(l.points, corePoly)) {
+        const t = street('main', STREET_TYPES[run.inside ? 'coreMainStreet' : 'mainStreet'].width, { key: l.key, core: run.inside });
+        mains.push({ t, pts: run.pts });
+        lines.push({ pts: run.pts, tag: t });
+      }
     }
     const roundabouts = [];
     for (const l of d.network.lines) {
@@ -1181,12 +1185,19 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       const jitter = (rng.next() - 0.5) * 0.3;
       const final = size.long * size.short * 2.5;
       // One candidate cut from e1 to e2 (a carried-on street is already lined up at e1).
+      // Streets already meeting an edge at a point (from either side).
+      const meetsAt = (k, p) => (junctions.get(node.tags[k].id) || []).filter((q) => len(sub(q, p)) < 1.5).length;
       function attempt(e1, e2, carried) {
         if (e1.i === e2.i) return null;
         if ((!carried && cornerDist(node, e1.i, e1.t) < CORNER_GAP) || cornerDist(node, e2.i, e2.t) < CORNER_GAP) return null;
         if (!carried) e1 = settleEnd(node, e1);
         e2 = e1 && settleEnd(node, e2);
         if (!e1 || !e2 || e1.i === e2.i) return null;
+        // (Settled, still clear of the corners; and ending where at most one
+        // other street already meets the edge, so no junction gets a fifth
+        // arm.)
+        if ((!carried && cornerDist(node, e1.i, e1.t) < CORNER_GAP) || cornerDist(node, e2.i, e2.t) < CORNER_GAP) return null;
+        if (meetsAt(e1.i, at(node, e1.i, e1.t)) >= 2 || meetsAt(e2.i, at(node, e2.i, e2.t)) >= 1) return null;
         const p1 = at(node, e1.i, e1.t);
         const p2 = at(node, e2.i, e2.t);
         const n1 = inward(node, e1.i);
@@ -1821,7 +1832,6 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     const programme = assignProgramme(seed, d, blocks, planned);
     // And what stands on it.
     assignBuildings(seed, d, blocks);
-    const tram = tramStops(d, blocks, local);
     // What is in the parks, and the schools' grounds.
     const parkRng = rngFor(seed, 'park-layout', ...keyInts(d.coreInfo));
     // Schools' grounds: a track and field where there is room.
@@ -1850,13 +1860,19 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));
-    // How each junction is laid out, by the streets that meet there.
-    const intersections = planIntersections(
-      [...st.lines.map((l) => ({ pts: l.points, type: 'mainStreet' })), ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => ({ pts: l.points, type: 'boulevard' }))],
-      tram.junctions,
-      local,
-    );
-    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tram.stops, junctions: tram.junctions, greenLinks, districtParks, linearParks, arcades, halls: sites.map((st) => ({ pts: st.hall, central: st.central, t: st.t })) };
+    // How each junction is laid out, by the streets that meet there, and
+    // where the tram stops are (on the far sides of signalised junctions).
+    const places = [d.station];
+    for (const b of blocks) if (['square', 'cathedral', 'hospital', 'school', 'elementarySchool', 'recCentre', 'campus', 'station'].includes(b.use) && b.pts) places.push(axes(b.pts).c);
+    const { junctions: intersections, stops: tramStopList } = planJunctions(hashString(d.key), {
+      majors: [...st.lines.map((l) => ({ pts: l.points, type: 'mainStreet', typeAt: (q) => (corePoly && pointInPolygon(q[0], q[1], corePoly) ? 'coreMainStreet' : 'mainStreet') })), ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => ({ pts: l.points, type: 'boulevard' }))],
+      // (A podium core's streets are core residential streets.)
+      local: local.map((x) => ({ ...x, kind: x.kind === 'local' && x.width >= CORE_CROSS - 0.1 ? 'core' : x.kind })),
+      alleys: blocks.map((b) => b.alley).filter(Boolean),
+      greenways: linearParks.map((lp) => lp.centre),
+      places,
+    });
+    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tramStopList, greenLinks, districtParks, linearParks, arcades, halls: sites.map((st) => ({ pts: st.hall, central: st.central, t: st.t })) };
   }
 
   // Forget a district's blocks (a worker that has handed them on keeps none).

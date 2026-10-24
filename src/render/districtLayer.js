@@ -9,6 +9,7 @@
 import { BOULEVARD_WIDTH, GREENWAY_MAX } from '../world/districts.js';
 import { ROUNDABOUT_RADIUS } from '../world/boulevards.js';
 import { STREET_TYPES } from '../world/streetTypes.js';
+import { splitByPolygon } from '../util/geom.js';
 
 const MAIN_STREET_WIDTH = STREET_TYPES.mainStreet.width;
 const TRAM_WIDTH = 5;
@@ -31,7 +32,7 @@ import { palette } from './styles.js';
 import { TRAIL_WIDTH, BEACH } from '../world/greenway.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
-import { DETAIL_MIN_ZOOM, drawIntersections, drawSections, carriageway, streetExtras, drawRails, drawJunctions, drawStops, offsetLine } from './streetDetail.js';
+import { DETAIL_MIN_ZOOM, drawJunctionGround, drawJunctionMarks, drawPlatforms, drawSections, streetExtras, drawRails, offsetLine } from './streetDetail.js';
 
 export const LOD_STEPS = [
   [0.4, 25],
@@ -113,14 +114,18 @@ function hoodPathsFor(d, nb) {
     while (k < 3 && [...adj[h.id]].some((o) => colour[o] === k)) k++;
     colour[h.id] = k;
   }
-  p = { tints: palette.hoodTints.map(() => new Path2D()), lines: new Path2D(), centres: nb.hoods.map((h) => h.centre), streets: new Path2D() };
+  p = { tints: palette.hoodTints.map(() => new Path2D()), lines: new Path2D(), centres: nb.hoods.map((h) => h.centre), streets: new Path2D(), outer: new Path2D(), core: new Path2D() };
   for (const h of nb.hoods) {
     if (h.core || h.polygon.length < 3) continue;
     addPoly(p.tints[colour[h.id]], h.polygon, ox, oy, true);
     for (const r of h.holes) if (r.length > 2) addPoly(p.tints[colour[h.id]], r, ox, oy, true);
   }
   for (const c of nb.chains) if (c.a >= 0 && c.b >= 0) addPoly(p.lines, c.points, ox, oy, false);
+  // All the main streets; and, for drawing close in, split into those
+  // through the core neighbourhood (core main streets) and the rest.
   for (const l of nb.lines) addPoly(p.streets, l.points, ox, oy, false);
+  const corePoly = nb.hoods[0] && nb.hoods[0].core ? nb.hoods[0].polygon : null;
+  for (const l of nb.lines) for (const run of splitByPolygon(l.points, corePoly)) addPoly(run.inside ? p.core : p.outer, run.pts, ox, oy, false);
   hoodCache.set(nb, p);
   return p;
 }
@@ -804,16 +809,21 @@ function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
   const { x0, y0, s } = view;
   const blocksOf = (d) => (view.blocks ? view.blocks(d) : null);
   const items = [
-    ...hoods.map(({ d, h }) => ({ path: h.streets, type: 'mainStreet', place: () => place(d) })),
+    ...hoods.map(({ d, h }) => ({ path: h.outer, type: 'mainStreet', place: () => place(d) })),
+    ...hoods.map(({ d, h }) => ({ path: h.core, type: 'coreMainStreet', place: () => place(d) })),
     ...lines.map(({ b, path }) => ({ path, type: 'boulevard', place: () => ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s) })),
   ];
   drawSections(ctx, items, px);
-  // Junctions, then rails.
+  // Each junction's ground, the tram platforms, the rails, then the
+  // junctions' markings, kerbs, signals and bollards (those in view).
+  const M = 60;
+  const inView = ([x, y]) => x > x0 - M && y > y0 - M && x < x0 + view.w / s + M && y < y0 + view.h / s + M;
   for (const { d } of hoods) {
     const b = blocksOf(d);
-    if (!b || !b.junctions) continue;
+    if (!b) continue;
     place(d);
-    drawJunctions(ctx, b.junctions, d.origin[0], d.origin[1], carriageway('mainStreet'));
+    drawJunctionGround(ctx, b.intersections, d.origin[0], d.origin[1], px, inView);
+    drawPlatforms(ctx, b.tramStops, d.origin[0], d.origin[1], px, inView);
   }
   for (const { d } of hoods) {
     const b = blocksOf(d);
@@ -828,8 +838,7 @@ function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
       const e = streetExtras(l.points, 'boulevard');
       drawRails(ctx, e.rails, ox, oy, px);
     }
-    if (b && b.intersections) drawIntersections(ctx, b.intersections, ox, oy, px);
-    if (b && b.tramStops) drawStops(ctx, b.tramStops, ox, oy, px);
+    if (b) drawJunctionMarks(ctx, b.intersections, ox, oy, px, inView);
   }
 }
 
