@@ -38,7 +38,7 @@ A GitHub Pages workflow (`.github/workflows/pages.yml`) runs the tests and publi
 ## Test
 
 ```
-node --test
+node --test --test-concurrency=1
 ```
 
 ## Conventions
