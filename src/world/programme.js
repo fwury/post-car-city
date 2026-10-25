@@ -330,8 +330,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   }
   // A neighbour along the block a building of its own may take in: one of
   // the ordinary buildings, nothing given to anything yet.
-  // (Its shop floor or offices, if any, go: there are more along the street.)
-  const joinable = (o, p) => o && o !== p && JOINABLE.has(o.cls) && !o.dedicated && o.kind !== 'passage';
+  const joinable = (o, p) => o && o !== p && JOINABLE.has(o.cls) && !taken(o, 'dedicated') && o.kind !== 'passage';
   // The most land a plot could come to, taking in its neighbours.
   function reachable(p, minArea) {
     let a = polygonArea(p.pts);
@@ -362,8 +361,6 @@ export function assignProgramme(seed, d, blocks, planned = null) {
           pts = j;
           o.cls = 'merged';
           o.dedicated = use;
-          o.ground = null;
-          o.upper = null;
         }
       }
       p.pts = pts;
@@ -392,7 +389,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
           const size = use === 'communityCentre' ? 800 : use === 'inn' ? 450 : 400;
           dedicate(q, use, use === 'inn' ? ['main'] : ['main', 'corner', 'unit'], 700, size);
         } else {
-          const p = nearest(q, ['main', 'podium'], slot, 900, (o) => o.hood === h.id) || nearest(q, ['main', 'podium'], slot, 1400);
+          // (Along its main streets; failing that, on a corner near its square.)
+          const p = nearest(q, ['main', 'podium'], slot, 900, (o) => o.hood === h.id) || nearest(q, ['corner', 'unit'], slot, 700, (o) => o.hood === h.id) || nearest(q, ['main', 'podium'], slot, 1400);
           if (p) put(p, use, slot);
         }
       }
