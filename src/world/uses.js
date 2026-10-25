@@ -168,6 +168,8 @@ export const USES = {
   bikeParking: { label: 'Bicycle parking', cat: 'transport', floor: 'ground' },
   districtPlaza: { label: 'District plaza', cat: 'civic', floor: 'open' },
   stationEntrance: { label: 'Rail station entrance', cat: 'transport', floor: 'ground' },
+  stationPlaza: { label: 'Station plaza', cat: 'civic', floor: 'open' },
+  railStation: { label: 'Central station', cat: 'civic', floor: 'open' },
   skatingRink: { label: 'Skating rink', cat: 'recreation', floor: 'dedicated' },
   stadium: { label: 'Stadium and concert venue', cat: 'recreation', floor: 'dedicated' },
 };
@@ -217,6 +219,18 @@ export const CORNER_MIX = [
   ['florist', 1], ['daycare', 1], ['pharmacy', 0.8], ['clinic', 0.6], ['tutor', 0.6], ['dryCleaner', 0.8], ['tailor', 0.5],
   ['repair', 0.5], ['alliedHealth', 0.5], ['artStudio', 0.4], ['office', 1.5], ['catering', 0.3], ['deli', 0.8], ['nails', 0.5],
 ];
+// The least plot (m²) a building of its own may stand on, by use: a
+// museum or a courthouse needs a good part of a block, a fire station room
+// for its engines, a church its nave. (Plots smaller are joined with their
+// neighbours along the block until big enough.)
+export const MIN_PLOT = {
+  church: 600, mosque: 700, synagogue: 450, temple: 600,
+  museum: 2500, districtLibrary: 1800, library: 900, courthouse: 2500, police: 1200, fireStation: 1000,
+  performingArts: 2500, hotel: 1200, officeTower: 1200, departmentStore: 3000, inn: 350, hospice: 900,
+  altPrimary: 1500, altSecondary: 2000, skatingRink: 2500, climbing: 1000, gymnastics: 1200,
+  emergencyHousing: 600, transitionalHousing: 600,
+};
+
 // Places of worship, in about Toronto's proportions.
 export const WORSHIP_MIX = [['church', 70], ['mosque', 11], ['synagogue', 8], ['temple', 11]];
 

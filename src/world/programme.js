@@ -27,7 +27,7 @@ import { keyInts } from './cores.js';
 import { polygonArea, signedArea } from '../util/geom.js';
 import {
   USES, EVERYDAY, EVERYDAY_REACH, NEIGHBOURHOOD_LIST, HIGH_STREET_MIX, UPSTAIRS_MIX, OFFICE_MIX, CORNER_MIX, WORSHIP_MIX,
-  DISTRICT_LIST, SUBDISTRICT_LIST,
+  DISTRICT_LIST, SUBDISTRICT_LIST, MIN_PLOT,
 } from './uses.js';
 
 const WORSHIP_PER_HOOD = 3;
@@ -37,6 +37,12 @@ const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
 const CATHEDRAL_BLOCK = [0.45e4, 1.8e4];
 // m², a cathedral's block, beside a square
 const REC_BLOCK = [0.5e4, 1.6e4];
+const WHOLE_BLOCK = 1500; // m²: a building of its own this big takes a whole block if it can...
+const WHOLE_MAX = 4; // ...one up to this many times its size
+const JOIN_STEPS = 5;
+const JOINABLE = new Set(['main', 'corner', 'unit', 'house', 'rowCorner', 'unitShop', 'cornerShop']); // plots a building of its own may take in
+const WORSHIP_PLOT = 600; // m²: what a place of worship looks for // plots each way along a block a building of its own may take in
+const PARKETTE_WALK = 400; // metres: three parkettes within this of every rowhouse
 const PARKETTE_GAP = 210; // metres between parkettes in rowhouse areas (about four within 400 m)
 const SUBDISTRICT_HOODS = 3; // neighbourhoods to a subdistrict centre
 const QUIET_UNITS = 0.3; // share of off-main perimeter plots with a shop floor
@@ -50,8 +56,8 @@ const HEIGHTS = {
   unit: { base: 5, storeys: [3, 9] },
   unitShop: { base: 5, storeys: [3, 9] },
   corner: { base: 5, storeys: [3, 9] },
-  podium: { base: 7, storeys: [5, 10] }, // a core building without a tower: shops, offices, flats above
-  podiumTower: { base: 22, storeys: [12, 40], tower: true }, // a podium of shops and offices with a tower of flats over it
+  podium: { base: 7, storeys: [4, 10] }, // a core building without a tower: shops, offices, flats above
+  podiumTower: { base: 22, storeys: [8, 40], tower: true }, // a podium of shops and offices with a tower of flats over it
   house: { base: 3, storeys: [2, 5], depth: 15, house: true },
   rowCorner: { base: 3, storeys: [2, 5], depth: 15, house: true },
   cornerShop: { base: 3, storeys: [2, 5], depth: 15, house: true },
@@ -132,7 +138,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
 
   // ---- Plots, by what they face ----
   const plots = [];
-  const squares = blocks.filter((b) => b.use === 'square');
+  const squares = blocks.filter((b) => b.use === 'square' && !b.stationPlaza);
   const sqCentre = new Map(squares.map((b) => [b.hood, centroid(b.pts)]));
   const sqCentres = [...sqCentre.values()];
   for (const b of blocks) {
@@ -146,7 +152,12 @@ export function assignProgramme(seed, d, blocks, planned = null) {
       p.upper = null;
       p.dedicated = null;
       if (p.kind === 'passage') p.cls = 'passage';
-      else if (b.use === 'square') p.cls = 'open';
+      // (A parkette through a terrace, from the street to the lane.)
+      else if (p.kind === 'parkette') {
+        p.cls = 'open';
+        p.dedicated = 'parkette';
+      }
+      else if (b.use === 'square' || b.use === 'station') p.cls = 'open';
       else if (['park', 'green', 'school', 'campus'].includes(b.use)) p.cls = 'open';
       else if (p.kind === 'podium') p.cls = 'podium';
       // Facing a main street or a square.
@@ -192,7 +203,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   };
   for (const b of blocks) {
     if (!b.plots) continue;
-    if (b.use === 'square') b.plots[0].dedicated = b.hood === 0 ? 'districtPlaza' : 'market';
+    if (b.use === 'square') b.plots[0].dedicated = b.stationPlaza ? 'stationPlaza' : b.hood === 0 ? 'districtPlaza' : 'market';
+    if (b.use === 'station') b.plots[0].dedicated = 'railStation';
     if (b.use === 'park') b.plots[0].dedicated = 'neighbourhoodPark';
     if (b.use === 'school') b.plots[0].dedicated = 'secondarySchool';
     if (b.use === 'campus') b.plots[0].dedicated = 'college';
@@ -292,32 +304,65 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   }
   // A dedicated building: a plot big enough, or a plot joined with its neighbour.
   function dedicate(q, use, classes, reach, minArea) {
+    // A big building of its own (a museum, a theatre...) takes a whole
+    // block of about its size nearby, if one is free.
+    const need = Math.max(minArea, MIN_PLOT[use] || 0);
+    if (need >= WHOLE_BLOCK) {
+      const b = blocks
+        .filter((o) => (o.use === 'perimeter' || o.use === 'podium') && o.plots && free(o) && o.area >= need && o.area <= need * WHOLE_MAX && len(sub(centroid(o.pts), q)) < reach)
+        .sort((x, y) => len(sub(centroid(x.pts), q)) - len(sub(centroid(y.pts), q)))[0];
+      if (b) {
+        dedicateBlock(b, use);
+        return b.plots[0];
+      }
+    }
     let best = null;
     for (const p of near(q, reach)) {
       // (A core building whose shops are let may still be given over whole.)
       if (!classes.includes(p.cls) || (p.cls === 'podium' ? p.dedicated : taken(p, 'dedicated'))) continue;
       const r = len(sub(p.c, q));
-      const area = polygonArea(p.pts);
-      const fits = area >= minArea;
-      const score = r + (fits ? 0 : 150);
+      const need = Math.max(minArea, MIN_PLOT[use] || 0);
+      const fits = reachable(p, need) >= need;
+      const score = r + (fits ? 0 : 250);
       if (!best || score < best.score) best = { score, p, fits };
     }
     if (!best) return reach < 1500 ? dedicate(q, use, classes, reach * 1.8, minArea) : null;
     return dedicatePlot(best.p, use, minArea);
   }
+  // A neighbour along the block a building of its own may take in: one of
+  // the ordinary buildings, nothing given to anything yet.
+  const joinable = (o, p) => o && o !== p && JOINABLE.has(o.cls) && !taken(o, 'dedicated') && o.kind !== 'passage';
+  // The most land a plot could come to, taking in its neighbours.
+  function reachable(p, minArea) {
+    let a = polygonArea(p.pts);
+    const list = p.block && p.block.plots;
+    if (!list) return a;
+    for (const dir of [1, -1]) {
+      for (let step = 1; step <= JOIN_STEPS && a < minArea; step++) {
+        const o = list[(((p.index + dir * step) % list.length) + list.length) % list.length];
+        if (!joinable(o, p)) break;
+        a += polygonArea(o.pts);
+      }
+    }
+    return a;
+  }
   function dedicatePlot(p, use, minArea) {
+    minArea = Math.max(minArea, MIN_PLOT[use] || 0);
     if (polygonArea(p.pts) < minArea && p.block && p.block.plots) {
-      // Join the plot to its neighbours along the block until big enough.
+      // Join the plot to its neighbours along the block until big enough:
+      // onward first, then back the other way.
       const list = p.block.plots;
       let pts = p.pts;
-      for (let step = 1; step <= 3 && polygonArea(pts) < minArea; step++) {
-        const o = list[(p.index + step) % list.length];
-        if (!o || o === p || o.cls !== p.cls || taken(o, 'dedicated') || o.kind === 'passage') break;
-        const j = join(pts, o.pts);
-        if (!j) break;
-        pts = j;
-        o.cls = 'merged';
-        o.dedicated = use;
+      for (const dir of [1, -1]) {
+        for (let step = 1; step <= JOIN_STEPS && polygonArea(pts) < minArea; step++) {
+          const o = list[(((p.index + dir * step) % list.length) + list.length) % list.length];
+          if (!joinable(o, p)) break;
+          const j = join(pts, o.pts);
+          if (!j) break;
+          pts = j;
+          o.cls = 'merged';
+          o.dedicated = use;
+        }
       }
       p.pts = pts;
       p.c = centroid(pts);
@@ -345,7 +390,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
           const size = use === 'communityCentre' ? 800 : use === 'inn' ? 450 : 400;
           dedicate(q, use, use === 'inn' ? ['main'] : ['main', 'corner', 'unit'], 700, size);
         } else {
-          const p = nearest(q, ['main', 'podium'], slot, 900, (o) => o.hood === h.id) || nearest(q, ['main', 'podium'], slot, 1400);
+          // (Along its main streets; failing that, on a corner near its square.)
+          const p = nearest(q, ['main', 'podium'], slot, 900, (o) => o.hood === h.id) || nearest(q, ['corner', 'unit'], slot, 700, (o) => o.hood === h.id) || nearest(q, ['main', 'podium'], slot, 1400);
           if (p) put(p, use, slot);
         }
       }
@@ -359,7 +405,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
         if (taken(p, 'dedicated')) continue;
         // Away from the square and from each other; corners first.
         const r = Math.min(len(sub(p.c, q)) * 0.6 + 120, ...spots.map((o) => len(sub(o, p.c))));
-        const score = r + (p.cls === 'main' ? 0 : 80) + toUnit(hash(seed, 'worship', Math.floor(p.c[0]), Math.floor(p.c[1]))) * 60;
+        const score = r + (p.cls === 'main' ? 0 : 80) + toUnit(hash(seed, 'worship', Math.floor(p.c[0]), Math.floor(p.c[1]))) * 60 - (reachable(p, WORSHIP_PLOT) >= WORSHIP_PLOT ? 0 : 200);
         if (!best || score > best.score) best = { score, p };
       }
       if (!best) break;
@@ -414,7 +460,10 @@ export function assignProgramme(seed, d, blocks, planned = null) {
         const at = [S[0] + Math.cos(a) * 700, S[1] + Math.sin(a) * 700];
         dedicate(at, use, ['main', 'corner', 'podium'], 1200, 1200);
       } else if (slot === 'dedicated') {
-        dedicate(core, use, ['podium', 'main'], 700, use === 'officeTower' || use === 'hotel' ? 900 : 1200);
+        // Towers and big stores among the podiums; the old civic buildings
+        // in the old town round the square.
+        const modern = use === 'officeTower' || use === 'hotel' || use === 'departmentStore';
+        dedicate(core, use, modern ? ['podium'] : ['podium', 'main', 'corner', 'unit'], 700, modern ? 900 : 1200);
       } else {
         const p = nearest(core, ['podium', 'main'], slot, 800);
         if (p) put(p, use, slot);
@@ -465,6 +514,26 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     p.dedicated = 'parkette';
     p.cls = 'open';
     parkettes.push(p);
+  }
+  // Then every house has three within a five-minute walk (counting those
+  // through the terraces): one more on the nearest free plot to any short.
+  {
+    const all = plots.filter((p) => p.dedicated === 'parkette' && p.cls !== 'merged').map((p) => p.c);
+    const count = (q) => all.filter((c) => len(sub(c, q)) <= PARKETTE_WALK).length;
+    for (const h of plots.filter((p) => p.kind === 'rowhouse')) {
+      if (h.dedicated || h.cls === 'merged' || count(h.c) >= 3) continue;
+      let best = null;
+      for (const p of rowPlots) {
+        if (p.dedicated || p.cls === 'merged' || taken(p, 'dedicated')) continue;
+        const r = len(sub(p.c, h.c));
+        if (r < PARKETTE_WALK * 0.8 && (!best || r < best.r)) best = { r, p };
+      }
+      if (!best) continue;
+      best.p.dedicated = 'parkette';
+      best.p.cls = 'open';
+      parkettes.push(best.p);
+      all.push(best.p.c);
+    }
   }
 
   // ---- The rest of the shop floors ----

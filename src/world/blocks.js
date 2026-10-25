@@ -33,7 +33,7 @@ import { insetWithSources, selfCrosses as selfCrossing } from '../util/offset.js
 import { plotsOfBlock, rectness, TERRACE_RECT } from './plots.js';
 import { assignProgramme } from './programme.js';
 import { assignBuildings } from './buildings.js';
-import { planJunctions, isTramStreet } from './junctions.js';
+import { planJunctions, isTramStreet, plantedOf } from './junctions.js';
 import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
 import { createNames } from './names.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample, splitByPolygon } from '../util/geom.js';
@@ -55,7 +55,7 @@ const RAIL_CORRIDOR = 21; // metres between building lines either side of a rail
 // never split into a piece narrower than `min` (or shorter than `minLong`).
 export const BLOCK_SIZES = {
   perimeter: { long: 175, short: 140, min: 80 },
-  rowhouse: { long: 175, short: 86, min: 60, minLong: 95 },
+  rowhouse: { long: 240, short: 86, min: 60, minLong: 95 },
   podium: { long: 165, short: 135, min: 80 },
   campus: { long: 270, short: 220, min: 110 },
 };
@@ -92,7 +92,8 @@ const SCHOOL_AREA = 0.9e4; // m², centreline: smallest block a secondary school
 const SCHOOL_LONGEST = 220; // metres, centreline: a school's grounds longer than this are cut down...
 const SCHOOL_LENGTH = 185; // ...to about this (a track and field and the building beside it)
 const SCHOOL_WIDE = 70; // metres, centreline: narrowest a school's grounds should be (for its field)
-const PEDESTRIAN_ZONE = 300; // metres from the district's square: its pedestrian zone
+const OLD_TOWN = 190; // metres from the core neighbourhood's centre: its old town, a pedestrian zone
+const PEDESTRIAN_ZONE = 120; // metres from the district's square its pedestrian streets reach, at least
 const PEDESTRIAN_REACH = 220; // metres from its square a pedestrian street runs
 const FALLBACK_REACH = 250; // metres from a centre a square may stand if none was found by it
 const EDGE_CELL = 4; // metres: the raster the greenway-side streets are found on
@@ -318,7 +319,29 @@ export function hallOf(st) {
   const at = (a, b) => [st.p[0] + t[0] * a + n[0] * b, st.p[1] + t[1] * a + n[1] * b];
   return { pts: [at(-L / 2, -W / 2), at(L / 2, -W / 2), at(L / 2, W / 2), at(-L / 2, W / 2)], t, n, L, W, at };
 }
-export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [] }) {
+// The central station, though underground, has a building of its own over
+// its platforms: its hall, placed (before the rail was laid beneath it) on a
+// boulevard behind a large plaza, its long side to the plaza. The hall is
+// ringed by a pedestrian street, and the plaza's two ends run from the
+// boulevard to the hall.
+function centralSite(st) {
+  const s = st && st.site;
+  if (!s) return null;
+  const at = (u, v) => [s.front[0] + s.dir[0] * u + s.side[0] * v, s.front[1] + s.dir[1] * u + s.side[1] * v];
+  const H = s.length / 2;
+  const END_IN = 6;
+  return {
+    p: s.p,
+    hall: s.hall,
+    t: s.dir,
+    plaza: [at(-H + END_IN, 0), at(H - END_IN, 0), at(H - END_IN, s.back), at(-H + END_IN, s.back)],
+    // (From across the boulevard's centreline, which may stray a little,
+    // into the hall's front a little in from its corners.)
+    ends: [[at(-H + END_IN, -10), at(-H + END_IN, s.back + 2)], [at(H - END_IN, -10), at(H - END_IN, s.back + 2)]],
+  };
+}
+
+export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [], tramsIn = () => null }) {
   // A path that would run through water is left out.
   const dryPath = (pts) => pts && !pts.some((q) => isWater(q[0], q[1]));
   const names = createNames(seed);
@@ -868,6 +891,13 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       }
     }
     for (const L of railLines) lines.push({ pts: L.pts, tag: street('rail', RAIL_CORRIDOR) });
+    // The central station's hall, ringed by a pedestrian street, and its plaza.
+    const site = centralSite(stationsIn(d).find((st) => st.central));
+    if (site) {
+      const tag = () => street('pedestrian', PEDESTRIAN, { square: site.p, reach: Infinity });
+      lines.push({ pts: site.hall, closed: true, tag: tag() });
+      for (const e of site.ends) lines.push({ pts: e, tag: tag() });
+    }
     for (const pk of d.parks) lines.push({ pts: pk.shape, closed: true, tag: street('park', PARKSIDE * 2, { park: pk.key }) });
     // Secondary greenways: linear parks along some stretches of the
     // boundaries between neighbourhoods, each from one main street to the
@@ -929,10 +959,17 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     };
     // Rowhouse neighbourhoods are the less dense ones.
     const formOf = (h) => (h.character === 'rowhouses' ? 'rowhouse' : 'perimeter');
+    // The old town: the district's square in the middle of the core, and
+    // round it the old buildings (its places of worship, museum, library,
+    // courthouse...), traditional perimeter blocks with pedestrian streets
+    // between them; the podiums and towers stand round it.
+    const oldCentre = hoods[0] && hoods[0].core ? hoods[0].centre : d.station;
+    const inOldTown = (q) => !!(hoods[0] && hoods[0].core) && len(sub(q, oldCentre)) < OLD_TOWN;
     const zoneOf = (node, ax) => {
       const h = hoodAt(ax.c);
       // A campus takes the middle of its neighbourhood; homes round it.
       if (h && h.campus && len(sub(ax.c, h.centre)) < Math.sqrt((CAMPUS_SHARE * h.area) / Math.PI)) return 'campus';
+      if (h && h.core && inOldTown(ax.c)) return 'perimeter';
       if (h && h.core && len(sub(ax.c, d.station)) < d.coreReach * 1.25) return 'podium';
       // A neighbourhood is built in one form throughout: rowhouses or
       // perimeter blocks (its main streets mixed use either way).
@@ -1250,7 +1287,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // their gardens. Too wide a piece is cut into strips that wide first,
     // by streets along its length (as many as fit, not halved and halved
     // again); then each strip is cut across where it is too long, so cross
-    // streets come every 100 to 175 m.
+    // streets come every 120 to 240 m: long, narrow blocks.
     function splitRows(node, ax) {
       const size = BLOCK_SIZES.rowhouse;
       if (ax.W > size.short) {
@@ -1275,7 +1312,15 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
           if (kids && kids.every((q) => axes(q.pts).W >= size.min - 4)) return kids;
         }
       }
+      // Too long: cut across into equal lengths, long ones (their terraces
+      // broken by parkettes through to the lane), the first cut a length
+      // in from one end.
       if (ax.L > size.long) {
+        const k = Math.ceil(ax.L / size.long);
+        for (const t of [1 / k, 1 - 1 / k, 0.5]) {
+          const kids = split(node, ax, 'rowhouse', { at: t, along: false });
+          if (kids) return kids;
+        }
         const kids = split(node, ax, 'rowhouse', { along: false });
         if (kids) return kids;
       }
@@ -1410,6 +1455,13 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       const next = [];
       for (const node of queue) {
         const ax = axes(node.pts);
+        // Under the central station's hall, or its plaza.
+        const ip = interiorPoint(node.pts);
+        if (site && (pointInPolygon(ip[0], ip[1], site.hall) || pointInPolygon(ip[0], ip[1], site.plaza))) {
+          const hall = pointInPolygon(ip[0], ip[1], site.hall);
+          leaves.push({ ...node, ax, use: hall ? 'station' : 'square', stationPlaza: !hall, hood: (hoodAt(ax.c) || {}).id ?? 0 });
+          continue;
+        }
         const zone = zoneOf(node, ax);
         const sq = squareFor(node, ax.area, ax.W);
         if (sq) {
@@ -1470,6 +1522,10 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
         if (!kids && ax.area > size.long * size.short * OVERSIZE) {
           for (const along of [false, true]) if (!kids) kids = split(node, ax, sizeZone, { force: true, along });
         }
+        // (Nor a rowhouse block wider than two houses and their gardens.)
+        if (!kids && zone === 'rowhouse' && ax.W > size.short * 1.05) {
+          for (const at of [0.5, 0.42, 0.58, undefined]) if (!kids) kids = split(node, ax, 'rowhouse', { force: true, along: true, at });
+        }
         if (kids) next.push(...kids);
         else leaves.push({ ...node, ax, zone, stuck: true });
       }
@@ -1485,20 +1541,20 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       if (squareOf.has(h.id)) continue;
       let best = null;
       // (Failing one of about the right size, a larger block will do.)
-      for (const most of [1.3, 1.8]) {
+      for (const [most, far] of [[1.3, 1], [1.8, 1], [2.6, 1.6]]) {
         if (best) break;
         for (const lf of leaves) {
           // (On a campus, its own square.)
           // (It needs a local street to turn into its pedestrian street.)
           if (!lf.tags.some((t) => t.kind === 'local')) continue;
           if (!(plain(lf) || (!lf.use && lf.zone === 'campus')) || lf.ax.area < SQUARE_AREA[0] * 0.7 || lf.ax.area > SQUARE_AREA[1] * most || lf.ax.W < SQUARE_MIN * 0.9) continue;
-          if (len(sub(lf.ax.c, h.centre)) > FALLBACK_REACH + 150) continue;
+          if (len(sub(lf.ax.c, h.centre)) > FALLBACK_REACH * far + 150) continue;
           let r = Infinity;
           lf.tags.forEach((t, i) => {
             if (t.kind !== 'main' && t.kind !== 'boulevard') return;
             r = Math.min(r, distToLine(h.centre[0], h.centre[1], [lf.pts[i], lf.pts[(i + 1) % lf.pts.length]]));
           });
-          if (r > FALLBACK_REACH) continue;
+          if (r > FALLBACK_REACH * far) continue;
           if (!best || r < best.r) best = { r, lf };
         }
       }
@@ -1578,7 +1634,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // such streets, against blocks on two adjacent sides. A street a square
     // takes in goes on beyond it as a pedestrian street; a square on its own
     // gets one too, off its longest local side.
-    const pedestrianise = (t, c) => {
+    const pedestrianiseStreet = (t, c) => {
       t.kind = 'pedestrian';
       t.w = PEDESTRIAN;
       t.square = c;
@@ -1587,6 +1643,12 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       const P = sqNode.pts;
       const n = P.length;
       const c = axes(P).c;
+      // (A pedestrian street runs at least the length of its square.)
+      const span = Math.max(...P.map((q) => len(sub(q, c)))) + 30;
+      const pedestrianise = (t, at) => {
+        pedestrianiseStreet(t, at);
+        if (t.reach !== Infinity) t.reach = Math.max(t.reach ?? PEDESTRIAN_REACH, span);
+      };
       // Local sides, by street, with their length and edges.
       const sides = new Map();
       sqNode.tags.forEach((t, i) => {
@@ -1620,10 +1682,9 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       }
     }
 
-    // The district centre is a pedestrian zone: every local street within
-    // a few hundred metres of its square is given over to people on foot
-    // (and bikes), as in the old centre of a European city; main streets
-    // and boulevards still cross it.
+    // The old town is a pedestrian zone: its local streets are given over
+    // to people on foot (and bikes), as in the old centre of a European
+    // city; main streets and boulevards still cross it.
     const coreSquare = squareOf.get(0);
     if (coreSquare) {
       const c = axes(coreSquare.pts).c;
@@ -1632,8 +1693,9 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
           if (t.kind !== 'local') return;
           const a = lf.pts[i];
           const b = lf.pts[(i + 1) % lf.pts.length];
-          if (len(sub([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2], c)) < PEDESTRIAN_ZONE) {
-            pedestrianise(t, c);
+          const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          if (inOldTown(m) || len(sub(m, c)) < PEDESTRIAN_ZONE) {
+            pedestrianiseStreet(t, c);
             t.reach = Infinity; // (the whole street, not cut short partway)
           }
         });
@@ -1701,10 +1763,12 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       const awkward = net && ((area < AWKWARD_AREA && rectness(net) < AWKWARD_RECT) || (lf.zone === 'rowhouse' && !lf.use && area < ROW_AWKWARD_AREA && rectness(net) < TERRACE_RECT_GOOD - 0.1));
       const use = lf.use ?? (area < REMNANT || awkward ? 'green' : lf.zone === 'rowhouse' && front ? 'perimeter' : lf.zone);
       const b = { pts: net, centreline: P, dist, use, area, stuck: !!lf.stuck, raw: polygonArea(P), hood: lf.hood ?? (hoodAt(lf.ax.c) || {}).id, front: lf.tags.some((t) => t.kind === 'main' || t.kind === 'boulevard') };
+      if (lf.zone === 'perimeter' && inOldTown(lf.ax.c)) b.oldTown = true;
       if (lf.form) b.form = lf.form;
-      if (!net) b.use = 'green';
+      if (lf.stationPlaza) b.stationPlaza = true;
+      if (!net) b.use = lf.use === 'station' ? 'station' : 'green';
       else {
-        let pl = plotsOfBlock(net, fronts, b.use, axes(net).W, rng);
+        let pl = plotsOfBlock(net, fronts, b.use === 'station' ? 'square' : b.use, axes(net).W, rng);
         // A rowhouse block that would take neither terraces nor a ring of
         // houses (cut into long strips instead) is left as a green.
         if (b.use === 'rowhouse' && !pl.alley && !pl.inner) {
@@ -1822,6 +1886,8 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // along the platforms and on both sides, more for the central station.
     const entrances = [];
     stationsIn(d).forEach((st, si) => {
+      // (The central station has its hall.)
+      if (st.central && site) return;
       const box = hallOf(st);
       const reach = box.L / 2 + ENTRANCE_REACH;
       // Spots along the frontages of buildings that may take one, every
@@ -1925,9 +1991,33 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // How each junction is laid out, by the streets that meet there, and
     // where the tram stops are (on the far sides of signalised junctions).
     const places = [d.station];
-    for (const b of blocks) if (['square', 'cathedral', 'hospital', 'school', 'elementarySchool', 'recCentre', 'campus'].includes(b.use) && b.pts) places.push(axes(b.pts).c);
+    for (const b of blocks) if (['square', 'cathedral', 'hospital', 'school', 'elementarySchool', 'recCentre', 'campus', 'station'].includes(b.use) && b.pts) places.push(axes(b.pts).c);
+    // A tram street, with the stretches of it tram routes run along (the
+    // rest a planted median) and the stops planned on it.
+    const tram = tramsIn(d);
+    const tramStreet = (l, type, base) => {
+      const R = tram ? tram.ranges.get(l.key) || [] : null;
+      const cum = [0];
+      for (let i = 1; i < l.points.length; i++) cum.push(cum[i - 1] + len(sub(l.points[i], l.points[i - 1])));
+      const routed = (q) => {
+        if (!R) return true;
+        let best = { s: 0, r: Infinity };
+        for (let i = 1; i < l.points.length; i++) {
+          const a = l.points[i - 1];
+          const ab = sub(l.points[i], a);
+          const t = Math.max(0, Math.min(1, dot(sub(q, a), ab) / (dot(ab, ab) || 1)));
+          const r = len([a[0] + ab[0] * t - q[0], a[1] + ab[1] * t - q[1]]);
+          if (r < best.r) best = { s: cum[i - 1] + t * (cum[i] - cum[i - 1]), r };
+        }
+        return R.some(([a, b]) => best.s >= a - 1 && best.s <= b + 1);
+      };
+      return { pts: l.points, type, typeAt: (q) => (routed(q) ? base(q) : plantedOf(base(q))), targets: tram ? tram.stops.filter((x) => x.line === l.key).map((x) => x.s) : undefined };
+    };
     const { junctions: laidOut, stops: tramStopList } = planJunctions(hashString(d.key), {
-      majors: [...st.lines.map((l) => ({ pts: l.points, type: 'mainStreet', typeAt: (q) => (corePoly && pointInPolygon(q[0], q[1], corePoly) ? 'coreMainStreet' : 'mainStreet') })), ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => ({ pts: l.points, type: 'boulevard' }))],
+      majors: [
+        ...st.lines.map((l) => tramStreet(l, 'mainStreet', (q) => (corePoly && pointInPolygon(q[0], q[1], corePoly) ? 'coreMainStreet' : 'mainStreet'))),
+        ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => tramStreet(l, 'boulevard', () => 'boulevard')),
+      ],
       // (A podium core's streets are core residential streets.)
       local: local.map((x) => ({ ...x, kind: x.kind === 'local' && x.width >= CORE_CROSS - 0.1 ? 'core' : x.kind })),
       alleys: blocks.map((b) => b.alley).filter(Boolean),
@@ -1941,7 +2031,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     const paved = [...squareOf.values()].filter((sq) => sq.infill && sq.infill.size).map((sq) => sq.pts);
     const onSquare = (q) => paved.some((P) => pointInPolygon(q[0], q[1], P) || distToLine(q[0], q[1], P.concat([P[0]])) < PEDESTRIAN / 2 + 2);
     const intersections = laidOut.filter((j) => j.arms.some((a) => isTramStreet(a.type)) || !onSquare(j.p));
-    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tramStopList, greenLinks, districtParks, linearParks, arcades, entrances };
+    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tramStopList, greenLinks, districtParks, linearParks, arcades, entrances, halls: site ? [{ pts: site.hall, central: true, t: site.t }] : [] };
   }
 
   // Forget a district's blocks (a worker that has handed them on keeps none).

@@ -19,6 +19,23 @@ export const STREET_TYPES = {
     side: [['frontage', 2.5], ['clearway', 3.5], ['furnishing', 1.8], ['cycle', 2.1], ['buffer', 0.5], ['drive', 3.0]],
     centre: [['tram', 3.5], ['median', 3.2], ['tram', 3.5]],
   },
+  // The same three where no tram route runs: the tram lanes (and the
+  // median between them) a planted median of the same width.
+  mainStreetPlanted: {
+    width: 31.0, speed: 30,
+    side: [['clearway', 3.0], ['furnishing', 1.8], ['cycle', 2.1], ['buffer', 0.5], ['drive', 3.0]],
+    centre: [['median', 10.2]],
+  },
+  boulevardPlanted: {
+    width: 35.2, speed: 30,
+    side: [['clearway', 3.0], ['furnishing', 1.2], ['cycle', 2.1], ['furnishing', 1.8], ['drive', 3.0], ['buffer', 3.0]],
+    centre: [['median', 7.0]],
+  },
+  coreMainStreetPlanted: {
+    width: 37.0, speed: 30,
+    side: [['frontage', 2.5], ['clearway', 3.5], ['furnishing', 1.8], ['cycle', 2.1], ['buffer', 0.5], ['drive', 3.0]],
+    centre: [['median', 10.2]],
+  },
   coreCrossStreet: {
     width: 26.8, speed: 20,
     side: [['frontage', 2.5], ['clearway', 3.5], ['furnishing', 1.8], ['cycle', 2.1], ['buffer', 0.5]],

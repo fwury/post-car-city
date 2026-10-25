@@ -311,3 +311,15 @@ test('a building is one height', () => {
     assert.equal(mixed, 0, `${d.key}: ${mixed} buildings with more than one height`);
   }
 });
+
+test('every rowhouse has three parkettes or more within a five-minute walk', () => {
+  for (const d of districts) {
+    const plots = blocksOf(d).blocks.flatMap((b) => b.plots || []);
+    const parkettes = plots.filter((p) => p.dedicated === 'parkette').map((p) => p.c);
+    const houses = plots.filter((p) => p.kind === 'rowhouse');
+    for (const h of houses) {
+      const n = parkettes.filter((q) => Math.hypot(q[0] - h.c[0], q[1] - h.c[1]) <= 400).length;
+      assert.ok(n >= 3, `${d.key}: a rowhouse at ${h.c.map(Math.round)} has ${n} parkettes within 400 m`);
+    }
+  }
+});

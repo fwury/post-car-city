@@ -66,6 +66,7 @@ const FILTER_SHARE = 0.18; // local junctions with a bollard filter
 const MAJOR_REACH = 28; // metres out a tram-street junction's crossings reach, about
 const MINOR_REACH = 14; // and a side street's (or a crossing's)
 const MAX_STOP_GAP = 480;
+const STOP_SNAP = 70; // metres from where a route's stop is planned to the junction it is put at, at most
 const CROSSING_EVERY = 110; // metres: a zebra across a tram street at least this often (115 at most) // metres: no longer between stops, a side street junction signalised if need be
 
 // ---- Sections ----
@@ -114,8 +115,11 @@ export function profile(type) {
 }
 
 // Street types by rank (lower is higher).
-const RANK = { boulevard: 1, mainStreet: 2, coreMainStreet: 2, coreCrossStreet: 3, coreCrossStreetNarrow: 3, localStreet: 4, laneway: 5 };
-export const isTramStreet = (type) => type === 'boulevard' || type === 'mainStreet' || type === 'coreMainStreet';
+const RANK = { boulevard: 1, boulevardPlanted: 1, mainStreet: 2, coreMainStreet: 2, mainStreetPlanted: 2, coreMainStreetPlanted: 2, coreCrossStreet: 3, coreCrossStreetNarrow: 3, localStreet: 4, laneway: 5 };
+// (Tram streets by their class: those with no route have a planted median
+// for tracks.)
+export const isTramStreet = (type) => ['boulevard', 'mainStreet', 'coreMainStreet', 'boulevardPlanted', 'mainStreetPlanted', 'coreMainStreetPlanted'].includes(type);
+export const plantedOf = (type) => (['boulevard', 'mainStreet', 'coreMainStreet'].includes(type) ? `${type}Planted` : type);
 
 // ---- Geometry ----
 function params(P) {
@@ -475,6 +479,43 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     // Which side(s) of a junction its platforms go: a boulevard's on both,
     // a main street's island on one (either), or none if there is no room.
     const sidesFor = (s0) => (M.type === 'boulevard' ? (room(s0, 1) && room(s0, -1) ? [1, -1] : null) : room(s0, 1) ? [1] : room(s0, -1) ? [-1] : null);
+    const stopAt = (j, s0) => {
+      if (j.kind === 'CONT') j.kind = 'D';
+      (j.stops ||= []).push({ line: M, s: s0, ways: sidesFor(s0) });
+    };
+    // Where the routes' stops are planned along it: at the best junction
+    // near each, else a signalised crossing of its own.
+    if (M.targets) {
+      // (Never nearer the last than the least spacing allows.)
+      let prev = -Infinity;
+      const apart = (x) => x - prev >= STOP_SPACING[0] - 10;
+      for (const t of M.targets.slice().sort((a, b) => a - b)) {
+        const pick = here.filter((h) => Math.abs(h.s - t) <= STOP_SNAP && h.s > 20 && h.s < L - 20 && apart(h.s) && sidesFor(h.s)).sort((a, b) => b.score - Math.abs(b.s - t) / 12 - (a.score - Math.abs(a.s - t) / 12))[0];
+        if (pick) {
+          stopAt(pick.j, pick.s);
+          prev = pick.s;
+          continue;
+        }
+        let s0 = null;
+        for (let k = 0; k <= STOP_SNAP / 10 && s0 === null; k++) {
+          for (const x of k ? [t + k * 10, t - k * 10] : [t]) {
+            if (x < 30 || x > L - 30 || !apart(x)) continue;
+            if (!near(pointAt(M.pts, M.cum, x), 40).length && sidesFor(x)) {
+              s0 = x;
+              break;
+            }
+          }
+        }
+        if (s0 === null) continue;
+        const j = keep({ p: pointAt(M.pts, M.cum, s0), arms: armsAlong(M, s0, M.type), kinds: new Set(['crossing']), kind: 'XING' });
+        onLine.push({ s: s0, r: MINOR_REACH, side: false, opens: new Set() });
+        here.push({ j, s: s0, score: 0 });
+        here.sort((a, b) => a.s - b.s);
+        stopAt(j, s0);
+        prev = s0;
+      }
+      continue;
+    }
     let last = -Infinity;
     for (let guard = 0; guard < 200; guard++) {
       const lo = last === -Infinity ? 60 : last + STOP_SPACING[0];

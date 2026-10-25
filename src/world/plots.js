@@ -20,6 +20,7 @@
 
 import { insetUniform, selfCrosses } from '../util/offset.js';
 import { polygonArea } from '../util/geom.js';
+import { hash, toUnit } from '../core/hash.js';
 
 export const PLOT_TYPES = {
   // depth: metres of building from the street; width: plot frontage range.
@@ -38,6 +39,10 @@ export const TERRACE_RECT = 0.55; // how nearly rectangular a block must be for 
 const MAX_HOUSE = 1400; // m²: the largest plot a house (end of terrace included) may take
 const COURT_RING = 3.5; // metres: the path round a courtyard, along the backs of the buildings
 const BACK_STRIP = 2; // metres either side of the middle of a rowhouse block left as a shared strip
+const LANE_SHIFT = 7; // metres the lane behind a rowhouse block's gardens may run off its middle
+const PARKETTE_EVERY = 90; // metres of a rowhouse block's length to each parkette through its terraces
+const PARKETTE_WIDTH = 8; // metres: such a parkette's frontage
+const PARKETTE_END = 40; // metres of a block's length taken by its end houses, before any parkette
 const ROW_DEPTH = [16, 34]; // metres: a rowhouse plot's depth, from the street to the back strip
 const MIN_COURT = 0.12; // a courtyard smaller than this share of its block is not left open
 const CORNER_EXTRA = 1; // metres a corner plot reaches past its corner's zone, each way
@@ -613,11 +618,17 @@ function terraces(N, fronts, widthOf) {
   const fail = () => null;
   const M = spine(N);
   if (!M) return fail('spine');
+  // The lane need not run down the very middle: off to one side, one row's
+  // gardens are the deeper (by the block, the same each time it is built).
+  const c = N.reduce((m, q) => [m[0] + q[0] / N.length, m[1] + q[1] / N.length], [0, 0]);
+  const shift = (toUnit(hash(Math.round(c[0]), 'lane', Math.round(c[1]))) - 0.5) * 2 * LANE_SHIFT;
   const hs = onRing(N, M[0]);
   const he = onRing(N, M[M.length - 1]);
   if (!hs || !he || hs.i === he.i) return fail('ends');
   const n = N.length;
   const plots = [];
+  const spineCum = lineParams(M);
+  const spineLen = spineCum[spineCum.length - 1];
   // Half one runs round from the spine's end to its start; half two from
   // its start to its end. Each frontage, with the spine as its back.
   for (const [row, [from, to, spineHalf]] of [[he, hs, M.slice().reverse()], [hs, he, M]].entries()) {
@@ -630,7 +641,8 @@ function terraces(N, fronts, widthOf) {
     }
     const sd = sub(spineHalf[spineHalf.length - 1], spineHalf[0]);
     const side = Math.sign(cross(sd, sub(probe, spineHalf[0]))) || 1;
-    const back = shiftLine(spineHalf, (side * ALLEY) / 2);
+    // (Half one runs the spine backwards, so its sideways is the other way.)
+    const back = shiftLine(spineHalf, (side * ALLEY) / 2 + (row === 0 ? -shift : shift));
     // Its ends run on (or are cut back) to meet the block's edge exactly.
     const cumN = ringParams(N);
     for (const [e, f] of [[0, 1], [back.length - 1, back.length - 2]]) {
@@ -680,23 +692,54 @@ function terraces(N, fronts, widthOf) {
     const endW = widthOf(front, 0) * 1.25;
     const s0 = cumF[run.a] + (run.a === 0 ? 0 : endW);
     const s1 = cumF[run.b] - (run.b === F.length - 1 ? 0 : endW);
-    const ws = [];
-    let filled = 0;
-    let guard = 0;
-    while (guard++ < 300) {
-      const w = widthOf(front, ws.length + 1);
-      if (filled + w > s1 - s0 + w * 0.35) break;
-      ws.push(w);
-      filled += w;
+    // A long terrace is broken by parkettes, from the pavement through to
+    // the lane behind, in the same places on both sides of the lane so a
+    // path runs from street to street: one about every PARKETTE_EVERY
+    // metres of the block's length.
+    const k = Math.max(0, Math.floor((spineLen - PARKETTE_END) / PARKETTE_EVERY));
+    const breaks = [];
+    for (let q = 1; q <= k; q++) {
+      const c = s0 + ((s1 - s0) * q) / (k + 1);
+      breaks.push([c - PARKETTE_WIDTH / 2, c + PARKETTE_WIDTH / 2]);
     }
-    const stretch = ws.length ? (s1 - s0) / filled : 1;
+    // Houses between the breaks, each stretch filled evenly.
     const cuts = [];
-    let s = s0;
-    cuts.push(s);
-    for (let k = 0; k < ws.length - 1; k++) {
-      s += ws[k] * stretch;
-      cuts.push(s);
+    const parkAt = new Set();
+    let n0 = 0;
+    const stretches = [];
+    {
+      let a = s0;
+      for (const [b0, b1] of breaks) {
+        stretches.push([a, b0]);
+        a = b1;
+      }
+      stretches.push([a, s1]);
     }
+    stretches.forEach(([a, b], j) => {
+      const ws = [];
+      let filled = 0;
+      let guard = 0;
+      while (guard++ < 300) {
+        const w = widthOf(front, n0 + ws.length + 1);
+        if (filled + w > b - a + w * 0.35) break;
+        ws.push(w);
+        filled += w;
+      }
+      n0 += ws.length;
+      const stretch = ws.length ? (b - a) / filled : 1;
+      let x = a;
+      cuts.push(x);
+      for (let q = 0; q < ws.length - 1; q++) {
+        x += ws[q] * stretch;
+        cuts.push(x);
+      }
+      // (The slot after the stretch's last cut, to the next stretch, is a
+      // parkette.)
+      if (j < stretches.length - 1) {
+        cuts.push(b);
+        parkAt.add(b);
+      }
+    });
     cuts.push(s1);
     // Each cut square to the frontage, back to the spine.
     const placed = [{ s: 0, p: F[0], q: B[B.length - 1], qs: cumB[B.length - 1] }];
@@ -730,7 +773,7 @@ function terraces(N, fronts, widthOf) {
         const u = (qs - cumB[k]) / (cumB[k + 1] - cumB[k] || 1);
         hit = { q: [B[k][0] + (B[k + 1][0] - B[k][0]) * u, B[k][1] + (B[k + 1][1] - B[k][1]) * u], s: qs };
       }
-      placed.push({ s: c, p, q: hit.q, qs: hit.s });
+      placed.push({ s: c, p, q: hit.q, qs: hit.s, park: parkAt.has(c) });
     }
     placed.push({ s: cumF[F.length - 1], p: F[F.length - 1], q: B[0], qs: 0 });
     // The long frontage's ends: a corner house faces the long street, its
@@ -752,7 +795,7 @@ function terraces(N, fronts, widthOf) {
         const first = k === 0;
         const last = k + 1 === list.length - 1;
         out.push({
-          pts: tidy, area: polygonArea(tidy), front: b.s - a.s, corner: first || last, faces: front, row,
+          pts: tidy, area: polygonArea(tidy), front: b.s - a.s, corner: first || last, faces: front, row, park: !!a.park,
           frontA: first ? cornerA : a.p, frontB: last ? cornerB : b.p,
           bad: tidy.length < 3 || selfCrosses(tidy) || (polygonArea(tidy) > MAX_HOUSE && list.length > 3),
         });
@@ -766,14 +809,14 @@ function terraces(N, fronts, widthOf) {
     for (let round = 0; round < 6 && built.some((p) => p.bad) && list.length > 3; round++) {
       const k = built.findIndex((p) => p.bad);
       const drop = k === built.length - 1 ? k : k + 1;
-      if (drop <= 0 || drop >= list.length - 1) break;
+      if (drop <= 0 || drop >= list.length - 1 || list[drop].park || list[drop - 1].park) break;
       list = list.filter((_, i) => i !== drop);
       built = build(list);
     }
     for (const p of built) if (p.area >= 20) plots.push(p);
   }
   if (!plots.length) return fail('none');
-  plots.alley = M;
+  plots.alley = shiftLine(M, shift);
   return plots;
 }
 
@@ -850,7 +893,7 @@ function plotsOf(N, fronts, use, W, rng) {
     if (use === 'rowhouse' && rectness(N) >= TERRACE_RECT) {
       const t = terraces(N, fronts, widthOf);
       const ok = t && t.every((p) => !p.bad);
-      if (ok) return { plots: t.map(({ bad, ...p }) => ({ ...p, kind: 'rowhouse' })), inner: null, depth: null, alley: t.alley };
+      if (ok) return { plots: t.map(({ bad, park, ...p }) => ({ ...p, kind: park ? 'parkette' : 'rowhouse' })), inner: null, depth: null, alley: t.alley };
     }
     let depth;
     let I = null;

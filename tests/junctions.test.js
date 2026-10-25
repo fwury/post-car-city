@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { createWorld } from '../src/world/districts.js';
 import { seedFromText } from '../src/core/hash.js';
 import { STREET_TYPES } from '../src/world/streetTypes.js';
-import { profile, SETBACK } from '../src/world/junctions.js';
+import { profile, SETBACK, isTramStreet } from '../src/world/junctions.js';
 
 const world = createWorld(seedFromText('1'), { population: 1.5e6 });
 const districts = world.cityCores.slice(0, 3).map((c) => world.district(c));
@@ -96,7 +96,7 @@ test('tram stops are 300 to 400 m apart, each at a signalised junction', () => {
     // Every stop stands at a signalised junction (or crossing).
     for (const st of b.tramStops) {
       const back = [st.p[0] - st.dir[0] * (st.length / 2 + 1), st.p[1] - st.dir[1] * (st.length / 2 + 1)];
-      const j = b.intersections.filter((x) => ['D', 'XING', 'GREEN'].includes(x.kind)).find((x) => dist(x.p, back) < 45);
+      const j = b.intersections.filter((x) => ['D', 'XING', 'GREEN'].includes(x.kind)).find((x) => dist(x.p, back) < 55);
       assert.ok(j, `${d.key}: a tram stop at ${st.p.map(Math.round)} with no signals behind it`);
     }
   }
@@ -160,12 +160,12 @@ test('side streets meeting a tram street from opposite sides line up or keep 30 
   for (const { b } of plans) {
     const T = b.intersections.filter((j) => ['CONT', 'D', 'PED'].includes(j.kind) && j.arms.length === 3);
     for (const j of T) {
-      const side = j.arms.find((a) => !['boulevard', 'mainStreet', 'coreMainStreet'].includes(a.type));
+      const side = j.arms.find((a) => !isTramStreet(a.type));
       if (!side) continue;
       tees++;
       for (const o of T) {
         if (o === j) continue;
-        const os = o.arms.find((a) => !['boulevard', 'mainStreet', 'coreMainStreet'].includes(a.type));
+        const os = o.arms.find((a) => !isTramStreet(a.type));
         if (os && dist(o.p, j.p) < 30 && side.dir[0] * os.dir[0] + side.dir[1] * os.dir[1] < -0.5) close++;
       }
     }

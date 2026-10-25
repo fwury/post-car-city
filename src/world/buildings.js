@@ -165,6 +165,7 @@ function ridgeOf(P, roof) {
   return [[ax.c[0] - ax.u[0] * half, ax.c[1] - ax.u[1] * half], [ax.c[0] + ax.u[0] * half, ax.c[1] + ax.u[1] * half]];
 }
 
+const OLD_STYLES = ['georgian', 'neoclassical', 'renaissance', 'baroque', 'gothic', 'victorian']; // the old town's
 const HOOD_LEAD = 0.8; // share of a neighbourhood's blocks built in its own style
 const HOOD_MODERN = 0.05; // and modern infill
 
@@ -248,7 +249,8 @@ export function assignBuildings(seed, d, blocks) {
     bi++;
     if (!b.plots) continue;
     const hs = hoodStyles.get(b.hood) || [['modern', 1]];
-    const blockStyle = weighted(hs, u(6, bi));
+    // (The old town's blocks: the district's oldest styles.)
+    const blockStyle = b.oldTown ? pick(OLD_STYLES, 26, bi) : weighted(hs, u(6, bi));
     blockShade = Math.floor(u(25, bi) * 4);
     b.plots.forEach((p, pi) => {
       const k = [bi, pi];
@@ -267,7 +269,7 @@ export function assignBuildings(seed, d, blocks) {
       // A building's plots share its style and colours.
       const gk = p.group ? [hashString(p.group)] : k;
       // (Now and then one building in a block differs from the rest.)
-      let style = u(7, ...gk) < 0.08 ? weighted(hs, u(8, ...gk)) : blockStyle;
+      let style = u(7, ...gk) < 0.08 ? (b.oldTown ? pick(OLD_STYLES, 27, ...gk) : weighted(hs, u(8, ...gk))) : blockStyle;
 
       // ---- Buildings of their own ----
       if (p.cls === 'dedicated' || (own && own.floor === 'dedicated')) {

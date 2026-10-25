@@ -10,6 +10,13 @@ self.onmessage = (e) => {
   const { id, seed, population, tile, layers, res } = e.data;
   try {
     if (!world || world.seed !== seed || world.population !== population) world = createWorld(seed, { population });
+    if (e.data.kind === 'trams') {
+      // One district's share of the city's tram plan.
+      const [x, y] = e.data.at;
+      const d = world.districtsInRect(x - 1, y - 1, x + 1, y + 1).find((q) => q.key === e.data.key);
+      self.postMessage({ id, result: world.trams.in(d) });
+      return;
+    }
     if (e.data.kind === 'blocks') {
       // Stage 4 for one district, found by its station.
       const [x, y] = e.data.at;
@@ -29,6 +36,7 @@ self.onmessage = (e) => {
         linearParks: b.linearParks,
         arcades: b.arcades,
         entrances: b.entrances,
+        halls: b.halls,
         planned: b.planned,
         housed: b.programme.housed,
       };

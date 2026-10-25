@@ -68,6 +68,32 @@ function blocksFor(d) {
   return null;
 }
 
+// Each district's tram routes (its routed streets, stops, turns and
+// loops), from the city's tram plan, worked out in a worker too.
+const tramCache = new Map();
+function tramsFor(d) {
+  const k = d.key;
+  if (tramCache.has(k)) return tramCache.get(k);
+  if (!blockPool || blockPool.broken) {
+    const t = world.trams.in(d);
+    tramCache.set(k, t);
+    return t;
+  }
+  tramCache.set(k, null);
+  const worldAt = world;
+  blockPool.run({ kind: 'trams', seed: state.seed, population: state.population, key: k, at: d.station }).then(
+    (t) => {
+      if (world !== worldAt) return;
+      tramCache.set(k, t);
+      const bb = d.bbox;
+      renderer.invalidate(bb.x0, bb.y0, bb.x1, bb.y1);
+      dirty = true;
+    },
+    () => tramCache.delete(k),
+  );
+  return null;
+}
+
 const camera = new Camera();
 const noiseTiles = new TileManager({ build: createNoiseTileBuilder(() => state.seed) });
 const districtTiles = new TileManager({
@@ -79,6 +105,7 @@ const districtTiles = new TileManager({
 });
 const renderer = new Renderer(canvas, camera, { noiseTiles, districtTiles }, state, getWorld);
 renderer.blocksFor = blocksFor;
+renderer.tramsFor = tramsFor;
 const input = attachInput(canvas, camera);
 const hud = createHud(document.getElementById('hud'));
 
@@ -130,6 +157,7 @@ function rebuild() {
   card.close();
   renderer.selected = null;
   blockCache.clear();
+  tramCache.clear();
   renderer.clearVectorTiles();
   noiseTiles.clear();
   districtTiles.clear();
