@@ -16,7 +16,7 @@ export function createTransit({ rail, metro }) {
     if (t) return t;
     const railStops = rail.stations
       .filter((st) => st.key === d.key || (!st.key && d.rings.some((r) => pointInPolygon(st.p[0], st.p[1], r))))
-      .map((st) => ({ p: st.p, second: !st.key, central: st.central, dir: st.dir, lines: st.lines || [] }));
+      .map((st) => ({ p: st.p, second: !st.key, central: st.central, site: st.site, dir: st.dir, lines: st.lines || [] }));
     const metroStops = metro.stationsIn(d.key).map((st) => ({ p: st.p, core: st.core, lines: st.lines, id: st.id }));
     t = { railStops, metroStops };
     cache.set(d.key, t);

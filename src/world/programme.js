@@ -138,7 +138,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
 
   // ---- Plots, by what they face ----
   const plots = [];
-  const squares = blocks.filter((b) => b.use === 'square');
+  const squares = blocks.filter((b) => b.use === 'square' && !b.stationPlaza);
   const sqCentre = new Map(squares.map((b) => [b.hood, centroid(b.pts)]));
   const sqCentres = [...sqCentre.values()];
   for (const b of blocks) {
@@ -157,7 +157,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
         p.cls = 'open';
         p.dedicated = 'parkette';
       }
-      else if (b.use === 'square') p.cls = 'open';
+      else if (b.use === 'square' || b.use === 'station') p.cls = 'open';
       else if (['park', 'green', 'school', 'campus'].includes(b.use)) p.cls = 'open';
       else if (p.kind === 'podium') p.cls = 'podium';
       // Facing a main street or a square.
@@ -203,7 +203,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   };
   for (const b of blocks) {
     if (!b.plots) continue;
-    if (b.use === 'square') b.plots[0].dedicated = b.hood === 0 ? 'districtPlaza' : 'market';
+    if (b.use === 'square') b.plots[0].dedicated = b.stationPlaza ? 'stationPlaza' : b.hood === 0 ? 'districtPlaza' : 'market';
+    if (b.use === 'station') b.plots[0].dedicated = 'railStation';
     if (b.use === 'park') b.plots[0].dedicated = 'neighbourhoodPark';
     if (b.use === 'school') b.plots[0].dedicated = 'secondarySchool';
     if (b.use === 'campus') b.plots[0].dedicated = 'college';

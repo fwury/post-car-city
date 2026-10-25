@@ -22,6 +22,7 @@ import { createParks } from './parks.js';
 import { createGreenways } from './greenway.js';
 import { createTransit } from './transit.js';
 import { createRail } from './rail.js';
+import { centralStationSites } from './centralStation.js';
 import { createMetro } from './metro.js';
 import { createNames } from './names.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
@@ -182,7 +183,22 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   // Regional rail, for the whole city: it comes before the neighbourhoods,
   // whose boundaries follow it.
   // (Its track goes underground where it would run alongside a boulevard.)
-  const rail = createRail(seed, { cores: cityCores, terrain, streetsNear: (x0, y0, x1, y1) => boulevardLinesNear(x0, y0, x1, y1) });
+  // The central station's hall and plaza are placed first, on a boulevard
+  // of the central district, and the line is laid straight beneath the
+  // hall; so the rail is laid when first asked for, once the districts'
+  // boulevards can be.
+  let railLaid = null;
+  const layRail = () => {
+    const c0 = cityCores[0];
+    let sites = [];
+    if (c0) {
+      const b = base(c0);
+      const inside = (q) => pointInPolygon(q[0], q[1], b.ring);
+      sites = centralStationSites(b, boulevards.network(b).lines.map((l) => l.points), (q) => !terrain.isWater(q[0], q[1]) && inside(q));
+    }
+    return createRail(seed, { cores: cityCores, terrain, sites, streetsNear: (x0, y0, x1, y1) => boulevardLinesNear(x0, y0, x1, y1) });
+  };
+  const rail = new Proxy({}, { get: (_, k) => (railLaid ||= layRail())[k] });
   const boulevards = createBoulevards(seed);
   // The metro, for the whole city: from the districts' boulevards, before
   // the neighbourhoods, whose centres its stations are.

@@ -20,7 +20,7 @@ const GREENWAY_DETAIL_ZOOM = 0.15; // streams from here; trails and paths closer
 const STOP_MIN_ZOOM = 0.25;
 const TRANSIT_MIN_ZOOM = 0.008;
 const VIADUCT = 11; // metres: a two-track viaduct's width
-const RAIL_BUILDING_ZOOM = 0.5; // stalls under the viaducts from here
+const RAIL_BUILDING_ZOOM = 0.5; // the central station's hall and stalls under the viaducts from here
 const CENTRAL_TRACKS = [4, 12]; // platform tracks at the central station, fewest and most
 const TRACK_GAP = 4.6; // metres between neighbouring tracks with no platform between
 const ISLAND = 9; // metres: an island platform's width
@@ -409,8 +409,9 @@ export function drawDistricts(ctx, view, world, layers) {
   // rail runs on viaducts above everything.
   if (layers.transit && zoom >= TRANSIT_MIN_ZOOM) drawTransit(ctx, view, world, items, place, px, 'metro');
   if (drawBuildings) drawBuildings();
-  if (layers.transit) drawRailBuildings(ctx, view, items, place, px);
+  if (layers.transit) drawRailBuildings(ctx, view, items, place, px, 'arcades');
   if (layers.transit && zoom >= TRANSIT_MIN_ZOOM) drawTransit(ctx, view, world, items, place, px, 'rail');
+  if (layers.transit) drawRailBuildings(ctx, view, items, place, px, 'halls');
 
   if (layers.neighbourhoods) {
     ctx.strokeStyle = palette.hoodLine;
@@ -841,15 +842,56 @@ function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
   }
 }
 
-// The stalls in the arches under the viaducts, at street level (before the
-// viaducts are drawn over them).
-function drawRailBuildings(ctx, view, items, place, px) {
+// Rail buildings at street level: the stalls in the arches under the
+// viaducts (before the viaducts are drawn over them), or the central
+// station's hall over its platforms (after the tracks).
+function drawRailBuildings(ctx, view, items, place, px, which) {
   if (!view.blocks || view.zoom < RAIL_BUILDING_ZOOM) return;
   for (const { d } of items) {
     const b = view.blocks(d);
     if (!b) continue;
     place(d);
     const [ox, oy] = d.origin;
+    if (which === 'halls') {
+      // The hall: a glass roof (the platforms showing through), a ridge
+      // along it, and a door in the middle of each long side.
+      for (const h of b.halls || []) {
+        const P = h.pts.map(([x, y]) => [x - ox, y - oy]);
+        ctx.beginPath();
+        P.forEach(([x, y], k) => (k ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.closePath();
+        ctx.fillStyle = palette.hallRoof;
+        ctx.globalAlpha = 0.6;
+        ctx.fill();
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = palette.hallEdge;
+        ctx.lineWidth = Math.max(0.4, px(1));
+        ctx.stroke();
+        const mid = (a, c) => [(a[0] + c[0]) / 2, (a[1] + c[1]) / 2];
+        ctx.beginPath();
+        const r0 = mid(P[0], P[3]);
+        const r1 = mid(P[1], P[2]);
+        ctx.moveTo(r0[0], r0[1]);
+        ctx.lineTo(r1[0], r1[1]);
+        ctx.stroke();
+        ctx.fillStyle = palette.hallEdge;
+        for (const [a, c] of [[P[0], P[1]], [P[3], P[2]]]) {
+          const m = mid(a, c);
+          const t = [h.t[0] * 9, h.t[1] * 9];
+          const inward = [(r0[0] + r1[0]) / 2 - m[0], (r0[1] + r1[1]) / 2 - m[1]];
+          const l = Math.hypot(inward[0], inward[1]) || 1;
+          const n = [(inward[0] / l) * 2.5, (inward[1] / l) * 2.5];
+          ctx.beginPath();
+          ctx.moveTo(m[0] - t[0], m[1] - t[1]);
+          ctx.lineTo(m[0] + t[0], m[1] + t[1]);
+          ctx.lineTo(m[0] + t[0] + n[0], m[1] + t[1] + n[1]);
+          ctx.lineTo(m[0] - t[0] + n[0], m[1] - t[1] + n[1]);
+          ctx.closePath();
+          ctx.fill();
+        }
+      }
+      continue;
+    }
     // Stalls in the arches under the viaducts (seen through the deck).
     if (b.arcades && b.arcades.length) {
       const path = new Path2D();

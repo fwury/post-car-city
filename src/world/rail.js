@@ -34,6 +34,9 @@ export const MIN_RADIUS = 900; // metres: the tightest curve out on the line
 export const CENTRE_RADIUS = 400; // and leaving the central station
 export const VIADUCT_WIDTH = 11; // metres: a two-track viaduct
 const PLATFORM = 170; // metres of straight track either side of a station
+const TRUNK_TURN = (50 * Math.PI) / 180; // how far a trunk's heading may turn from the central hall's way
+const TRUNK_EASE = [500, 800, 1200]; // metres over which it eases from the hall's way onto its heading (the least that keeps it smooth)
+const EASE = [900, 1400, 2000]; // metres over (the least that keeps it smooth) which the loop eases from the straight under the central hall back onto its curve
 const SPACING = [1300, 7000]; // metres from one district station to the next
 const REACH = (60 * Math.PI) / 180; // how far off its heading a trunk may reach for a station
 const BRANCH_REACH = (110 * Math.PI) / 180; // and a branch where it divides
@@ -179,12 +182,22 @@ function closedCurve(Q, step = STEP) {
 }
 
 // cores: the city's cores, the central one first.
-export function createRail(seed, { cores, terrain, streetsNear = () => [] }) {
+export function createRail(seed, { cores, terrain, sites = [], streetsNear = () => [] }) {
   const u = (...k) => toUnit(hash(seed, 'rail', ...k));
   if (!cores.length) return { segments: [], stations: [], lines: [], near: () => [], surfaceIn: () => [], joins: () => false, termini: [] };
   const N = cores.length;
   const P = cores.map((c) => [c.x, c.y]);
   const cp = P[0];
+  // The central station stands under its hall, along it: at the first of
+  // the sites offered (or the first a loop can run through).
+  let central = null;
+  let HALL_RUN = 0;
+  const place = (site) => {
+    central = site;
+    if (site) [cp[0], cp[1]] = site.p;
+    HALL_RUN = site ? site.length / 2 : 0;
+  };
+  place(sites[0] || null);
   const wet = (p) => terrain.isSea(p[0], p[1]) || (terrain.isHigh && terrain.isHigh(p[0], p[1]));
   const dryRun = (a, b) => {
     const n = Math.ceil(len(sub(b, a)) / 100);
@@ -198,65 +211,129 @@ export function createRail(seed, { cores, terrain, streetsNear = () => [] }) {
   // smoothed into a loop no tighter than the line's curves allow. Several
   // circles (turned and sized) are tried; the one serving most districts
   // with a smooth loop is kept.
+  // A loop drawn straight along the central station's hall, easing back
+  // onto its curve over a stretch either side.
+  const straighten = (curve, ease) => {
+    if (!central) return curve;
+    let c = 0;
+    curve.forEach((q, i) => {
+      if (len(sub(q, cp)) < len(sub(curve[c], cp))) c = i;
+    });
+    const n = curve.length;
+    const d = dot(central.dir, sub(curve[(c + 1) % n], curve[(c - 1 + n) % n])) < 0 ? mul(central.dir, -1) : central.dir;
+    const out = curve.map((q) => q.slice());
+    for (const way of [1, -1]) {
+      let s = 0;
+      for (let k = 1; k < n / 2; k++) {
+        const i = (c + way * k + n) % n;
+        s += len(sub(curve[i], curve[(i - way + n) % n]));
+        if (s > HALL_RUN + ease) break;
+        const x = Math.max(0, (s - HALL_RUN) / ease);
+        const w = x * x * (3 - 2 * x);
+        out[i] = add(mul(add(cp, mul(d, way * s)), 1 - w), mul(curve[i], w));
+      }
+    }
+    out[c] = cp.slice();
+    return out;
+  };
+  // Which way the platforms under the hall run, for a trunk heading theta
+  // (the hall's way, turned to suit; or theta itself, with no hall).
+  const platformDir = (theta) => {
+    const h = [Math.cos(theta), Math.sin(theta)];
+    return central ? (dot(central.dir, h) < 0 ? mul(central.dir, -1) : central.dir.slice()) : h;
+  };
+  // A trunk's track out of the central station (laid out on its heading),
+  // drawn straight along the hall and easing back onto its way beyond.
+  const alongHall = (pts) => {
+    if (!central) return pts;
+    const P0 = resample(pts, STEP);
+    const d = platformDir(angleOf(sub(P0[Math.min(P0.length - 1, 4)], P0[0])));
+    let out = P0;
+    for (const ease of TRUNK_EASE) {
+      out = P0.map((q) => q.slice());
+      let s = 0;
+      for (let i = 1; i < P0.length; i++) {
+        s += len(sub(P0[i], P0[i - 1]));
+        if (s > HALL_RUN + ease) break;
+        const x = Math.max(0, (s - HALL_RUN) / ease);
+        const w = x * x * (3 - 2 * x);
+        out[i] = add(mul(add(cp, mul(d, s)), 1 - w), mul(P0[i], w));
+      }
+      if (minRadius(out) >= CENTRE_RADIUS) break;
+    }
+    return out;
+  };
   const rings = [];
   if (N >= RING_CITY) {
-    for (let k = 0; k < 16; k++) {
-      for (const f of RING_SIZE) {
-        const th = (k / 16) * 2 * Math.PI + u(20) * 0.4;
-        const R = Math.max(2200, f * farthest);
-        const C = add(cp, mul([Math.cos(th), Math.sin(th)], R));
-        let ids = [0];
-        for (let i = 1; i < N; i++) if (Math.abs(len(sub(P[i], C)) - R) < 0.35 * R) ids.push(i);
-        ids.sort((a, b) => angleOf(sub(P[a], C)) - angleOf(sub(P[b], C)));
-        const off = (i) => Math.abs(len(sub(P[i], C)) - R);
-        // Stations too close together: the one further off the circle goes.
-        for (let changed = true; changed && ids.length > 6; ) {
-          changed = false;
-          for (let q = 0; q < ids.length; q++) {
-            const a = ids[q];
-            const b = ids[(q + 1) % ids.length];
-            if (len(sub(P[a], P[b])) >= SPACING[0]) continue;
-            const drop = a === 0 ? b : b === 0 ? a : off(a) > off(b) ? a : b;
-            ids.splice(ids.indexOf(drop), 1);
-            changed = true;
-            break;
+    for (const site of sites.length ? sites : [null]) {
+      place(site);
+      // (With the central station's hall placed, loops running along it
+      // there too: their circles to one side of it or the other.)
+      const normal = central ? angleOf(central.dir) + Math.PI / 2 : 0;
+      const angles = Array.from({ length: 16 }, (_, k) => (k / 16) * 2 * Math.PI + u(20) * 0.4);
+      if (central) angles.push(...[0, Math.PI].flatMap((side) => [-0.3, -0.15, 0, 0.15, 0.3].map((o) => normal + side + o)));
+      for (const th of angles) {
+        for (const f of RING_SIZE) {
+          const R = Math.max(2200, f * farthest);
+          const C = add(cp, mul([Math.cos(th), Math.sin(th)], R));
+          let ids = [0];
+          for (let i = 1; i < N; i++) if (Math.abs(len(sub(P[i], C)) - R) < 0.35 * R) ids.push(i);
+          ids.sort((a, b) => angleOf(sub(P[a], C)) - angleOf(sub(P[b], C)));
+          const off = (i) => Math.abs(len(sub(P[i], C)) - R);
+          // Stations too close together: the one further off the circle goes.
+          for (let changed = true; changed && ids.length > 6; ) {
+            changed = false;
+            for (let q = 0; q < ids.length; q++) {
+              const a = ids[q];
+              const b = ids[(q + 1) % ids.length];
+              if (len(sub(P[a], P[b])) >= SPACING[0]) continue;
+              const drop = a === 0 ? b : b === 0 ? a : off(a) > off(b) ? a : b;
+              ids.splice(ids.indexOf(drop), 1);
+              changed = true;
+              break;
+            }
           }
+          // The sharpest corner goes (never the central station: then the
+          // worse of its neighbours) until the loop is smooth and on land.
+          let pts = null;
+          for (let guard = 0; guard < 30 && ids.length >= 6; guard++) {
+            const raw = closedCurve(ids.map((i) => P[i]));
+            // (Straightening changes the loop only near the hall: too tight
+            // away from it, and it will not do.)
+            const away = central ? raw.filter((q) => len(sub(q, cp)) > HALL_RUN + EASE[EASE.length - 1]) : raw;
+            const curve = minRadius(away) < MIN_RADIUS * 0.85 ? null : (central ? EASE.map((e) => straighten(raw, e)) : [raw]).find((c) => minRadius(c) >= MIN_RADIUS * 0.85);
+            if (curve && !curve.some((q) => wet(q))) {
+              pts = curve.concat([curve[0]]);
+              break;
+            }
+            let worst = -1;
+            let wa = -1;
+            ids.forEach((id, q) => {
+              const t = angleBetween(sub(P[id], P[ids[(q - 1 + ids.length) % ids.length]]), sub(P[ids[(q + 1) % ids.length]], P[id]));
+              if (t > wa) [wa, worst] = [t, q];
+            });
+            if (ids[worst] === 0) {
+              const a = ids[(worst - 1 + ids.length) % ids.length];
+              const b = ids[(worst + 1) % ids.length];
+              worst = ids.indexOf(off(a) > off(b) ? a : b);
+            }
+            ids.splice(worst, 1);
+          }
+          if (!pts) continue;
+          let covered = 0;
+          for (let i = 0; i < N; i++) if (ids.some((j) => len(sub(P[i], P[j])) < NEAR)) covered++;
+          const score = covered + 0.5 * ids.length - lengthOf(pts) / 4000;
+          rings.push({ score, ids, pts, C, R, site });
         }
-        // The sharpest corner goes (never the central station: then the
-        // worse of its neighbours) until the loop is smooth and on land.
-        let pts = null;
-        for (let guard = 0; guard < 30 && ids.length >= 6; guard++) {
-          const curve = closedCurve(ids.map((i) => P[i]));
-          if (minRadius(curve) >= MIN_RADIUS * 0.85 && !curve.some((q) => wet(q))) {
-            pts = curve.concat([curve[0]]);
-            break;
-          }
-          let worst = -1;
-          let wa = -1;
-          ids.forEach((id, q) => {
-            const t = angleBetween(sub(P[id], P[ids[(q - 1 + ids.length) % ids.length]]), sub(P[ids[(q + 1) % ids.length]], P[id]));
-            if (t > wa) [wa, worst] = [t, q];
-          });
-          if (ids[worst] === 0) {
-            const a = ids[(worst - 1 + ids.length) % ids.length];
-            const b = ids[(worst + 1) % ids.length];
-            worst = ids.indexOf(off(a) > off(b) ? a : b);
-          }
-          ids.splice(worst, 1);
-        }
-        if (!pts) continue;
-        let covered = 0;
-        for (let i = 0; i < N; i++) if (ids.some((j) => len(sub(P[i], P[j])) < NEAR)) covered++;
-        const score = covered + 0.5 * ids.length - lengthOf(pts) / 4000;
-        rings.push({ score, ids, pts, C, R });
       }
     }
     rings.sort((a, b) => b.score - a.score);
     // The best few, unlike each other.
     const chosen = [];
-    for (const r of rings) if (chosen.length < RING_CHOICES && chosen.every((o) => len(sub(o.C, r.C)) > o.R * 0.5)) chosen.push(r);
+    for (const r of rings) if (chosen.length < RING_CHOICES && chosen.every((o) => o.site !== r.site || len(sub(o.C, r.C)) > o.R * 0.5)) chosen.push(r);
     rings.length = 0;
-    for (const { ids, pts, C, R } of chosen) {
+    for (const { ids, pts, C, R, site } of chosen) {
+      place(site);
       // Where each station is along the loop, and the way the loop runs there.
       const at = ids.map((id) => {
         let bi = 0;
@@ -279,7 +356,7 @@ export function createRail(seed, { cores, terrain, streetsNear = () => [] }) {
         const d = along[at[ids.indexOf(b)]] - along[at[ids.indexOf(a)]];
         return d < 0 ? d + L : d;
       };
-      rings.push({ ids, pts, C, R, at, tangent, ahead, L });
+      rings.push({ ids, pts, C, R, at, tangent, ahead, L, site });
     }
   }
   // The loop (if any) a layout is laid round, and the hub lines run away
@@ -504,21 +581,35 @@ export function createRail(seed, { cores, terrain, streetsNear = () => [] }) {
   }
 
   // Lay out the network a number of ways; keep the best.
-  const tries = N < 2 ? [[u(1) * Math.PI, 1.8, 1, 0]] : Array.from({ length: LAYOUTS }, (_, k) => [(k / LAYOUTS) * Math.PI + u(2) * 0.2, (N < RING_CITY ? 1.8 : 1.3) + (N < RING_CITY ? 2 : 1.4) * u(3, k), 2 * u(4, k), k]);
+  // (A trunk runs along the central station's hall: as many ways as there
+  // are sites for it, each laid out a number of ways, heading either way
+  // along the hall or turned off it a little.)
+  const options = sites.length ? sites : [null];
+  const each = Math.ceil(LAYOUTS / options.length);
+  const tries = options.flatMap((site) =>
+    N < 2
+      ? [[site ? angleOf(site.dir) : u(1) * Math.PI, 1.8, 1, 0, site]]
+      : Array.from({ length: each }, (_, k) => [site ? angleOf(site.dir) + ((Math.floor(k / 2) % 9) / 8 - 0.5) * 2 * TRUNK_TURN + (k % 2) * Math.PI : (k / LAYOUTS) * Math.PI + u(2) * 0.2, (N < RING_CITY ? 1.8 : 1.3) + (N < RING_CITY ? 2 : 1.4) * u(3, k), 2 * u(4, k), k, site]),
+  );
   let best = null;
   for (const r of rings.length ? rings : [null]) {
     ring = r;
     hub = r ? r.C : cp;
     for (const th of rings.length ? tries.filter((_, k) => k % rings.length === rings.indexOf(r) || tries.length < 12) : tries) {
-      const L = layout(...th);
+      const site = r ? r.site : th[4];
+      place(site);
+      const L = layout(th[0], th[1], th[2], th[3]);
       L.ring = r;
+      L.site = site;
       if (!best || L.score > best.score) best = L;
     }
   }
+  place(best.site);
   ring = best.ring;
   hub = ring ? ring.C : cp;
   const { SP, dirOut, segs, nodes, theta } = best;
   const axis = [Math.cos(theta), Math.sin(theta)];
+  const platforms = platformDir(theta);
 
   // ---- Out into the country ----
   // From each line's end, on as straight as the land allows; but a line
@@ -552,7 +643,7 @@ export function createRail(seed, { cores, terrain, streetsNear = () => [] }) {
   const segOf = new Map();
   const keyOf = (a, b) => `${a}>${b}`;
   for (const s of segs) {
-    const sg = { key: keyOf(s.a, s.b), a: s.a, b: s.b, pts: s.pts };
+    const sg = { key: keyOf(s.a, s.b), a: s.a, b: s.b, pts: s.a === 0 && !ring ? alongHall(s.pts) : s.pts };
     segments.push(sg);
     segOf.set(sg.key, sg);
   }
@@ -663,8 +754,8 @@ export function createRail(seed, { cores, terrain, streetsNear = () => [] }) {
     const A = tips.filter((t) => t.side > 0).sort((x, y) => x.angle - y.angle);
     const B = tips.filter((t) => t.side < 0).sort((x, y) => y.angle - x.angle);
     // A side with no line out: the line runs straight on out of the centre.
-    if (!A.length) A.push({ path: [0], out: tailsFrom(cp, axis, 0, 100), angle: 0 });
-    if (!B.length) B.push({ path: [0], out: tailsFrom(cp, mul(axis, -1), 0, 101), angle: 0 });
+    if (!A.length) A.push({ path: [0], out: tailsFrom(cp, platforms, 0, 100), angle: 0 });
+    if (!B.length) B.push({ path: [0], out: tailsFrom(cp, mul(platforms, -1), 0, 101), angle: 0 });
     const n = Math.max(A.length, B.length);
     for (let k = 0; k < n; k++) {
       const x = A[k % A.length];
@@ -689,8 +780,8 @@ export function createRail(seed, { cores, terrain, streetsNear = () => [] }) {
   const stations = new Map();
   const station = (s) => {
     if (!stations.has(s)) {
-      const dir = ring && ring.tangent.has(s) ? ring.tangent.get(s) : s === 0 ? axis : dirOut.get(s) || [1, 0];
-      stations.set(s, { id: s, p: SP[s], key: cores[s].key, central: s === 0, dir, lines: [] });
+      const dir = ring && ring.tangent.has(s) ? ring.tangent.get(s) : s === 0 ? platforms : dirOut.get(s) || [1, 0];
+      stations.set(s, { id: s, p: SP[s], key: cores[s].key, central: s === 0, site: s === 0 ? central : null, dir, lines: [] });
     }
     return stations.get(s);
   };

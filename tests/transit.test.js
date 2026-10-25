@@ -29,6 +29,29 @@ test('nearly every district has a rail station in it or next to it', () => {
   }
 });
 
+test('the central station stands behind its plaza on a boulevard, the track straight beneath it', () => {
+  for (const w of [world, small]) {
+    const st = w.rail.stations.find((s) => s.central);
+    const site = st.site;
+    assert.ok(site, 'no site for the central station');
+    // The plaza runs along a boulevard of the central district.
+    const d = w.district(w.cityCores[0]);
+    const onBoulevard = d.network.lines.some((l) => l.points.some((q) => dist(q, site.front) < 10));
+    assert.ok(onBoulevard, 'the plaza is not on a boulevard');
+    // The track runs along the hall, under its middle, the whole length of it.
+    for (const sg of w.rail.segments) {
+      for (let i = 1; i < sg.pts.length; i++) {
+        const [a, b] = [sg.pts[i - 1], sg.pts[i]];
+        const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+        const u = (m[0] - st.p[0]) * site.dir[0] + (m[1] - st.p[1]) * site.dir[1];
+        if (Math.abs(u) > site.length / 2 || dist(m, st.p) > site.length) continue;
+        const off = Math.abs((m[0] - st.p[0]) * site.dir[1] - (m[1] - st.p[1]) * site.dir[0]);
+        assert.ok(off < 1, `track ${off.toFixed(1)} m off the hall's middle`);
+      }
+    }
+  }
+});
+
 test('rail curves are gentle, and every station is underground', () => {
   for (const sg of world.rail.segments) {
     if (sg.country || sg.a === 0 || sg.b === 0) continue;
