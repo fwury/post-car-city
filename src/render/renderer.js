@@ -134,7 +134,7 @@ export class Renderer {
     // A tile is shown at between half and all of its own scale: it takes
     // its detail from the farther of the two, so it is never busier than
     // the map drawn live would be.
-    const view = { x0: tile.x0, y0: tile.y0, s, w: res, h: res, zoom: s / this.dpr / 2, pr: this.dpr, blocks: this.blocksFor };
+    const view = { x0: tile.x0, y0: tile.y0, s, w: res, h: res, zoom: s / this.dpr / 2, pr: this.dpr, blocks: this.blocksFor, trams: this.tramsFor };
     const items = drawDistricts(ctx, view, this.getWorld(), this.state.layers);
     if (this.state.layers.outlines) drawDistrictOutlines(ctx, view, items);
     return { canvas, res };
@@ -201,7 +201,7 @@ export class Renderer {
     } else {
       this.mode = 'vector';
       const b = camera.bounds();
-      const view = { x0: b.x0, y0: b.y0, s: camera.zoom * this.dpr, w: this.canvas.width, h: this.canvas.height, zoom: camera.zoom, pr: this.dpr, blocks: this.blocksFor };
+      const view = { x0: b.x0, y0: b.y0, s: camera.zoom * this.dpr, w: this.canvas.width, h: this.canvas.height, zoom: camera.zoom, pr: this.dpr, blocks: this.blocksFor, trams: this.tramsFor };
       const items = drawDistricts(ctx, view, this.getWorld(), L);
       if (L.outlines) drawDistrictOutlines(ctx, view, items);
       this.resetTransform();
@@ -257,7 +257,7 @@ export class Renderer {
   drawLive(L) {
     const { camera } = this;
     const b = camera.bounds();
-    const view = { x0: b.x0, y0: b.y0, s: camera.zoom * this.dpr, w: this.canvas.width, h: this.canvas.height, zoom: camera.zoom, pr: this.dpr, blocks: this.blocksFor };
+    const view = { x0: b.x0, y0: b.y0, s: camera.zoom * this.dpr, w: this.canvas.width, h: this.canvas.height, zoom: camera.zoom, pr: this.dpr, blocks: this.blocksFor, trams: this.tramsFor };
     const items = drawDistricts(this.ctx, view, this.getWorld(), L);
     if (L.outlines) drawDistrictOutlines(this.ctx, view, items);
     this.resetTransform();

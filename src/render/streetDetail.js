@@ -9,7 +9,7 @@ import { STREET_TYPES } from '../world/streetTypes.js';
 import { profile } from '../world/junctions.js';
 
 export const DETAIL_MIN_ZOOM = 1.1;
-const RAIL_GAUGE = 1.435;
+export const RAIL_GAUGE = 1.435;
 
 const COLOURS = {
   clearway: '#f1eee8', frontage: '#ece8e0', furnishing: '#e6e1d8', planted: '#c9dfba', path: '#f1eee8', paved: '#ece8e0',
@@ -547,7 +547,7 @@ function protectedMarks(ctx, c, j, px) {
 // ---- A side street meeting a tram street (or a core street) unsignalised ----
 // The major street's arms, and the side street arms on either side of it.
 function majorArms(j) {
-  const rank = (t) => ({ boulevard: 1, mainStreet: 2, coreMainStreet: 2, coreCrossStreet: 3, coreCrossStreetNarrow: 3 })[t] || 9;
+  const rank = (t) => ({ boulevard: 1, boulevardPlanted: 1, mainStreet: 2, coreMainStreet: 2, mainStreetPlanted: 2, coreMainStreetPlanted: 2, coreCrossStreet: 3, coreCrossStreetNarrow: 3 })[t] || 9;
   const top = Math.min(...j.arms.map((a) => rank(a.type)));
   const majors = j.arms.filter((a) => rank(a.type) === top);
   const sides = j.arms.filter((a) => rank(a.type) !== top);

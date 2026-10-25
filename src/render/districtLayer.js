@@ -32,7 +32,7 @@ import { palette } from './styles.js';
 import { TRAIL_WIDTH, BEACH } from '../world/greenway.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
-import { DETAIL_MIN_ZOOM, drawJunctionGround, drawJunctionMarks, drawPlatforms, drawSections, streetExtras, drawRails, offsetLine } from './streetDetail.js';
+import { DETAIL_MIN_ZOOM, drawJunctionGround, drawJunctionMarks, drawPlatforms, drawSections, streetExtras, drawRails, offsetLine, sectionFeatures, RAIL_GAUGE } from './streetDetail.js';
 
 export const LOD_STEPS = [
   [0.4, 25],
@@ -127,6 +127,106 @@ function hoodPathsFor(d, nb) {
   const corePoly = nb.hoods[0] && nb.hoods[0].core ? nb.hoods[0].polygon : null;
   for (const l of nb.lines) for (const run of splitByPolygon(l.points, corePoly)) addPoly(run.inside ? p.core : p.outer, run.pts, ox, oy, false);
   hoodCache.set(nb, p);
+  return p;
+}
+
+// A district's streets as its tram routes use them: the stretches of main
+// street, core main street and boulevard with tracks, and those without (a
+// planted median instead), the rails along the first, and the turning track
+// and loops. Cached per district's tram data (none yet: all without).
+const tramPathCache = new WeakMap();
+const NO_TRAMS = { ranges: new Map(), stops: [], turns: [], loops: [] };
+const TURN_REACH = 22; // metres out from a junction turning track leaves each street
+const LOOP_RADIUS = 16; // metres: a loop's track at a route's end
+function tramPathsFor(d, nb, T) {
+  const key = T || nb;
+  let byD = tramPathCache.get(key);
+  if (byD && byD.has(d.key)) return byD.get(d.key);
+  if (!byD) tramPathCache.set(key, (byD = new Map()));
+  T = T || NO_TRAMS;
+  const [ox, oy] = d.origin;
+  const p = { routed: new Path2D(), outer: [new Path2D(), new Path2D()], core: [new Path2D(), new Path2D()], blvd: [new Path2D(), new Path2D()], rails: [], loops: new Path2D(), loopList: [] };
+  // A line's routed and other stretches.
+  const pieces = (l) => {
+    const P = l.points;
+    const cum = [0];
+    for (let i = 1; i < P.length; i++) cum.push(cum[i - 1] + Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]));
+    const at = (x) => {
+      for (let i = 1; i < P.length; i++) if (x <= cum[i]) {
+        const t = (x - cum[i - 1]) / (cum[i] - cum[i - 1] || 1);
+        return [P[i - 1][0] + (P[i][0] - P[i - 1][0]) * t, P[i - 1][1] + (P[i][1] - P[i - 1][1]) * t];
+      }
+      return P[P.length - 1];
+    };
+    const cut = (a, b) => [at(a), ...P.filter((_, i) => cum[i] > a && cum[i] < b), at(b)];
+    const L = cum[cum.length - 1];
+    const R = (T.ranges.get(l.key) || []).map(([a, b]) => [Math.max(0, a), Math.min(L, b)]).filter(([a, b]) => b - a > 0.5);
+    const out = [];
+    let s = 0;
+    for (const [a, b] of R) {
+      if (a - s > 0.5) out.push({ pts: cut(s, a), tram: false });
+      out.push({ pts: cut(a, b), tram: true });
+      s = b;
+    }
+    if (L - s > 0.5) out.push({ pts: cut(s, L), tram: false });
+    return out;
+  };
+  const corePoly = nb.hoods[0] && nb.hoods[0].core ? nb.hoods[0].polygon : null;
+  for (const l of nb.lines) {
+    for (const pc of pieces(l)) {
+      if (pc.tram) addPoly(p.routed, pc.pts, ox, oy, false);
+      for (const run of splitByPolygon(pc.pts, corePoly)) {
+        addPoly((run.inside ? p.core : p.outer)[pc.tram ? 0 : 1], run.pts, ox, oy, false);
+        if (pc.tram) p.rails.push(...streetExtras(run.pts, run.inside ? 'coreMainStreet' : 'mainStreet').rails);
+      }
+    }
+  }
+  for (const l of d.network.lines) {
+    if (l.kind === 'roundabout') continue;
+    for (const pc of pieces(l)) {
+      addPoly(p.blvd[pc.tram ? 0 : 1], pc.pts, ox, oy, false);
+      if (pc.tram) {
+        addPoly(p.routed, pc.pts, ox, oy, false);
+        p.rails.push(...streetExtras(pc.pts, 'boulevard').rails);
+      }
+    }
+  }
+  // Turning track: from each track of the street a route comes in on to
+  // the same of the street it leaves by (on the right going one way, the
+  // left going the other), curving round inside the junction.
+  const offsetOf = (k) => sectionFeatures(d.network.lines.some((l) => l.key === k) ? 'boulevard' : 'mainStreet').tram.map(Math.abs)[0] || 3.35;
+  for (const x of T.turns) {
+    const right = (v) => [-v[1], v[0]];
+    for (const sg of [1, -1]) {
+      const oi = offsetOf(x.from) * sg;
+      const oo = offsetOf(x.to) * sg;
+      const a = [x.p[0] - x.in[0] * TURN_REACH + right(x.in)[0] * oi, x.p[1] - x.in[1] * TURN_REACH + right(x.in)[1] * oi];
+      const b = [x.p[0] + x.out[0] * TURN_REACH + right(x.out)[0] * oo, x.p[1] + x.out[1] * TURN_REACH + right(x.out)[1] * oo];
+      // (The corner: where the two tracks' lines meet.)
+      const den = x.in[0] * x.out[1] - x.in[1] * x.out[0];
+      let c = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (Math.abs(den) > 1e-6) {
+        const t = ((b[0] - a[0]) * x.out[1] - (b[1] - a[1]) * x.out[0]) / den;
+        if (t > 0 && t < TURN_REACH * 3) c = [a[0] + x.in[0] * t, a[1] + x.in[1] * t];
+      }
+      const curve = [];
+      for (let k = 0; k <= 12; k++) {
+        const t = k / 12;
+        curve.push([(1 - t) * (1 - t) * a[0] + 2 * (1 - t) * t * c[0] + t * t * b[0], (1 - t) * (1 - t) * a[1] + 2 * (1 - t) * t * c[1] + t * t * b[1]]);
+      }
+      for (const g of [-RAIL_GAUGE / 2, RAIL_GAUGE / 2]) p.rails.push(offsetLine(curve, g));
+    }
+  }
+  // Loops at the routes' ends: the tracks run round a circle beyond.
+  for (const x of T.loops) {
+    const c = [x.p[0] + x.dir[0] * LOOP_RADIUS * 0.6, x.p[1] + x.dir[1] * LOOP_RADIUS * 0.6];
+    const ring = [];
+    for (let k = 0; k <= 32; k++) ring.push([c[0] + Math.cos((k / 32) * 2 * Math.PI) * LOOP_RADIUS, c[1] + Math.sin((k / 32) * 2 * Math.PI) * LOOP_RADIUS]);
+    for (const g of [-RAIL_GAUGE / 2, RAIL_GAUGE / 2]) p.rails.push(offsetLine(ring, g));
+    addPoly(p.loops, ring, ox, oy, true);
+    p.loopList.push(c);
+  }
+  byD.set(d.key, p);
   return p;
 }
 
@@ -241,13 +341,12 @@ export function drawDistricts(ctx, view, world, layers) {
     if (zoom >= TRAM_MIN_ZOOM) {
       ctx.strokeStyle = palette.tram;
       ctx.lineWidth = TRAM_WIDTH;
-      for (const { d, h } of hoods) {
+      // (Only along the tram routes.)
+      for (const { d } of hoods) {
         place(d);
-        ctx.stroke(h.streets);
-      }
-      for (const { b, path } of lines) {
-        ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s);
-        ctx.stroke(path);
+        const t = tramPathsFor(d, world.neighbourhoods(d), view.trams ? view.trams(d) : null);
+        ctx.stroke(t.routed);
+        ctx.stroke(t.loops);
       }
     }
     // Tram stops, as small markers, once a district's blocks are in.
@@ -808,11 +907,17 @@ function drawWater(ctx, view, terrain, px) {
 function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
   const { x0, y0, s } = view;
   const blocksOf = (d) => (view.blocks ? view.blocks(d) : null);
-  const items = [
-    ...hoods.map(({ d, h }) => ({ path: h.outer, type: 'mainStreet', place: () => place(d) })),
-    ...hoods.map(({ d, h }) => ({ path: h.core, type: 'coreMainStreet', place: () => place(d) })),
-    ...lines.map(({ b, path }) => ({ path, type: 'boulevard', place: () => ctx.setTransform(s, 0, 0, s, (b.origin[0] - x0) * s, (b.origin[1] - y0) * s) })),
-  ];
+  // Each street's stretches with tram tracks, and without (a planted
+  // median in their place).
+  const trams = hoods.map(({ d }) => ({ d, t: tramPathsFor(d, world.neighbourhoods(d), view.trams ? view.trams(d) : null) }));
+  const items = [];
+  for (const [k, planted] of [[0, ''], [1, 'Planted']]) {
+    for (const { d, t } of trams) {
+      items.push({ path: t.outer[k], type: `mainStreet${planted}`, place: () => place(d) });
+      items.push({ path: t.core[k], type: `coreMainStreet${planted}`, place: () => place(d) });
+      items.push({ path: t.blvd[k], type: `boulevard${planted}`, place: () => place(d) });
+    }
+  }
   drawSections(ctx, items, px);
   // Each junction's ground, the tram platforms, the rails, then the
   // junctions' markings, kerbs, signals and bollards (those in view).
@@ -829,15 +934,7 @@ function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
     const b = blocksOf(d);
     place(d);
     const [ox, oy] = d.origin;
-    for (const l of world.neighbourhoods(d).lines) {
-      const e = streetExtras(l.points, 'mainStreet');
-      drawRails(ctx, e.rails, ox, oy, px);
-    }
-    for (const l of d.network.lines) {
-      if (l.kind === 'roundabout') continue;
-      const e = streetExtras(l.points, 'boulevard');
-      drawRails(ctx, e.rails, ox, oy, px);
-    }
+    drawRails(ctx, trams.find((x) => x.d === d).t.rails, ox, oy, px);
     if (b) drawJunctionMarks(ctx, b.intersections, ox, oy, px, inView);
   }
 }

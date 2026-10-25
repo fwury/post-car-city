@@ -23,6 +23,7 @@ import { createGreenways } from './greenway.js';
 import { createTransit } from './transit.js';
 import { createRail } from './rail.js';
 import { centralStationSites } from './centralStation.js';
+import { createTrams } from './trams.js';
 import { createMetro } from './metro.js';
 import { createNames } from './names.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
@@ -252,6 +253,18 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   }
   const names = createNames(seed);
   const transit = createTransit({ rail, metro });
+  // Tram routes, for the whole city: over the districts' main streets, so
+  // planned when first wanted.
+  const trams = createTrams(seed, {
+    cores: cityCores,
+    district: (c) => district(c),
+    metroLines: () => metro.plan().lines,
+    // (The central district's station plaza is on the boulevard before its hall.)
+    plazaOf: (d) => {
+      const st = d.key === cityCores[0].key ? rail.stations.find((x) => x.central) : null;
+      return st && st.site ? st.site.front : d.station;
+    },
+  });
 
   const bases = new LruCache(12000);
   const districts = new LruCache(12000);
@@ -728,7 +741,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   }
 
   // Stage 4: local streets and blocks, worked out only when wanted.
-  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops });
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops, tramsIn: (d) => trams.in(d) });
 
   return {
     seed, population, terrain, centre, cityCores, rail, metro, cores, growth, boulevards,
@@ -738,6 +751,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     greenway: (geo) => greenways.of(geo),
     // Stage 5: the district's halves of the rail and metro lines, and stops.
     transit: (d) => transit.of(d),
+    trams,
     // Stage 5: names of districts, neighbourhoods and streets.
     names,
     district, base, lod, districtsInRect, boulevardsInRect, boulevardDistance, districtAt, greenwayWidth,

@@ -33,7 +33,7 @@ import { insetWithSources, selfCrosses as selfCrossing } from '../util/offset.js
 import { plotsOfBlock, rectness, TERRACE_RECT } from './plots.js';
 import { assignProgramme } from './programme.js';
 import { assignBuildings } from './buildings.js';
-import { planJunctions, isTramStreet } from './junctions.js';
+import { planJunctions, isTramStreet, plantedOf } from './junctions.js';
 import { layoutParkette, layoutNeighbourhoodPark, layoutSchool, layoutDistrictPark, communityCentre } from './parkLayout.js';
 import { createNames } from './names.js';
 import { polygonArea, signedArea, pointInPolygon, orientPositive, simplify, chaikin, resample, splitByPolygon } from '../util/geom.js';
@@ -341,7 +341,7 @@ function centralSite(st) {
   };
 }
 
-export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [] }) {
+export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [], tramsIn = () => null }) {
   // A path that would run through water is left out.
   const dryPath = (pts) => pts && !pts.some((q) => isWater(q[0], q[1]));
   const names = createNames(seed);
@@ -1992,8 +1992,32 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // where the tram stops are (on the far sides of signalised junctions).
     const places = [d.station];
     for (const b of blocks) if (['square', 'cathedral', 'hospital', 'school', 'elementarySchool', 'recCentre', 'campus', 'station'].includes(b.use) && b.pts) places.push(axes(b.pts).c);
+    // A tram street, with the stretches of it tram routes run along (the
+    // rest a planted median) and the stops planned on it.
+    const tram = tramsIn(d);
+    const tramStreet = (l, type, base) => {
+      const R = tram ? tram.ranges.get(l.key) || [] : null;
+      const cum = [0];
+      for (let i = 1; i < l.points.length; i++) cum.push(cum[i - 1] + len(sub(l.points[i], l.points[i - 1])));
+      const routed = (q) => {
+        if (!R) return true;
+        let best = { s: 0, r: Infinity };
+        for (let i = 1; i < l.points.length; i++) {
+          const a = l.points[i - 1];
+          const ab = sub(l.points[i], a);
+          const t = Math.max(0, Math.min(1, dot(sub(q, a), ab) / (dot(ab, ab) || 1)));
+          const r = len([a[0] + ab[0] * t - q[0], a[1] + ab[1] * t - q[1]]);
+          if (r < best.r) best = { s: cum[i - 1] + t * (cum[i] - cum[i - 1]), r };
+        }
+        return R.some(([a, b]) => best.s >= a - 1 && best.s <= b + 1);
+      };
+      return { pts: l.points, type, typeAt: (q) => (routed(q) ? base(q) : plantedOf(base(q))), targets: tram ? tram.stops.filter((x) => x.line === l.key).map((x) => x.s) : undefined };
+    };
     const { junctions: laidOut, stops: tramStopList } = planJunctions(hashString(d.key), {
-      majors: [...st.lines.map((l) => ({ pts: l.points, type: 'mainStreet', typeAt: (q) => (corePoly && pointInPolygon(q[0], q[1], corePoly) ? 'coreMainStreet' : 'mainStreet') })), ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => ({ pts: l.points, type: 'boulevard' }))],
+      majors: [
+        ...st.lines.map((l) => tramStreet(l, 'mainStreet', (q) => (corePoly && pointInPolygon(q[0], q[1], corePoly) ? 'coreMainStreet' : 'mainStreet'))),
+        ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => tramStreet(l, 'boulevard', () => 'boulevard')),
+      ],
       // (A podium core's streets are core residential streets.)
       local: local.map((x) => ({ ...x, kind: x.kind === 'local' && x.width >= CORE_CROSS - 0.1 ? 'core' : x.kind })),
       alleys: blocks.map((b) => b.alley).filter(Boolean),
