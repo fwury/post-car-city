@@ -165,6 +165,9 @@ export const USES = {
   museum: { label: 'Museum', cat: 'civic', floor: 'dedicated' },
   // The old town's, in the city-centre district.
   cityHall: { label: 'City hall', cat: 'civic', floor: 'dedicated' },
+  // The business district's.
+  conventionCentre: { label: 'Convention centre', cat: 'civic', floor: 'dedicated' },
+  observationTower: { label: 'Observation tower', cat: 'civic', floor: 'dedicated' },
   mainLibrary: { label: 'Central library', cat: 'civic', floor: 'dedicated' },
   touristCentre: { label: 'Tourist information centre', cat: 'civic', floor: 'ground' },
   boutiqueHotel: { label: 'Boutique hotel', cat: 'lodging', floor: 'upper' },
@@ -230,7 +233,7 @@ export const CORNER_MIX = [
 // neighbours along the block until big enough.)
 export const MIN_PLOT = {
   church: 600, mosque: 700, synagogue: 450, temple: 600,
-  museum: 2500, cityHall: 3000, mainLibrary: 3500, districtLibrary: 1800, library: 900, courthouse: 2500, police: 1200, fireStation: 1000,
+  museum: 2500, cityHall: 3000, conventionCentre: 9000, mainLibrary: 3500, districtLibrary: 1800, library: 900, courthouse: 2500, police: 1200, fireStation: 1000,
   performingArts: 2500, hotel: 1200, officeTower: 1200, departmentStore: 3000, inn: 350, hospice: 900,
   altPrimary: 1500, altSecondary: 2000, skatingRink: 2500, climbing: 1000, gymnastics: 1200,
   emergencyHousing: 600, transitionalHousing: 600,

@@ -976,7 +976,8 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       // A campus takes the middle of its neighbourhood; homes round it.
       if (h && h.campus && len(sub(ax.c, h.centre)) < Math.sqrt((CAMPUS_SHARE * h.area) / Math.PI)) return 'campus';
       if (h && h.core && inOldTown(ax.c)) return 'perimeter';
-      if (h && h.core && len(sub(ax.c, d.station)) < d.coreReach * 1.25) return 'podium';
+      // (The city-centre district's core, its business district, all of it.)
+      if (h && h.core && (oldHood || len(sub(ax.c, d.station)) < d.coreReach * 1.25)) return 'podium';
       // A neighbourhood is built in one form throughout: rowhouses or
       // perimeter blocks (its main streets mixed use either way).
       return h ? formOf(h) : 'perimeter';

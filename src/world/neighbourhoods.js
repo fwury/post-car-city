@@ -46,6 +46,7 @@ const FORM_LOW = 0.55; // housing form: rowhouses and villas at the low end...
 const FORM_HIGH = 1.45; // ...mid-rise perimeter blocks at the high end
 const FORM_SCALE = 2500; // metres over which the form of housing changes
 const CENTRE_PEOPLE = 1.35; // the city centre houses this many times a district's people...
+const CBD_PEOPLE = 0.55; // ...though its business district houses this share of what it would
 const CENTRE_FORM = 0.55; // ...its housing no thinner than this, on the scale from rowhouses (0) to perimeter blocks (1)
 const BOULEVARD_BOOST = 0.15; // a little denser along a boulevard
 const CAMPUS_METRO = 900; // metres from a metro station a campus is sought
@@ -885,7 +886,8 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     }
     const pop = peopleOf(label, total);
     for (const h of hoods) {
-      h.population = Math.round(pop[h.id]);
+      // (The business district's towers are half offices: fewer homes.)
+      h.population = Math.round(pop[h.id] * (oldTown && h.core ? CBD_PEOPLE : 1));
       h.campus = centres[h.id] === campus;
       // People per km² of the neighbourhood's land, and the housing that implies.
       h.density = h.area > 0 ? Math.round(pop[h.id] / (h.area / 1e6)) : 0;

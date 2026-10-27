@@ -111,7 +111,11 @@ function buildPaths(d, chunk) {
         add(p.podium, k.pts);
         break;
       case 'square':
+      case 'observationTower': // (on its plaza)
         add(p.square, k.pts);
+        break;
+      case 'parkette':
+        add(p.green, k.pts);
         break;
       case 'park':
       case 'green':
