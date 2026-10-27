@@ -26,6 +26,7 @@ const SHARE_STATION = 350; // metres: a station this close to another on a line 
 const LINK_CLEAR = 250; // metres a station keeps from where the line crosses a greenway
 const TURN = (60 * Math.PI) / 180; // the most a line turns at a district centre
 const BEND = (150 * Math.PI) / 180; // and all told, end to end
+const UNSERVED = 3; // what a network loses for each district centre neither it nor the rail serves
 const PER_STATION = 30000; // people for each metro station, about
 const PLANS = 40; // whole networks laid out and judged
 const MAX_DISTRICTS = 12; // district centres on a line, at most (a few more to reach the city's edge)
@@ -258,6 +259,9 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
     const nets = B.map((b) => network(b));
     const idx = new Map(B.map((b, i) => [b.key, i]));
     const S = B.map((b) => b.station);
+    // (The city centre's under the central station's plaza, by its hall.)
+    const central = rail.stations.find((st) => st.central);
+    if (central && central.site) S[0] = central.site.front.slice();
 
     // ---- Links between district centres, along the boulevards ----
     const edges = [];
@@ -378,7 +382,10 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
         }
         bypass = seen.size / (N - 1);
       }
-      const score = 4 * (one / pairs) + 4 * (weighted / wsum) + 2 * (onMetro.size / N) + railServed + bypass - (2 * Math.abs(stations - target)) / target - (dup + 0.5 * railDup) / 20000 - 0.1 * lines.length;
+      // (Every district centre must be served, by the metro or the rail.)
+      let unserved = 0;
+      for (let n = 0; n < N; n++) if (!onMetro.has(n) && !railAt.has(n)) unserved++;
+      const score = -UNSERVED * unserved + 4 * (one / pairs) + 4 * (weighted / wsum) + 2 * (onMetro.size / N) + railServed + bypass - (2 * Math.abs(stations - target)) / target - (dup + 0.5 * railDup) / 20000 - 0.1 * lines.length;
       return { score, one: one / pairs, stations, served: onMetro.size, railServed, bypass };
     }
 
@@ -671,6 +678,40 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
     }
     if (!best) return planned;
 
+    // Every district centre served: one neither the metro nor the rail
+    // serves gets a line carried on to it from an end next door (as
+    // straight on as may be), or else a short line of its own to the
+    // nearest centre a line serves.
+    const onMetro = () => new Set(best.lines.flatMap((l) => l.nodes));
+    for (let n = 0; n < N; n++) {
+      if (railServes(n) || onMetro().has(n)) continue;
+      let pick = null;
+      for (const l of best.lines) {
+        for (const end of [0, 1]) {
+          const m = end ? l.nodes[l.nodes.length - 1] : l.nodes[0];
+          const e = adj[m].find((x) => other(x, m) === n);
+          if (!e) continue;
+          const inE = end ? l.edges[l.edges.length - 1] : l.edges[0];
+          const turn = angleBetween(mul(leave(inE, m), -1), leave(e, m));
+          if (turn > TURN * 1.6) continue;
+          if (!pick || turn < pick.turn) pick = { turn, l, end, e };
+        }
+      }
+      if (pick) {
+        if (pick.end) {
+          pick.l.nodes.push(n);
+          pick.l.edges.push(pick.e);
+        } else {
+          pick.l.nodes.unshift(n);
+          pick.l.edges.unshift(pick.e);
+        }
+        continue;
+      }
+      const served = onMetro();
+      const e = adj[n].filter((x) => served.has(other(x, n)) || railServes(other(x, n))).sort((a, b) => a.L - b.L)[0];
+      if (e) best.lines.push({ nodes: [n, other(e, n)], edges: [e] });
+    }
+
     // ---- Stations along each link ----
     // At each district centre, and between them about METRO_SPACING apart,
     // clear of the greenway crossing; shared by every line on the link.
@@ -808,7 +849,9 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
     for (const st of stationList) {
       const P = lines[st.lines[0]].pts;
       const at = project(P, st.p);
-      if (st.lines.length === 1) st.p = at.p;
+      // (A district centre's stays right under the centre, where the rail
+      // station is too.)
+      if (st.lines.length === 1 && !st.core) st.p = at.p;
       // The way the line runs through it.
       st.t = unit(sub(pointAlong(P, at.s + 30), pointAlong(P, Math.max(0, at.s - 30))));
     }

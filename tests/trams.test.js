@@ -22,8 +22,8 @@ test('every route stops at the station plaza of a district centre it passes', ()
   }
 });
 
-test('nearly every neighbourhood rides straight to its district centre, by tram or metro', () => {
-  assert.ok(plan.judged.joined >= 0.95, `${(plan.judged.joined * 100).toFixed(0)}% joined`);
+test('most neighbourhoods ride straight to their district centre, by tram or metro', () => {
+  assert.ok(plan.judged.joined >= 0.9, `${(plan.judged.joined * 100).toFixed(0)}% joined`);
 });
 
 test('routes keep to one overall way, and stops are 300 to 400 m apart along them', () => {

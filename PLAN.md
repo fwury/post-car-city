@@ -3,7 +3,7 @@
 The work queued next, in order, with every decision taken so far. Each
 phase builds on the ones before it. Nothing here is started yet.
 
-## Phase 1. Quick fixes
+## Phase 1. Quick fixes (done)
 
 1. **Minimum population 750 000** in the population option, so regional
    rail, metro and a city centre all make sense.
