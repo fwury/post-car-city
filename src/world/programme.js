@@ -34,6 +34,13 @@ const WORSHIP_PER_HOOD = 3;
 const OLD_TOWN_MUSEUMS = 2; // besides the district's own, there too
 const OLD_TOWN_HOTELS = 6;
 const OLD_TOWN_USES = new Set(['museum', 'gallery', 'districtLibrary']);
+const OPERA_FROM = 2.5e6; // people: a city this big has an opera house
+const THEATRES = 8; // a theatre district's
+const THEATRE_GAP = 60; // metres between them
+const SPECIALTY_HOSPITALS = ['childrensHospital', 'cancerCentre', 'researchInstitute', 'rehabHospital', 'eyeHospital']; // a medical district's
+const EMBASSIES = [6, 40]; // at least, at most
+const EMBASSY_PEOPLE = 150000; // people to an embassy or consulate
+const EMBASSY_GAP = 120; // metres between them
 const OFFICE_LIST = 12; // floors of an office tower whose tenants are listed
 const FLAGSHIP_HOTELS = 3; // the business district's, besides the district's own
 const OBSERVATION_BLOCK = [3000, 16000]; // m²: the observation tower's block, its plaza round it
@@ -482,6 +489,62 @@ export function assignProgramme(seed, d, blocks, planned = null) {
       .filter((b) => b.use === 'podium' && b.plots && b.hood === coreHood.id && free(b) && b.area >= OBSERVATION_BLOCK[0] && b.area <= OBSERVATION_BLOCK[1])
       .sort((x, y) => Math.abs(len(sub(centroid(x.pts), S)) - OBSERVATION_REACH) - Math.abs(len(sub(centroid(y.pts), S)) - OBSERVATION_REACH))[0];
     if (site) dedicateBlock(site, 'observationTower');
+  }
+
+  // ---- The city centre's facilities ----
+  // At the neighbourhoods stage 3 chose: the main courthouse facing its
+  // square; the main performing arts centre (and in a big city an opera
+  // house) facing its own, or a theatre district's theatres along its main
+  // streets; the research hospital, or a medical district's hospitals,
+  // whole blocks; and embassies along the district's main streets.
+  const cityPeople = d.stage3.cityPeople || 0;
+  const squareOfHood = (h) => blocks.find((b) => b.use === 'square' && !b.stationPlaza && b.hood === h.id && b.plots);
+  const plazaFor = (h, use) => {
+    const sq = squareOfHood(h);
+    if (!sq) return h.centre;
+    sq.plots[0].dedicated = use;
+    sq.plots[0].also = 'market';
+    return centroid(sq.pts);
+  };
+  const wholeBlockNear = (q, use, h, [lo, hi]) => {
+    const b = blocks
+      .filter((o) => (o.use === 'perimeter' || o.use === 'podium') && o.plots && free(o) && o.area >= lo && o.area <= hi && (!h || o.hood === h.id))
+      .sort((x, y) => len(sub(centroid(x.pts), q)) - len(sub(centroid(y.pts), q)))[0];
+    if (b) dedicateBlock(b, use);
+    return b;
+  };
+  for (const h of hoods) {
+    if (h.role === 'courts') {
+      const q = plazaFor(h, 'courthousePlaza');
+      dedicate(q, 'mainCourthouse', ['main', 'corner', 'unit'], 200, MIN_PLOT.mainCourthouse);
+    } else if (h.role === 'arts') {
+      const q = plazaFor(h, 'artsPlaza');
+      dedicate(q, 'mainArts', ['main', 'corner', 'unit'], 220, MIN_PLOT.mainArts);
+      if (cityPeople >= OPERA_FROM) dedicate(q, 'operaHouse', ['main', 'corner', 'unit'], 260, MIN_PLOT.operaHouse);
+      if (h.cluster) {
+        // Theatres along its main streets, apart.
+        const theatres = [];
+        for (let k = 0; k < THEATRES; k++) {
+          const p = nearest(h.centre, ['main'], 'dedicated', 700, (o) => o.hood === h.id && theatres.every((x) => len(sub(x.c, o.c)) > THEATRE_GAP));
+          if (!p) break;
+          theatres.push(dedicatePlot(p, 'theatre', MIN_PLOT.theatre));
+        }
+      }
+    } else if (h.role === 'medical') {
+      wholeBlockNear(h.centre, 'researchHospital', h, HOSPITAL_BLOCK) || wholeBlockNear(h.centre, 'researchHospital', null, HOSPITAL_BLOCK);
+      if (h.cluster) for (const use of SPECIALTY_HOSPITALS) wholeBlockNear(h.centre, use, h, [MIN_PLOT[use], HOSPITAL_BLOCK[1]]);
+    }
+  }
+  if (cityPeople) {
+    const n = Math.max(EMBASSIES[0], Math.min(EMBASSIES[1], Math.round(cityPeople / EMBASSY_PEOPLE)));
+    const placed = [];
+    const along = plots.filter((p) => p.cls === 'main' && hoods[p.hood] && !hoods[p.hood].core && !hoods[p.hood].oldTown);
+    along.sort((a, b) => toUnit(hash(seed, 'embassy', Math.floor(a.c[0]), Math.floor(a.c[1]))) - toUnit(hash(seed, 'embassy', Math.floor(b.c[0]), Math.floor(b.c[1]))));
+    for (const p of along) {
+      if (placed.length >= n) break;
+      if (taken(p, 'dedicated') || p.cls !== 'main' || placed.some((x) => len(sub(x.c, p.c)) < EMBASSY_GAP)) continue;
+      placed.push(dedicatePlot(p, 'embassy', MIN_PLOT.embassy));
+    }
   }
 
   // ---- More green in the core ----

@@ -155,7 +155,8 @@ export function createNames(seed) {
     district: (d) => place(hashString(d.key), 1),
     // (The city-centre district's core is its business district, by one of
     // the usual names.)
-    hood: (d, h) => (h.core && d.stage3.hoods.some((o) => o.oldTown) ? weightedPick(CBD_NAMES, u(hashString(d.key), 40)) : place(hashString(d.key), 2, h.id)),
+    // (A medical or theatre district, by its own name and what it is.)
+    hood: (d, h) => (h.core && d.stage3.hoods.some((o) => o.oldTown) ? weightedPick(CBD_NAMES, u(hashString(d.key), 40)) : h.suffix ? `${place(hashString(d.key), 2, h.id)} ${h.suffix}` : place(hashString(d.key), 2, h.id)),
     // kind: boulevard, main, local, pedestrian, parkside; shape: { length, curved }.
     street(kind, key, shape = {}, salt = 0) {
       const k = (typeof key === 'number' ? key : hashString(String(key))) + salt * 7919;

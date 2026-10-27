@@ -46,6 +46,14 @@ const FORM_LOW = 0.55; // housing form: rowhouses and villas at the low end...
 const FORM_HIGH = 1.45; // ...mid-rise perimeter blocks at the high end
 const FORM_SCALE = 2500; // metres over which the form of housing changes
 const CENTRE_PEOPLE = 1.35; // the city centre houses this many times a district's people...
+// The city centre's medical or theatre district: by chance, from 2M people
+// (30%) up to 8M (80%), named with one of these (or, now and then, no
+// suffix: famous enough as it is).
+const CLUSTER_FROM = 2e6;
+const CLUSTER_SPAN = 6e6;
+const CLUSTER_CHANCE = [0.3, 0.8];
+const MEDICAL_NAMES = ['Medical District', 'Research District', 'Discovery District', 'Innovation District', 'Health Sciences District', 'Medical District'];
+const ARTS_NAMES = ['Theatre District', 'Entertainment District', 'Cultural District', 'Arts District', 'Theatre District', ''];
 const CBD_PEOPLE = 0.55; // ...though its business district houses this share of what it would
 const CENTRE_FORM = 0.55; // ...its housing no thinner than this, on the scale from rowhouses (0) to perimeter blocks (1)
 const BOULEVARD_BOOST = 0.15; // a little denser along a boulevard
@@ -101,7 +109,7 @@ function along(pts, s) {
   return pts[pts.length - 1];
 }
 
-export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metroIn = () => [], oldTownIn = () => null }) {
+export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metroIn = () => [], oldTownIn = () => null, population = 0 }) {
   const mainStreets = createMainStreets(seed);
   const friction = createNoise(seed, 'neighbourhood-friction');
   // Housing form: perimeter blocks where high, rowhouses and villas where low.
@@ -908,9 +916,46 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       const k = n >= 0 ? label[n] : -1;
       if (k >= 0 && hoods[k]) (hoods[k].metro ||= []).push(st.id);
     }
+    // The city centre's roles: the main courthouse, the main performing
+    // arts centre and the research hospital, each at a neighbourhood with
+    // a metro station (the hospital's next to the campus if it can be). In
+    // a big city, by chance, the hospitals' is a medical district, or the
+    // arts' a theatre district, and may be named for it.
+    if (oldTown) {
+      const u = (...k) => toUnit(hash(seed, 'centre-role', ...keyInts(d.coreInfo), ...k));
+      const open = hoods.filter((h) => !h.core && !h.oldTown && !h.campus);
+      const withMetro = open.filter((h) => h.metro && h.metro.length);
+      const pool = (withMetro.length >= 3 ? withMetro : open).slice().sort((a, b) => u(1, a.id) - u(1, b.id));
+      const campusHood = hoods.find((h) => h.campus);
+      const take = (near) => {
+        if (!pool.length) return null;
+        let k = 0;
+        if (near) for (let i = 1; i < pool.length; i++) if (len(sub(pool[i].centre, near)) < len(sub(pool[k].centre, near))) k = i;
+        return pool.splice(k, 1)[0];
+      };
+      const chance = population < CLUSTER_FROM ? 0 : Math.min(CLUSTER_CHANCE[1], CLUSTER_CHANCE[0] + ((population - CLUSTER_FROM) / CLUSTER_SPAN) * (CLUSTER_CHANCE[1] - CLUSTER_CHANCE[0]));
+      const medical = take(campusHood && campusHood.centre);
+      if (medical) {
+        medical.role = 'medical';
+        if (u(2) < chance) {
+          medical.cluster = true;
+          medical.suffix = MEDICAL_NAMES[Math.floor(u(3) * MEDICAL_NAMES.length)];
+        }
+      }
+      const arts = take();
+      if (arts) {
+        arts.role = 'arts';
+        if (u(4) < chance) {
+          arts.cluster = true;
+          arts.suffix = ARTS_NAMES[Math.floor(u(5) * ARTS_NAMES.length)];
+        }
+      }
+      const courts = take();
+      if (courts) courts.role = 'courts';
+    }
     // The rasters later stages read: residents per m² and neighbourhood per cell.
     const raster = { x0, y0, W, H, cell: CELL, dens, label };
-    return { hoods, chains: again.chains, crossings, lines: streets.lines, raster, oldTown: streets.oldTown };
+    return { hoods, chains: again.chains, crossings, lines: streets.lines, raster, oldTown: streets.oldTown, cityPeople: oldTown ? population : 0 };
   }
 
   // ---- Boundary tracing ----

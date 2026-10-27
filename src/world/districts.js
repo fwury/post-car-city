@@ -225,6 +225,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
       const ot = metro.plan().oldTown;
       return ot && ot.key === d.key ? ot : null;
     },
+    population,
   });
   const parks = createParks(seed, {
     baseOf: (k) => baseOf(k), label: (i, j) => growth.label(i, j), parcel: PARCEL,

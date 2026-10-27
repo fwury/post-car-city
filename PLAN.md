@@ -51,7 +51,7 @@ phase builds on the ones before it. Nothing here is started yet.
      adding main street (stops placed for coverage, routes using local
      tram streets through gaps, and so on).
 
-## Phase 3. City-centre district
+## Phase 3. City-centre district (done; see notes)
 
 5. **Neighbourhood roles**, decided before blocks are built: the business
    district, the old town, the main university campus (Phase 5), and the
@@ -127,6 +127,18 @@ phase builds on the ones before it. Nothing here is started yet.
        "… Theatre District", "… Entertainment District", "… Cultural
        District", "… Arts District", or iconic enough to need no suffix.
    - Scattered along main streets: **embassies and consulates**.
+
+Notes on what was built:
+- The district plaza appears twice in the plan, so both have one: the
+  business district keeps its core square, and the old town's square is
+  the district plaza with city hall facing it.
+- The old town's own square is its plaza; it has no extra small plazas or
+  markets yet beyond its neighbourhood squares.
+- Trams can stop on the pedestrian main street (side platforms, no
+  signals), but the tram planner does not route along it yet: Phase 4.
+- An opera house from 2.5M people. Embassies: one per 150k people, 6 to 40.
+- A medical district places the specialised hospitals there are blocks
+  for; some seeds get fewer than five.
 
 ## Phase 4. Trams v2
 

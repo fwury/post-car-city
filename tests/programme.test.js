@@ -148,3 +148,21 @@ test('the business district: all podiums, a convention centre, flagship hotels, 
   assert.ok(offices.length > 0 && offices.length < towers.length, `${offices.length} of ${towers.length} towers offices`);
   assert.ok(offices.every((p) => !p.dwellings));
 });
+
+test('the city centre has its main courthouse and arts centre on their plazas, a research hospital and embassies', () => {
+  const d = world.cityCores.map((c) => world.district(c)).find((x) => x.stage3.hoods.some((h) => h.oldTown));
+  const plots = plotsOf(d);
+  const one = (use) => plots.filter((p) => has(p, use));
+  for (const [use, plaza] of [['mainCourthouse', 'courthousePlaza'], ['mainArts', 'artsPlaza']]) {
+    const [b] = one(use);
+    const [q] = one(plaza);
+    assert.ok(b && q, `no ${use} or ${plaza}`);
+    assert.ok(near(b.c, q.c, 230), `${use} is not on its plaza`);
+    // (At a neighbourhood with a metro station.)
+    const h = d.stage3.hoods.find((x) => x.id === q.hood);
+    assert.ok(h.metro && h.metro.length, `${use}'s neighbourhood has no metro station`);
+  }
+  assert.ok(one('researchHospital').length >= 1, 'no research hospital');
+  const embassies = one('embassy');
+  assert.ok(embassies.length >= 6, `${embassies.length} embassies`);
+});
