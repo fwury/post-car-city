@@ -145,7 +145,7 @@ function tramPathsFor(d, nb, T) {
   if (!byD) tramPathCache.set(key, (byD = new Map()));
   T = T || NO_TRAMS;
   const [ox, oy] = d.origin;
-  const p = { routed: new Path2D(), outer: [new Path2D(), new Path2D()], core: [new Path2D(), new Path2D()], blvd: [new Path2D(), new Path2D()], rails: [], loops: new Path2D(), loopList: [] };
+  const p = { routed: new Path2D(), outer: [new Path2D(), new Path2D()], core: [new Path2D(), new Path2D()], ped: [new Path2D(), new Path2D()], blvd: [new Path2D(), new Path2D()], rails: [], loops: new Path2D(), loopList: [] };
   // A line's routed and other stretches.
   const pieces = (l) => {
     const P = l.points;
@@ -175,6 +175,12 @@ function tramPathsFor(d, nb, T) {
   for (const l of nb.lines) {
     for (const pc of pieces(l)) {
       if (pc.tram) addPoly(p.routed, pc.pts, ox, oy, false);
+      // (The old town's pedestrian main street.)
+      if (l.pedestrian) {
+        addPoly(p.ped[pc.tram ? 0 : 1], pc.pts, ox, oy, false);
+        if (pc.tram) p.rails.push(...streetExtras(pc.pts, 'pedestrianMainStreet').rails);
+        continue;
+      }
       for (const run of splitByPolygon(pc.pts, corePoly)) {
         addPoly((run.inside ? p.core : p.outer)[pc.tram ? 0 : 1], run.pts, ox, oy, false);
         if (pc.tram) p.rails.push(...streetExtras(run.pts, run.inside ? 'coreMainStreet' : 'mainStreet').rails);
@@ -194,7 +200,7 @@ function tramPathsFor(d, nb, T) {
   // Turning track: from each track of the street a route comes in on to
   // the same of the street it leaves by (on the right going one way, the
   // left going the other), curving round inside the junction.
-  const offsetOf = (k) => sectionFeatures(d.network.lines.some((l) => l.key === k) ? 'boulevard' : 'mainStreet').tram.map(Math.abs)[0] || 3.35;
+  const offsetOf = (k) => sectionFeatures(d.network.lines.some((l) => l.key === k) ? 'boulevard' : nb.lines.some((l) => l.key === k && l.pedestrian) ? 'pedestrianMainStreet' : 'mainStreet').tram.map(Math.abs)[0] || 3.35;
   for (const x of T.turns) {
     const right = (v) => [-v[1], v[0]];
     for (const sg of [1, -1]) {
@@ -915,6 +921,7 @@ function drawDetailedStreets(ctx, view, world, hoods, lines, place, px) {
     for (const { d, t } of trams) {
       items.push({ path: t.outer[k], type: `mainStreet${planted}`, place: () => place(d) });
       items.push({ path: t.core[k], type: `coreMainStreet${planted}`, place: () => place(d) });
+      items.push({ path: t.ped[k], type: `pedestrianMainStreet${planted}`, place: () => place(d) });
       items.push({ path: t.blvd[k], type: `boulevard${planted}`, place: () => place(d) });
     }
   }

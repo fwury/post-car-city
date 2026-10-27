@@ -30,7 +30,7 @@ function along(P, q) {
 const tramStreets = (d) => [...d.stage3.lines.map((l) => l.points), ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => l.points)];
 
 test('every street section adds up to its width, its bands where the spec has them', () => {
-  const widths = { mainStreet: 31.0, boulevard: 35.2, coreMainStreet: 37.0, coreCrossStreet: 26.8, coreCrossStreetNarrow: 21.6, collector: 21.4, localStreet: 13.8, pedestrianStreet: 18.0, laneway: 7.0 };
+  const widths = { mainStreet: 31.0, pedestrianMainStreet: 31.0, boulevard: 35.2, coreMainStreet: 37.0, coreCrossStreet: 26.8, coreCrossStreetNarrow: 21.6, collector: 21.4, localStreet: 13.8, pedestrianStreet: 18.0, laneway: 7.0 };
   for (const [type, w] of Object.entries(widths)) {
     const T = STREET_TYPES[type];
     const sum = 2 * T.side.reduce((a, [, x]) => a + x, 0) + T.centre.reduce((a, [, x]) => a + x, 0);
@@ -93,8 +93,10 @@ test('tram stops are 300 to 400 m apart, each at a signalised junction', () => {
       const a = [...set].sort((x, y) => x - y);
       for (let i = 1; i < a.length; i++) gaps.push(a[i] - a[i - 1]);
     }
-    // Every stop stands at a signalised junction (or crossing).
+    // Every stop stands at a signalised junction (or crossing), but on a
+    // pedestrian main street, where there is no traffic to stop.
     for (const st of b.tramStops) {
+      if (st.type.startsWith('pedestrian')) continue;
       const back = [st.p[0] - st.dir[0] * (st.length / 2 + 1), st.p[1] - st.dir[1] * (st.length / 2 + 1)];
       const j = b.intersections.filter((x) => ['D', 'XING', 'GREEN'].includes(x.kind)).find((x) => dist(x.p, back) < 55);
       assert.ok(j, `${d.key}: a tram stop at ${st.p.map(Math.round)} with no signals behind it`);
@@ -121,7 +123,10 @@ test('laneways meet only local streets', () => {
 
 test('every point of a tram street is within 115 m of a crossing', () => {
   for (const { d, b } of plans) {
+    // (A pedestrian main street is crossed anywhere.)
+    const ped = new Set(d.stage3.lines.filter((l) => l.pedestrian).map((l) => l.points));
     for (const P of tramStreets(d)) {
+      if (ped.has(P)) continue;
       const xs = b.intersections
         .filter((j) => ['D', 'XING', 'GREEN', 'ZEBRA'].includes(j.kind) || (j.kind === 'CONT' && !j.platform))
         .map((j) => along(P, j.p))
@@ -171,4 +176,30 @@ test('side streets meeting a tram street from opposite sides line up or keep 30 
     }
   }
   assert.ok(close <= tees * 0.01, `${close / 2} pairs of T junctions within 30 m of each other across a tram street`);
+});
+
+test('the old town\'s pedestrian main street has no signals or crossings along it, and its stops side platforms', () => {
+  let n = 0;
+  for (const { d, b } of plans) {
+    const ped = d.stage3.lines.find((l) => l.pedestrian);
+    if (!ped) continue;
+    n++;
+    const on = (p) => {
+      let r = Infinity;
+      for (let i = 1; i < ped.points.length; i++) {
+        const [a, c] = [ped.points[i - 1], ped.points[i]];
+        const ab = [c[0] - a[0], c[1] - a[1]];
+        const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ab[0] + (p[1] - a[1]) * ab[1]) / (ab[0] ** 2 + ab[1] ** 2 || 1)));
+        r = Math.min(r, dist(p, [a[0] + ab[0] * t, a[1] + ab[1] * t]));
+      }
+      return r < 3;
+    };
+    const ends = [ped.points[0], ped.points[ped.points.length - 1]];
+    for (const j of b.intersections) {
+      if (!on(j.p) || ends.some((e) => dist(e, j.p) < 20)) continue;
+      assert.ok(!['D', 'XING', 'ZEBRA', 'CONT'].includes(j.kind), `${d.key}: a ${j.kind} junction on the pedestrian main street at ${j.p.map(Math.round)}`);
+    }
+    for (const st of b.tramStops) if (st.type.startsWith('pedestrian')) assert.equal(st.kind, 'side');
+  }
+  assert.ok(n >= 1, 'no old town');
 });

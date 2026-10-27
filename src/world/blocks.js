@@ -1685,16 +1685,22 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // The old town is a pedestrian zone: its local streets are given over
     // to people on foot (and bikes), as in the old centre of a European
     // city; main streets and boulevards still cross it.
+    // (So is the old-town neighbourhood beside the core, all of it.)
     const coreSquare = squareOf.get(0);
-    if (coreSquare) {
-      const c = axes(coreSquare.pts).c;
+    const oldHood = hoods.find((h) => h.oldTown);
+    const inOldHood = (q) => !!oldHood && pointInPolygon(q[0], q[1], oldHood.polygon);
+    if (coreSquare || oldHood) {
+      const c = coreSquare ? axes(coreSquare.pts).c : null;
       for (const lf of leaves) {
         lf.tags.forEach((t, i) => {
           if (t.kind !== 'local') return;
           const a = lf.pts[i];
           const b = lf.pts[(i + 1) % lf.pts.length];
           const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-          if (inOldTown(m) || len(sub(m, c)) < PEDESTRIAN_ZONE) {
+          if (inOldHood(m)) {
+            pedestrianiseStreet(t, oldHood.centre);
+            t.reach = Infinity;
+          } else if (c && (inOldTown(m) || len(sub(m, c)) < PEDESTRIAN_ZONE)) {
             pedestrianiseStreet(t, c);
             t.reach = Infinity; // (the whole street, not cut short partway)
           }
@@ -2015,7 +2021,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     };
     const { junctions: laidOut, stops: tramStopList } = planJunctions(hashString(d.key), {
       majors: [
-        ...st.lines.map((l) => tramStreet(l, 'mainStreet', (q) => (corePoly && pointInPolygon(q[0], q[1], corePoly) ? 'coreMainStreet' : 'mainStreet'))),
+        ...st.lines.map((l) => (l.pedestrian ? { ...tramStreet(l, 'pedestrianMainStreet', () => 'pedestrianMainStreet'), pedestrian: true } : tramStreet(l, 'mainStreet', (q) => (corePoly && pointInPolygon(q[0], q[1], corePoly) ? 'coreMainStreet' : 'mainStreet')))),
         ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => tramStreet(l, 'boulevard', () => 'boulevard')),
       ],
       // (A podium core's streets are core residential streets.)
