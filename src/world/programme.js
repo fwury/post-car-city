@@ -31,6 +31,9 @@ import {
 } from './uses.js';
 
 const WORSHIP_PER_HOOD = 3;
+const OLD_TOWN_MUSEUMS = 2; // besides the district's own, there too
+const OLD_TOWN_HOTELS = 6;
+const OLD_TOWN_USES = new Set(['museum', 'gallery', 'districtLibrary']);
 const ELEMENTARY_PER_HOOD = 2;
 const SCHOOL_BLOCK = [0.3e4, 1.3e4]; // m², net: a block an elementary school takes
 const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
@@ -378,6 +381,32 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   const free = (b) => (b.plots || []).every((p) => !p.dedicated && !p.ground && !p.upper);
   const floorOf = (use) => (USES[use].floor === 'upper' ? 'upper' : USES[use].floor === 'dedicated' ? 'dedicated' : 'ground');
 
+  // ---- The old town ----
+  // In the city-centre district, the old-town neighbourhood: its square the
+  // district plaza with city hall facing it; the main library, museums and
+  // the tourist centre in its old buildings, and boutique hotels in its
+  // perimeter blocks (no big buildings of their own).
+  const oldHood = hoods.find((h) => h.oldTown);
+  if (oldHood) {
+    const inOld = (p) => p.hood === oldHood.id;
+    const sq = blocks.find((b) => b.use === 'square' && b.hood === oldHood.id && b.plots);
+    const q = sq ? centroid(sq.pts) : oldHood.centre;
+    if (sq) sq.plots[0].dedicated = 'districtPlaza';
+    dedicate(q, 'cityHall', ['main', 'corner', 'unit'], 160, MIN_PLOT.cityHall);
+    dedicate(oldHood.centre, 'mainLibrary', ['main', 'corner', 'unit'], 350, MIN_PLOT.mainLibrary);
+    for (let k = 0; k < OLD_TOWN_MUSEUMS; k++) dedicate(oldHood.centre, 'museum', ['main', 'corner', 'unit'], 400, MIN_PLOT.museum);
+    const tc = nearest(oldHood.centre, ['main', 'corner', 'unit'], 'ground', 300, inOld);
+    if (tc) put(tc, 'touristCentre', 'ground');
+    // (Spread about it.)
+    const hotels = [];
+    for (let k = 0; k < OLD_TOWN_HOTELS; k++) {
+      const p = nearest(oldHood.centre, ['main', 'corner', 'unit'], 'upper', 500, (o) => inOld(o) && hotels.every((x) => len(sub(x.c, o.c)) > 90));
+      if (!p) break;
+      put(p, 'boutiqueHotel', 'upper');
+      hotels.push(p);
+    }
+  }
+
   // ---- Each neighbourhood's own ----
   // (A neighbourhood with a park has its community centre built into it.)
   const withPark = new Set(blocks.filter((b) => b.use === 'park').map((b) => b.hood));
@@ -437,12 +466,15 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   }
 
   // ---- The district's own ----
-  const core = sqCentre.get(0) || S;
+  const coreAt = sqCentre.get(0) || S;
   const twoOrThree = toUnit(hash(seed, 'district-share', ...keyInts(d.coreInfo)));
   const extra = [];
   if (twoOrThree < 0.4) extra.push(['departmentStore', 1, 'core']);
   if (twoOrThree > 0.6) extra.push(['courthouse', 1, 'core']);
   for (const [use, count, where] of DISTRICT_LIST.concat(extra)) {
+    // (In the city-centre district, the museums, galleries and library
+    // are the old town's.)
+    const core = oldHood && OLD_TOWN_USES.has(use) ? oldHood.centre : coreAt;
     for (let k = 0; k < count; k++) {
       const slot = floorOf(use);
       if (where === 'large') {

@@ -58,6 +58,8 @@ export const BLOCK_SIZES = {
   rowhouse: { long: 240, short: 86, min: 60, minLong: 95 },
   podium: { long: 165, short: 135, min: 80 },
   campus: { long: 270, short: 220, min: 110 },
+  // (The old town's perimeter blocks: smaller, cut less evenly.)
+  oldTown: { long: 115, short: 85, min: 45 },
 };
 const CORNER_GAP = 28; // metres a new street keeps from a corner of the block it splits
 const ALIGN = 34; // a new street this close to one meeting the far side lines up with it
@@ -963,8 +965,12 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // round it the old buildings (its places of worship, museum, library,
     // courthouse...), traditional perimeter blocks with pedestrian streets
     // between them; the podiums and towers stand round it.
+    // (In the city-centre district the old town is a neighbourhood of its
+    // own beside the core, which is all podiums.)
     const oldCentre = hoods[0] && hoods[0].core ? hoods[0].centre : d.station;
-    const inOldTown = (q) => !!(hoods[0] && hoods[0].core) && len(sub(q, oldCentre)) < OLD_TOWN;
+    const oldHood = hoods.find((h) => h.oldTown);
+    const inOldHood = (q) => !!oldHood && pointInPolygon(q[0], q[1], oldHood.polygon);
+    const inOldTown = (q) => (oldHood ? inOldHood(q) : !!(hoods[0] && hoods[0].core) && len(sub(q, oldCentre)) < OLD_TOWN);
     const zoneOf = (node, ax) => {
       const h = hoodAt(ax.c);
       // A campus takes the middle of its neighbourhood; homes round it.
@@ -1169,9 +1175,10 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       const size = BLOCK_SIZES[zone];
       const across = opts.along === undefined ? !(zone === 'rowhouse' && ax.L <= size.long && ax.W > size.short) : !opts.along;
       const dirs = across ? [ax.v, ax.u] : [ax.u, ax.v];
-      const t0 = opts.at ?? 0.4 + rng.next() * 0.2;
+      const messy = zone === 'oldTown' ? 2 : 1;
+      const t0 = opts.at ?? 0.5 + (rng.next() - 0.5) * 0.2 * messy;
       const ts = opts.at !== undefined ? [opts.at] : [t0, 0.5, 1 - t0, 0.36, 0.64, 0.3, 0.7];
-      const jitter = (rng.next() - 0.5) * 0.3;
+      const jitter = (rng.next() - 0.5) * 0.3 * messy;
       const final = size.long * size.short * 2.5;
       // One candidate cut from e1 to e2 (a carried-on street is already lined up at e1).
       // Streets already meeting an edge at a point (from either side).
@@ -1506,7 +1513,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
           }
           continue;
         }
-        const sizeZone = zone;
+        const sizeZone = zone === 'perimeter' && oldHood && inOldHood(ax.c) ? 'oldTown' : zone;
         const size = BLOCK_SIZES[sizeZone];
         // (A rowhouse block must also be near enough rectangular for its
         // terraces; one that is not is split again, if it is big enough.)
@@ -1687,8 +1694,6 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // city; main streets and boulevards still cross it.
     // (So is the old-town neighbourhood beside the core, all of it.)
     const coreSquare = squareOf.get(0);
-    const oldHood = hoods.find((h) => h.oldTown);
-    const inOldHood = (q) => !!oldHood && pointInPolygon(q[0], q[1], oldHood.polygon);
     if (coreSquare || oldHood) {
       const c = coreSquare ? axes(coreSquare.pts).c : null;
       for (const lf of leaves) {
