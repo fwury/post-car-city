@@ -27,6 +27,11 @@ const LINK_CLEAR = 250; // metres a station keeps from where the line crosses a 
 const TURN = (60 * Math.PI) / 180; // the most a line turns at a district centre
 const BEND = (150 * Math.PI) / 180; // and all told, end to end
 const UNSERVED = 3; // what a network loses for each district centre neither it nor the rail serves
+const OLD_TOWN_ALONG = [600, 700, 800]; // metres out from the city centre's core along a metro link the old town's middle may be...
+const OLD_TOWN_OFF = 340; // ...and to one side of it
+const OLD_TOWN_CLEAR = 280; // metres it keeps from any boulevard, at least
+const OLD_TOWN_EDGE = 500; // and from the district's edge
+const OLD_TOWN_REJOIN = 500; // metres on from it the bent track rejoins its boulevard
 const PER_STATION = 30000; // people for each metro station, about
 const PLANS = 40; // whole networks laid out and judged
 const MAX_DISTRICTS = 12; // district centres on a line, at most (a few more to reach the city's edge)
@@ -107,7 +112,7 @@ export function minRadius(P) {
 const CONTROL = 450;
 function smoothLine(P, fixed = []) {
   const L = lengthOf(P);
-  const at = fixed.map((q) => project(P, q).s);
+  const at = fixed.map((q) => project(P, q).s).sort((a, b) => a - b);
   const marks = [0, L, ...at];
   for (let k = 0; k < at.length + 1; k++) {
     const a = k ? at[k - 1] : 0;
@@ -116,7 +121,15 @@ function smoothLine(P, fixed = []) {
     for (let q = 1; q <= n; q++) marks.push(a + ((b - a) * q) / (n + 1));
   }
   marks.sort((a, b) => a - b);
-  let C = marks.filter((m, k) => !k || m - marks[k - 1] > 60).map((m) => pointAlong(P, m));
+  // (Control points well apart, but never losing a fixed one.)
+  const keep = [];
+  for (const m of marks) {
+    const fx = at.includes(m);
+    const prev = keep[keep.length - 1];
+    if (prev === undefined || m - prev.m > 60) keep.push({ m, fx });
+    else if (fx && !prev.fx) keep[keep.length - 1] = { m, fx };
+  }
+  let C = keep.map(({ m }) => pointAlong(P, m));
   const isFixed = (q) => fixed.some((f) => len(sub(f, q)) < 1);
   for (let changed = true; changed && C.length > 2; ) {
     changed = false;
@@ -712,6 +725,82 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
       if (e) best.lines.push({ nodes: [n, other(e, n)], edges: [e] });
     }
 
+    // ---- The old town ----
+    // Beside the city centre's core, between its boulevards: a pedestrian
+    // quarter with a metro station at its middle. The metro's line out of
+    // the centre nearest it is bent through it (the tunnel need not keep
+    // under the boulevard), with a station there.
+    let oldTown = null;
+    {
+      const core = B[0].station;
+      const blvds = linesOf(0);
+      const fromBlvd = (q) => {
+        let r = Infinity;
+        for (const P of blvds) r = Math.min(r, project(P, q).r);
+        return r;
+      };
+      const ring = B[0].ring;
+      const inside = (q) => {
+        let c = false;
+        for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+          if (ring[i][1] > q[1] !== ring[j][1] > q[1] && q[0] < ((ring[j][0] - ring[i][0]) * (q[1] - ring[i][1])) / (ring[j][1] - ring[i][1]) + ring[i][0]) c = !c;
+        }
+        return c;
+      };
+      const fromRing = (q) => project(ring.concat([ring[0]]), q).r;
+      const used = new Set(best.lines.flatMap((l) => l.edges).filter((e) => e.i === 0 || e.j === 0));
+      let pick = null;
+      for (const e of [...used].sort((a, b) => a.id - b.id)) {
+        const d = leave(e, 0);
+        const n = [-d[1], d[0]];
+        for (const along of OLD_TOWN_ALONG) {
+          for (const side of [1, -1]) {
+            const q = add(core, add(mul(d, along), mul(n, side * OLD_TOWN_OFF)));
+            if (!inside(q) || (isWater && isWater(q[0], q[1])) || fromRing(q) < OLD_TOWN_EDGE) continue;
+            const r = fromBlvd(q);
+            if (r < OLD_TOWN_CLEAR) continue;
+            const score = Math.min(r, OLD_TOWN_OFF * 1.5) - Math.abs(along - OLD_TOWN_ALONG[1]) * 0.3;
+            if (!pick || score > pick.score) pick = { score, q, e, d };
+          }
+        }
+      }
+      if (pick) {
+        // The link's track bent through it, rejoining the boulevard a way on.
+        const e = pick.e;
+        const fwd = e.i === 0 ? e.pts : e.pts.slice().reverse();
+        const pr = project(fwd, pick.q);
+        const sR = Math.min(lengthOf(fwd) - 50, pr.s + OLD_TOWN_REJOIN);
+        const R = pointAlong(fwd, sR);
+        const tail = fwd.filter((_, i) => lengthOf(fwd.slice(0, i + 1)) > sR);
+        const knots = [fwd[0], pick.q, R];
+        // (A smooth curve through the three, then on along the boulevard.)
+        const curve = [];
+        const t0 = unit(sub(pick.q, fwd[0]));
+        const t2 = unit(sub(pointAlong(fwd, sR + 20), R));
+        const tq = unit(sub(R, fwd[0]));
+        const herm = (a, b, ta, tb, k) => {
+          const L = len(sub(b, a));
+          for (let i = 0; i <= k; i++) {
+            const t = i / k;
+            const h00 = 2 * t ** 3 - 3 * t ** 2 + 1;
+            const h10 = t ** 3 - 2 * t ** 2 + t;
+            const h01 = -2 * t ** 3 + 3 * t ** 2;
+            const h11 = t ** 3 - t ** 2;
+            curve.push([0, 1].map((c) => h00 * a[c] + h10 * L * ta[c] + h01 * b[c] + h11 * L * tb[c]));
+          }
+        };
+        herm(knots[0], knots[1], t0, tq, 20);
+        curve.pop();
+        herm(knots[1], knots[2], tq, t2, 20);
+        const pts = resample([...curve, ...tail], SAMPLE);
+        e.pts = e.i === 0 ? pts : pts.slice().reverse();
+        e.L = lengthOf(e.pts);
+        e.crossAt = project(e.pts, e.cross).s;
+        e.oldTownAt = project(e.pts, pick.q).s;
+        oldTown = { p: pick.q, dir: pick.d, key: B[0].key };
+      }
+    }
+
     // ---- Stations along each link ----
     // At each district centre, and between them about METRO_SPACING apart,
     // clear of the greenway crossing; shared by every line on the link.
@@ -727,10 +816,25 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
     for (const l of best.lines) {
       for (const e of l.edges) {
         if (linkStations.has(e.id)) continue;
-        const n = Math.max(0, Math.round(e.L / METRO_SPACING) - 1);
+        // (Through the old town: a station there, the rest spaced either side.)
+        const marks = [];
+        const spread = (a, b) => {
+          const n = Math.max(0, Math.round((b - a) / METRO_SPACING) - 1);
+          for (let k = 1; k <= n; k++) marks.push(a + ((b - a) * k) / (n + 1));
+        };
+        if (e.oldTownAt !== undefined) {
+          spread(0, e.oldTownAt);
+          spread(e.oldTownAt, e.L);
+        } else spread(0, e.L);
         const list = [];
-        for (let k = 1; k <= n; k++) {
-          let s = (e.L * k) / (n + 1);
+        const at = new Map(); // station -> where along the link
+        if (e.oldTownAt !== undefined) {
+          const st = station(pointAlong(e.pts, e.oldTownAt), B[0].key, false, { oldTown: true });
+          list.push(st);
+          at.set(st, e.oldTownAt);
+        }
+        for (const m of marks) {
+          let s = m;
           // Clear of the greenway, on the side nearer its even place.
           if (Math.abs(s - e.crossAt) < LINK_CLEAR) s = e.crossAt + (s < e.crossAt ? -LINK_CLEAR : LINK_CLEAR);
           const p = pointAlong(e.pts, s);
@@ -739,11 +843,17 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
           // serves both.)
           const shared = stationList.find((o) => len(sub(o.p, p)) < SHARE_STATION);
           if (shared) {
-            if (!list.includes(shared)) list.push(shared);
+            if (!list.includes(shared)) {
+              list.push(shared);
+              at.set(shared, s);
+            }
             continue;
           }
-          list.push(station(p, s < e.crossAt ? B[e.i].key : B[e.j].key, false));
+          const st = station(p, s < e.crossAt ? B[e.i].key : B[e.j].key, false);
+          list.push(st);
+          at.set(st, s);
         }
+        list.sort((a, b) => at.get(a) - at.get(b));
         linkStations.set(e.id, list);
       }
     }
@@ -823,7 +933,7 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
       }
       const track = smoothLine(
         pts,
-        l.nodes.map((n) => S[n]).concat(t0 ? [t0.pts[t0.pts.length - 1]] : [], t1 ? [t1.pts[t1.pts.length - 1]] : []),
+        l.nodes.map((n) => S[n]).concat(t0 ? [t0.pts[t0.pts.length - 1]] : [], t1 ? [t1.pts[t1.pts.length - 1]] : [], oldTown && l.edges.some((e) => e.oldTownAt !== undefined) ? [oldTown.p] : []),
       );
       for (const st of stops) if (!st.lines.includes(k)) st.lines.push(k);
       // The stretches between district centres, each with how many lines
@@ -845,6 +955,16 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
       if (t1) pieces.push({ pts: track.filter((_, i) => along[i] >= at[at.length - 1] - SAMPLE), rank: 0, of: 1 });
       return { id: k, name: String(k + 1), colour: METRO_COLOURS[k % METRO_COLOURS.length], nodes: l.nodes.map((n) => B[n].key), pts: track, pieces, stations: stops.map((s) => s.id) };
     });
+    // (The old town centred where the line, eased, passes its site.)
+    if (oldTown) {
+      const st = stationList.find((x) => x.oldTown);
+      const L = lines.find((x) => st && st.lines.includes(x.id));
+      if (st && L) {
+        const pr = project(L.pts, oldTown.p);
+        oldTown.p = pr.p;
+        st.p = pr.p.slice();
+      }
+    }
     // Stations sit on their lines' track.
     for (const st of stationList) {
       const P = lines[st.lines[0]].pts;
@@ -866,6 +986,7 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
     }
     planned.lines = lines;
     planned.stations = stationList;
+    planned.oldTown = oldTown;
     planned.judged = best.j;
     planned.target = target;
     return planned;

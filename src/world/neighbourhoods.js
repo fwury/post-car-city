@@ -45,6 +45,8 @@ const CORE_FADE = 900; // ...fading out over about this many metres
 const FORM_LOW = 0.55; // housing form: rowhouses and villas at the low end...
 const FORM_HIGH = 1.45; // ...mid-rise perimeter blocks at the high end
 const FORM_SCALE = 2500; // metres over which the form of housing changes
+const CENTRE_PEOPLE = 1.35; // the city centre houses this many times a district's people...
+const CENTRE_FORM = 0.55; // ...its housing no thinner than this, on the scale from rowhouses (0) to perimeter blocks (1)
 const BOULEVARD_BOOST = 0.15; // a little denser along a boulevard
 const CAMPUS_METRO = 900; // metres from a metro station a campus is sought
 const CAMPUS_CHANCE = 0.35; // share of districts with a campus neighbourhood (university, hospital)
@@ -98,7 +100,7 @@ function along(pts, s) {
   return pts[pts.length - 1];
 }
 
-export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metroIn = () => [] }) {
+export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metroIn = () => [], oldTownIn = () => null }) {
   const mainStreets = createMainStreets(seed);
   const friction = createNoise(seed, 'neighbourhood-friction');
   // Housing form: perimeter blocks where high, rowhouses and villas where low.
@@ -216,6 +218,8 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     // ---- People ----
     // Residents per m² of land: densest around the station, a little denser
     // along boulevards, and varying smoothly with the form of housing.
+    // (Never rowhouse-thin in the city centre.)
+    const centreForm = oldTownIn(d) ? CENTRE_FORM : 0;
     const onBlvd = new Uint8Array(N);
     for (const l of d.network.lines) stamp(CELL, onBlvd, W, H, x0, y0, l.points);
     const fromBlvd = distanceField(CELL, onBlvd, W, H);
@@ -223,14 +227,15 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     let people = 0;
     for (const n of land) {
       const r = Math.hypot(cx(n) - S[0], cy(n) - S[1]);
-      const f = Math.min(1, Math.max(0, form.fbm(cx(n) / FORM_SCALE, cy(n) / FORM_SCALE, 2) * 1.8 + 0.5));
+      const f = Math.min(1, Math.max(centreForm, form.fbm(cx(n) / FORM_SCALE, cy(n) / FORM_SCALE, 2) * 1.8 + 0.5));
       dens[n] = BASE_DENSITY * (1 + CORE_BOOST * Math.exp(-((r / CORE_FADE) ** 2))) * (FORM_LOW + (FORM_HIGH - FORM_LOW) * f) * (1 + BOULEVARD_BOOST * Math.exp(-fromBlvd[n] / 250));
       people += dens[n] * CELL * CELL;
     }
     // Every district houses about as many people (more or less dense as its
     // land is less or more), within what its housing allows: a large outer
     // district is rowhouses, a small one built up.
-    const want = PEOPLE_PER_DISTRICT * (DISTRICT_SPREAD[0] + (DISTRICT_SPREAD[1] - DISTRICT_SPREAD[0]) * toUnit(hash(seed, 'district-people', ...keyInts(d.coreInfo))));
+    // (The city centre more: perimeter blocks and towers throughout.)
+    const want = PEOPLE_PER_DISTRICT * (DISTRICT_SPREAD[0] + (DISTRICT_SPREAD[1] - DISTRICT_SPREAD[0]) * toUnit(hash(seed, 'district-people', ...keyInts(d.coreInfo)))) * (oldTownIn(d) ? CENTRE_PEOPLE : 1);
     const scale = Math.max(DENSITY_SCALE[0], Math.min(DENSITY_SCALE[1], want / Math.max(1, people)));
     for (const n of land) dens[n] *= scale;
     people *= scale;
@@ -250,6 +255,12 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     // neighbourhood), then centres along the boulevards, then the rest.
     const centres = [[S[0], S[1]]];
     const onBoulevard = [{ t: null }];
+    // (In the city centre, the old town next, round its metro station.)
+    const oldTown = oldTownIn(d);
+    if (oldTown) {
+      centres.push(oldTown.p.slice());
+      onBoulevard.push({ t: null });
+    }
     const spacing = Math.sqrt(NEIGHBOURHOOD_AREA) * 1.05;
     const farFrom = (p, r) => centres.every((c) => len(sub(c, p)) >= r);
     const lines = d.network.lines.filter((l) => l.kind !== 'roundabout').slice().sort((a, b) => (a.key < b.key ? -1 : 1));
@@ -636,7 +647,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       const poly = rings[0] || [];
       const holes = rings.slice(1);
       const area = poly.length > 2 ? polygonArea(poly) - holes.reduce((a, r) => a + (r.length > 2 ? polygonArea(r) : 0), 0) : 0;
-      return { id: k, key: `${d.key}:n${k}`, core: k === 0, centre: c, onBoulevard: onBoulevard[k].t, polygon: poly, holes, area };
+      return { id: k, key: `${d.key}:n${k}`, core: k === 0, ...(oldTown && k === 1 ? { oldTown: true } : {}), centre: c, onBoulevard: onBoulevard[k].t, polygon: poly, holes, area };
     });
 
     // ---- Main streets ----
@@ -659,7 +670,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       }
     }
     for (const h of hoods) h.seed = h.centre;
-    const streets = mainStreets(d, hoods, chains, { mask, label, W, H, x0, y0, N, fromEdge, cellOf, rail: railIn(d) }, crossings);
+    const streets = mainStreets(d, hoods, chains, { mask, label, W, H, x0, y0, N, fromEdge, cellOf, rail: railIn(d), oldTown }, crossings);
 
     // ---- Regrow around the main streets ----
     // Each neighbourhood now grows out from its own main street (the stretch
@@ -833,6 +844,37 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       for (const [n, l] of set) label[n] = l;
       stray = next;
     }
+    // The old town is exactly its frame: the land inside is its, the land
+    // outside its neighbours'.
+    if (streets.oldTown) {
+      const F = streets.oldTown.frame;
+      const strays = [];
+      for (const n of land) {
+        const inF = pointInPolygon(cx(n), cy(n), F);
+        if (inF) label[n] = 1;
+        else if (label[n] === 1) {
+          label[n] = OUTSIDE;
+          strays.push(n);
+        }
+      }
+      for (let pass = 0; pass < 400 && strays.length; pass++) {
+        const next = [];
+        const set = [];
+        for (const n of strays) {
+          let best = -1;
+          let bc = 0;
+          const counts = new Map();
+          for (const m of [n - 1, n + 1, n - W, n + W]) if (label[m] >= 0 && label[m] !== 1) counts.set(label[m], (counts.get(label[m]) || 0) + 1);
+          for (const [l, c] of [...counts].sort((x, y) => x[0] - y[0])) if (c > bc) [best, bc] = [l, c];
+          if (best < 0) next.push(n);
+          else set.push([n, best]);
+        }
+        for (const [n, l] of set) label[n] = l;
+        if (next.length === strays.length) break;
+        strays.length = 0;
+        strays.push(...next);
+      }
+    }
     const again = trace(label, W, H, x0, y0, total);
     for (const h of hoods) {
       const rings = again.polygons[h.id] || [];
@@ -847,7 +889,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       h.campus = centres[h.id] === campus;
       // People per km² of the neighbourhood's land, and the housing that implies.
       h.density = h.area > 0 ? Math.round(pop[h.id] / (h.area / 1e6)) : 0;
-      h.character = h.core ? 'core' : h.campus ? 'campus' : 'perimeter blocks';
+      h.character = h.core ? 'core' : h.oldTown ? 'old town' : h.campus ? 'campus' : 'perimeter blocks';
     }
     // One form of housing to a neighbourhood: perimeter blocks mostly, and
     // rowhouses (for families after a quieter street) in the least dense
@@ -855,7 +897,8 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     {
       const plain = hoods.filter((h) => h.character === 'perimeter blocks').sort((a, b) => a.density - b.density || a.id - b.id);
       const k = Math.round(plain.length * ROWHOUSE_SHARE);
-      for (const h of plain.slice(0, k)) if (h.density < ROWHOUSE_DENSITY) h.character = 'rowhouses';
+      // (Never in the city centre: perimeter blocks throughout.)
+      if (!oldTown) for (const h of plain.slice(0, k)) if (h.density < ROWHOUSE_DENSITY) h.character = 'rowhouses';
     }
     // Neighbourhoods with a metro station.
     for (const st of metroIn(d)) {
@@ -865,7 +908,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     }
     // The rasters later stages read: residents per m² and neighbourhood per cell.
     const raster = { x0, y0, W, H, cell: CELL, dens, label };
-    return { hoods, chains: again.chains, crossings, lines: streets.lines, raster };
+    return { hoods, chains: again.chains, crossings, lines: streets.lines, raster, oldTown: streets.oldTown };
   }
 
   // ---- Boundary tracing ----

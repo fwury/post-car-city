@@ -220,6 +220,11 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     boulevards,
     railIn: (d) => rail.surfaceIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1),
     metroIn: (d) => metro.stationsIn(d.key),
+    // (The old town, in the city centre: its site, round a metro station.)
+    oldTownIn: (d) => {
+      const ot = metro.plan().oldTown;
+      return ot && ot.key === d.key ? ot : null;
+    },
   });
   const parks = createParks(seed, {
     baseOf: (k) => baseOf(k), label: (i, j) => growth.label(i, j), parcel: PARCEL,

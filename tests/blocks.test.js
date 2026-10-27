@@ -208,7 +208,7 @@ test('plots fill their blocks, front their streets, and are sound shapes', () =>
   assert.ok(sharp <= plots * 0.01, `${sharp} of ${plots} plots have a corner under 30°`);
   const median = (l) => l.sort((a, b) => a - b)[l.length >> 1];
   // Terraced houses about 5 to 8 m wide; flats over shops and blocks of flats wider.
-  assert.ok(median(widths.rowhouse) > 5 && median(widths.rowhouse) < 8, `houses ${median(widths.rowhouse).toFixed(1)} m wide`);
+  if (widths.rowhouse.length) assert.ok(median(widths.rowhouse) > 5 && median(widths.rowhouse) < 8, `houses ${median(widths.rowhouse).toFixed(1)} m wide`);
   assert.ok(median(widths.perimeter) > 11 && median(widths.perimeter) < 24, `perimeter plots ${median(widths.perimeter).toFixed(1)} m wide`);
 });
 

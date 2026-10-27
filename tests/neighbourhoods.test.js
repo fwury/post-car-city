@@ -263,6 +263,8 @@ test('main streets never dead-end (they may end at a park gate, or the land\'s e
     const lines = streetsOf(d);
     const ring = d.ring.concat([d.ring[0]]);
     for (const l of d.stage3.lines) {
+      // (A loop, like the old town's frame, has no ends.)
+      if (Math.hypot(l.points[0][0] - l.points[l.points.length - 1][0], l.points[0][1] - l.points[l.points.length - 1][1]) < 1) continue;
       const ends = [[l.points[0], !!l.crossing, l.parkStart], [l.points[l.points.length - 1], !!l.crossingEnd, l.parkEnd]];
       for (const [k, [e, crossingStart, park]] of ends.entries()) {
         if (crossingStart) continue; // carries on in the next district

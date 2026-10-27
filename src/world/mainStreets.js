@@ -60,6 +60,8 @@ const GATE_LINK = 700; // and a gateway's street, to the nearest street ahead
 const EDGE_RUN = 300; // metres a street ending at the land's edge may run on to the greenway's line
 const ROUND = 16; // metres either side of a bend rounded off
 const BUCKET = 200;
+const OLD_TOWN_HALF = [330, 300]; // metres: half the old town's frame, along the way to the core and across it
+const OLD_TOWN_BLVD = 220; // a side this near a boulevard running its way is the boulevard
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
@@ -284,7 +286,7 @@ export function createMainStreets(seed) {
           hits.push({ hit, s: run + len(sub(hit.p, cur)) });
           // On across it, if the far side has room for a street.
           const beyond = add(hit.p, mul(dir, 3 * STEP));
-          if (!through || !isLand(beyond) || crowded(add(hit.p, mul(dir, STEP * 6)), dir, GAP, own) || firstHit(add(hit.p, mul(dir, 0.5)), beyond, own)) return { pts, end: 'hit', hits };
+          if (!through || !isLand(beyond) || inFrame(beyond) || crowded(add(hit.p, mul(dir, STEP * 6)), dir, GAP, own) || firstHit(add(hit.p, mul(dir, 0.5)), beyond, own)) return { pts, end: 'hit', hits };
           // (Just past it, so as not to meet it again.)
           run += len(sub(hit.p, cur)) + 0.5;
           cur = add(hit.p, mul(dir, 0.5));
@@ -354,6 +356,99 @@ export function createMainStreets(seed) {
       return l;
     }
 
+    // ---- The old town's frame ----
+    // In the city centre, the old town: a quarter framed by main streets
+    // all round (or a boulevard, where one runs along it), with a
+    // pedestrian main street through its middle, past the metro station
+    // there, towards the core. Laid before the grid, which grows round it;
+    // nothing else runs into it.
+    let frame = null;
+    if (grid.oldTown) {
+      const { p: P0, dir } = grid.oldTown;
+      const u = unit(dir);
+      const n = [-u[1], u[0]];
+      const at = (a, b) => add(P0, add(mul(u, a), mul(n, b)));
+      const C = [at(-OLD_TOWN_HALF[0], -OLD_TOWN_HALF[1]), at(OLD_TOWN_HALF[0], -OLD_TOWN_HALF[1]), at(OLD_TOWN_HALF[0], OLD_TOWN_HALF[1]), at(-OLD_TOWN_HALF[0], OLD_TOWN_HALF[1])];
+      // A side a boulevard runs along: the boulevard is that side.
+      const alongBlvd = (a, b) => {
+        const m = mul(add(a, b), 0.5);
+        const v = unit(sub(b, a));
+        return streets.near(m, OLD_TOWN_BLVD).some((g) => lines.get(g.line).boulevard && Math.abs(dot(g.u, v)) > 0.75 && segDist(m, g.a, g.b) < OLD_TOWN_BLVD);
+      };
+      let open = [0, 1, 2, 3].find((k) => alongBlvd(C[k], C[(k + 1) % 4]));
+      let ring = [...C, C[0]];
+      if (open !== undefined) {
+        // From the boulevard round the other three sides back to it: each
+        // end carried on straight out to meet it. (Both, or the frame is
+        // closed all round.)
+        const order = [1, 2, 3, 4].map((k) => C[(open + k) % 4]);
+        const out0 = unit(sub(order[0], order[1]));
+        const out1 = unit(sub(order[3], order[2]));
+        const meet = (p, v) => {
+          const hit = firstHit(add(p, mul(v, -1)), add(p, mul(v, OLD_TOWN_BLVD * 1.5)), -999);
+          if (hit && lines.get(hit.g.line).boulevard) return hit;
+          // (Or, where it bends away, square on to the nearest of it.)
+          let best = null;
+          for (const g of streets.near(p, OLD_TOWN_BLVD * 1.5)) {
+            if (!lines.get(g.line).boulevard) continue;
+            const ab = sub(g.b, g.a);
+            const t = Math.max(0, Math.min(1, dot(sub(p, g.a), ab) / (dot(ab, ab) || 1)));
+            const q = add(g.a, mul(ab, t));
+            const r = len(sub(q, p));
+            if (r < OLD_TOWN_BLVD * 1.5 && (!best || r < best.r)) best = { r, p: q, g, s: g.s + len(ab) * t };
+          }
+          return best;
+        };
+        const h0 = meet(order[0], out0);
+        const h1 = meet(order[3], out1);
+        if (h0 && h1) {
+          ring = [h0.p, ...order, h1.p];
+          ring.hits = [h0, h1];
+        } else open = undefined;
+      }
+      const id = nextId++;
+      addLine(id, ring, { closed: open === undefined });
+      const me = lines.get(id);
+      const fr = { id, raw: ring, end: 'hit', start: null, hits: [], fixed: true };
+      made.push(fr);
+      if (ring.hits) {
+        const L = ring.reduce((a, q, i) => (i ? a + len(sub(q, ring[i - 1])) : 0), 0);
+        ring.hits.forEach((h, k) => {
+          if (!h) return;
+          me.junctions.push({ s: k ? L : 0, line: h.g.line });
+          lines.get(h.g.line).junctions.push({ s: h.s, line: id });
+        });
+      }
+      // The pedestrian main street: straight through the station from the
+      // frame on the core's side to the frame (or boulevard) beyond.
+      const ends = [];
+      for (const sg of [-1, 1]) {
+        const hit = firstHit(P0, add(P0, mul(u, sg * (OLD_TOWN_HALF[0] + OLD_TOWN_BLVD * 1.5))), -999);
+        if (hit) ends.push(hit);
+      }
+      if (ends.length === 2) {
+        const pid = nextId++;
+        const praw = [ends[0].p, P0, ends[1].p];
+        addLine(pid, praw, { noSeeds: true });
+        const pm = lines.get(pid);
+        const pl = praw.reduce((a, q, i) => (i ? a + len(sub(q, praw[i - 1])) : 0), 0);
+        pm.junctions.push({ s: 0, line: ends[0].g.line }, { s: pl, line: ends[1].g.line });
+        for (const h of ends) lines.get(h.g.line).junctions.push({ s: h.s, line: pid });
+        made.push({ id: pid, raw: praw, end: 'hit', start: null, hits: [], fixed: true, pedestrian: true });
+      }
+      // (The frame's land, out to the boulevard where that is a side.)
+      const poly = C.slice();
+      if (open !== undefined) {
+        const a = open;
+        const b = (open + 1) % 4;
+        const shift = mul(sub(mul(add(C[a], C[b]), 0.5), P0), 0.35);
+        poly[a] = add(C[a], shift);
+        poly[b] = add(C[b], shift);
+      }
+      frame = { poly, line: id };
+    }
+    const inFrame = (q) => !!frame && pointInPolygon(q[0], q[1], frame.poly);
+
     // The gateways first: straight in, then along the grid, to the first
     // street (or short of one running its way: joined up at the end).
     for (const g of gates) {
@@ -382,7 +477,7 @@ export function createMainStreets(seed) {
         s += seg;
       }
     };
-    for (const id of lines.keys()) seedsAlong(id);
+    for (const id of lines.keys()) if (!lines.get(id).noSeeds) seedsAlong(id);
     // (And in from the land's edge, square to it, where no street reaches
     // it: these are laid last, the edge being farthest from the centre.)
     for (const r of d.rings) {
@@ -430,7 +525,7 @@ export function createMainStreets(seed) {
       }
       // (Square off its street, or the edge, easing onto the grid as it goes.)
       const v = sd.v;
-      if (!isLand(add(sd.p, mul(v, 80))) || crowded(add(sd.p, mul(v, 140)), v, SEED_CLEAR, -999)) continue;
+      if (!isLand(add(sd.p, mul(v, 80))) || inFrame(add(sd.p, mul(v, 80))) || crowded(add(sd.p, mul(v, 140)), v, SEED_CLEAR, -999)) continue;
       const t = trace(sd.p, v, { own: nextId, straight: sd.edge ? 80 : 60, quiet: sd.edge ? 80 : 40 });
       if (t.pts.length < 4) continue;
       const laid = sd.edge ? lay(t, null, { edgeStart: true }) : lay(t, { g: { line: sd.line }, s: sd.s });
@@ -480,7 +575,7 @@ export function createMainStreets(seed) {
     // (at a fair angle) if that is near; else cut back to its last junction,
     // and dropped if that leaves it nothing.
     for (const l of made) {
-      if (l.end === 'hit' || l.end === 'edge') continue;
+      if (l.fixed || l.end === 'hit' || l.end === 'edge') continue;
       const me = lines.get(l.id);
       const P = l.raw;
       const tip = P[P.length - 1];
@@ -530,7 +625,7 @@ export function createMainStreets(seed) {
     for (let again = true; again; ) {
       again = false;
       for (const l of made) {
-        if (dropped.has(l.id)) continue;
+        if (dropped.has(l.id) || l.fixed) continue;
         const me = lines.get(l.id);
         const L = arc(l.raw);
         const live = me.junctions.filter((j) => !dropped.has(j.line) && j.s <= L + 1);
@@ -573,7 +668,7 @@ export function createMainStreets(seed) {
     {
       const kindAt = (l, end) => (end ? (l.end === 'edge' ? 'edge' : 'junction') : l.crossing ? 'gate' : l.edgeStart ? 'edge' : 'junction');
       const away = (P, end) => (end ? unit(sub(P[P.length - 2], P[P.length - 1])) : unit(sub(P[1], P[0])));
-      const live = () => made.filter((l) => !dropped.has(l.id) && l.raw.length > 1);
+      const live = () => made.filter((l) => !dropped.has(l.id) && !l.fixed && l.raw.length > 1);
       for (let merged = true; merged; ) {
         merged = false;
         const L = live();
@@ -651,9 +746,16 @@ export function createMainStreets(seed) {
     // Each centred on the main street (or boulevard) nearest where it first
     // grew from: that street runs down its middle.
     const all = out.map((l) => l.pts).concat(blvds.map((l) => l.points));
+    const ped = out.find((l) => l.pedestrian);
     for (const h of hoods) {
       if (h.core) {
         h.spine = null;
+        continue;
+      }
+      // (The old town's: its pedestrian main street, its station its centre.)
+      if (h.oldTown && ped) {
+        h.centre = grid.oldTown.p.slice();
+        h.spine = ped.pts;
         continue;
       }
       let best = null;
@@ -687,7 +789,8 @@ export function createMainStreets(seed) {
       points: l.pts,
       bbox: lineBox(l.pts),
       pieces: piecesOf(l.pts),
+      ...(l.pedestrian ? { pedestrian: true } : {}),
     }));
-    return { lines: result };
+    return { lines: result, oldTown: frame ? { frame: frame.poly } : null };
   };
 }
