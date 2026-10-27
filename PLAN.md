@@ -140,7 +140,7 @@ Notes on what was built:
 - A medical district places the specialised hospitals there are blocks
   for; some seeds get fewer than five.
 
-## Phase 4. Trams v2
+## Phase 4. Trams v2 (done; see notes)
 
 9. **Centre-to-centre routes.** Two adjacent districts with no metro or
    regional rail link **must** have a direct tram route between their
@@ -160,6 +160,17 @@ Notes on what was built:
 
 Notes from the first version: the two-district 300k city joined only 67%
 of its neighbourhoods. It falls under the new 750k minimum anyway.
+
+Notes on what was built:
+- Coverage runs about 95 to 97% (1.5M to 8M). Main streets alone reach
+  about 95%, so no local tram streets were needed yet.
+- Reaching it takes many routes: about 67 at 1.5M, 106 at 3M, 236 at 8M,
+  many of them short crosstown routes added for coverage. Up to about ten
+  share the busiest street by a centre. Worth a look: fewer, longer
+  routes.
+- Trams run along the old town's pedestrian main street and stop on it.
+- Route colours and numbers show with the transit layer, between zoom
+  0.12 and the street detail (numbers from 0.45).
 
 ## Phase 5. Higher education
 

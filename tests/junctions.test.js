@@ -203,3 +203,11 @@ test('the old town\'s pedestrian main street has no signals or crossings along i
   }
   assert.ok(n >= 1, 'no old town');
 });
+
+test('trams run along the old town\'s pedestrian main street and stop on it', () => {
+  const d = districts.find((x) => x.stage3.lines.some((l) => l.pedestrian));
+  assert.ok(d, 'no old town');
+  const ped = d.stage3.lines.find((l) => l.pedestrian);
+  assert.ok(world.trams.in(d).ranges.has(ped.key), 'no route along it');
+  assert.ok(plans.find((x) => x.d === d).b.tramStops.some((st) => st.type.startsWith('pedestrian')), 'no stop on it');
+});

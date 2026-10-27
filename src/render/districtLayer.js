@@ -10,11 +10,15 @@ import { BOULEVARD_WIDTH, GREENWAY_MAX } from '../world/districts.js';
 import { ROUNDABOUT_RADIUS } from '../world/boulevards.js';
 import { STREET_TYPES } from '../world/streetTypes.js';
 import { splitByPolygon } from '../util/geom.js';
+import { routeColour } from '../world/trams.js';
 
 const MAIN_STREET_WIDTH = STREET_TYPES.mainStreet.width;
 const TRAM_WIDTH = 5;
 export const MAIN_STREET_MIN_ZOOM = 0.02;
 const TRAM_MIN_ZOOM = 0.2;
+const ROUTE_MIN_ZOOM = 0.12; // tram routes in their colours, with the transit layer, from here...
+const ROUTE_MAX_ZOOM = 1.6; // ...until the streets are drawn to scale
+export const ROUTE_NUMBER_ZOOM = 0.45; // and their numbers from here
 const TUNNEL_MIN_ZOOM = 0.05;
 const GREENWAY_DETAIL_ZOOM = 0.15; // streams from here; trails and paths closer in
 const STOP_MIN_ZOOM = 0.25;
@@ -343,8 +347,9 @@ export function drawDistricts(ctx, view, world, layers) {
         ctx.stroke(path);
       }
     }
-    // Tram tracks down the middle of boulevards and main streets.
-    if (zoom >= TRAM_MIN_ZOOM) {
+    // Tram tracks down the middle of boulevards and main streets (but for
+    // where the transit layer shows the routes in their colours).
+    if (zoom >= TRAM_MIN_ZOOM && !(layers.transit && zoom >= ROUTE_MIN_ZOOM && zoom < ROUTE_MAX_ZOOM)) {
       ctx.strokeStyle = palette.tram;
       ctx.lineWidth = TRAM_WIDTH;
       // (Only along the tram routes.)
@@ -513,6 +518,7 @@ export function drawDistricts(ctx, view, world, layers) {
   // The metro runs underground: a dashed line under the buildings. Regional
   // rail runs on viaducts above everything.
   if (layers.transit && zoom >= TRANSIT_MIN_ZOOM) drawTransit(ctx, view, world, items, place, px, 'metro');
+  if (layers.transit && zoom >= ROUTE_MIN_ZOOM && zoom < ROUTE_MAX_ZOOM) drawTramRoutes(ctx, view, items, px);
   if (drawBuildings) drawBuildings();
   if (layers.transit) drawRailBuildings(ctx, view, items, place, px, 'arcades');
   if (layers.transit && zoom >= TRANSIT_MIN_ZOOM) drawTransit(ctx, view, world, items, place, px, 'rail');
@@ -578,6 +584,83 @@ function railPaths(sg) {
   addPoly(p.shadow, L.map(([x, y]) => [x + VIADUCT_HEIGHT * 0.25, y + VIADUCT_HEIGHT * 0.32]), 0, 0, false);
   railCache.set(sg, p);
   return p;
+}
+
+// Tram routes, as on a transit map: each in its own colour, side by side
+// where they share a street; closer in, their numbers along them.
+function drawTramRoutes(ctx, view, items, px) {
+  if (!view.trams) return;
+  const { x0, y0, s, zoom } = view;
+  const w = px(zoom < 0.4 ? 2 : 3);
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+  ctx.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
+  const runs = items.flatMap(({ d }) => {
+    const t = view.trams(d);
+    return t && t.runs ? t.runs : [];
+  });
+  ctx.strokeStyle = '#ffffff';
+  for (const r of runs) {
+    ctx.lineWidth = w * r.routes.length + px(1.5);
+    ctx.stroke(offsetPath(r.pts, 0));
+  }
+  for (const r of runs) {
+    const n = r.routes.length;
+    ctx.lineWidth = w;
+    r.routes.forEach((id, k) => {
+      ctx.strokeStyle = routeColour(id);
+      ctx.stroke(offsetPath(r.pts, (k - (n - 1) / 2) * w));
+    });
+  }
+}
+
+// Route numbers, over the map in screen space: a row of pills at the middle
+// of each stretch long enough on screen to hold them, clear of those
+// already drawn. runs: [{ pts, routes }]; toScreen(p): device pixels.
+export function drawRouteNumbers(ctx, runs, toScreen, pr, w, h) {
+  const ph = 14 * pr;
+  ctx.font = `600 ${Math.round(9.5 * pr)}px system-ui, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  const taken = [];
+  for (const r of runs) {
+    const P = r.pts.map(toScreen);
+    let L = 0;
+    for (let i = 1; i < P.length; i++) L += Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]);
+    const widths = r.routes.map((id) => ctx.measureText(String(id + 1)).width + 8 * pr);
+    const row = widths.reduce((a, x) => a + x, 0) + (widths.length - 1) * 2 * pr;
+    if (L < row + 30 * pr) continue;
+    // (The middle of the stretch.)
+    let at = L / 2;
+    let q = P[0];
+    for (let i = 1; i < P.length; i++) {
+      const l = Math.hypot(P[i][0] - P[i - 1][0], P[i][1] - P[i - 1][1]);
+      if (at <= l) {
+        const t = at / (l || 1);
+        q = [P[i - 1][0] + (P[i][0] - P[i - 1][0]) * t, P[i - 1][1] + (P[i][1] - P[i - 1][1]) * t];
+        break;
+      }
+      at -= l;
+    }
+    const [cx, cy] = q;
+    const box = [cx - row / 2 - 3 * pr, cy - ph / 2 - 3 * pr, cx + row / 2 + 3 * pr, cy + ph / 2 + 3 * pr];
+    if (box[2] < 0 || box[3] < 0 || box[0] > w || box[1] > h) continue;
+    if (taken.some((o) => box[0] < o[2] && box[2] > o[0] && box[1] < o[3] && box[3] > o[1])) continue;
+    taken.push(box);
+    let x = cx - row / 2;
+    r.routes.forEach((id, k) => {
+      ctx.fillStyle = routeColour(id);
+      ctx.beginPath();
+      ctx.roundRect(x, cy - ph / 2, widths[k], ph, ph / 2);
+      ctx.fill();
+      ctx.lineWidth = 1.2 * pr;
+      ctx.strokeStyle = '#ffffff';
+      ctx.stroke();
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(String(id + 1), x + widths[k] / 2, cy + 0.5 * pr);
+      x += widths[k] + 2 * pr;
+    });
+  }
 }
 
 function drawTransit(ctx, view, world, items, place, px, which) {

@@ -462,7 +462,7 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     // (A side street's mouth may open beside a main street's island
     // platform, since nothing turns left across the tracks; it may not
     // beside a boulevard's side platform, which takes the tree buffer.)
-    const sideOnly = (j) => j.kinds && [...j.kinds].every((k) => k === 'local' || k === 'core' || k === 'coreNarrow');
+    const sideOnly = (j) => j.kinds && [...j.kinds].every((k) => k === 'local' || k === 'core' || k === 'coreNarrow' || k === 'pedestrian');
     // Which sides of the street (+1 its right, -1 its left, going along it)
     // a side street opens on.
     const sidesOf = (j, pr) => new Set(j.arms.filter((a) => !a.line).map((a) => Math.sign(cross(pr.t, a.dir)) || 1));
@@ -475,7 +475,9 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     // left going -1.)
     // (A pedestrian main street's side platforms, like a boulevard's.)
     const sidePlatforms = M.type === 'boulevard' || M.pedestrian;
-    const blocks = (o, way) => !o.side || (sidePlatforms && o.opens.has(way));
+    // (On a pedestrian main street a side street's mouth may open beside a
+    // platform too: people walk round it.)
+    const blocks = (o, way) => !o.side || (sidePlatforms && !M.pedestrian && o.opens.has(way));
     const room = (s0, way) => {
       const own = onLine.find((o) => Math.abs(o.s - s0) < 1);
       const need = (own ? own.r : MINOR_REACH) + 1 + PLATFORM_LENGTH;

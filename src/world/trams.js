@@ -21,6 +21,9 @@
 import { pointInPolygon } from '../util/geom.js';
 import { hash, toUnit } from '../core/hash.js';
 
+// Each route's colour on the map, by its number.
+const ROUTE_COLOURS = ['#d6453d', '#2f7fc1', '#3a9a5b', '#e08a1e', '#8e5bb5', '#c2477f', '#1d9a9a', '#9a7b2f', '#5a6fd6', '#d2603a', '#4f8f2f', '#b0418f', '#2e8bb0', '#c79a1b', '#6b5bd0', '#3d7f6a'];
+export const routeColour = (id) => ROUTE_COLOURS[id % ROUTE_COLOURS.length];
 export const STOP_EVERY = [300, 400]; // metres between stops along a route
 const STOP_MERGE = 220; // metres: another route's stop this close along the same street is the same stop
 const EDGE_NEAR = 80; // metres: a main street ending this close to its district's edge, with nothing beyond, ends at the city's edge
@@ -819,6 +822,18 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf, linked
       const best = P.cands.filter((c) => !c.taken).sort((x, y) => costOf(x) - costOf(y))[0];
       if (best) take(best);
     }
+    // The old town's pedestrian main street: trams run along it (the
+    // cheapest route that does, whatever it costs).
+    for (const e of edges) {
+      if (!e.L.src.pedestrian || usedEdge[e.id]) continue;
+      const cs = [...through(e.L.d, e, 2), ...across(e)];
+      for (const c of cs) {
+        prep(c);
+        cands.push(c);
+      }
+      const best = cs.sort((x, y) => costOf(x) - costOf(y))[0];
+      if (best) take(best);
+    }
     // Neighbourhoods still not joined to their centres: the routes that
     // join most of them for what they cost, whatever that is.
     for (;;) {
@@ -965,7 +980,7 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf, linked
     // ---- What each district holds ----
     const byDistrict = new Map();
     const of = (k) => {
-      if (!byDistrict.has(k)) byDistrict.set(k, { ranges: new Map(), stops: [], turns: [], loops: [] });
+      if (!byDistrict.has(k)) byDistrict.set(k, { ranges: new Map(), runs: [], stops: [], turns: [], loops: [] });
       return byDistrict.get(k);
     };
     const routedEdges = new Map();
@@ -975,6 +990,9 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf, linked
       const t = of(e.L.d);
       if (!t.ranges.has(e.L.key)) t.ranges.set(e.L.key, []);
       t.ranges.get(e.L.key).push([e.s0, e.s1, rs]);
+      // (And the stretch as drawn: the routes along it, in number order so
+      // each keeps its place beside the others from one stretch to the next.)
+      t.runs.push({ pts: e.pts, routes: rs.slice().sort((a, b) => a - b) });
     }
     for (const t of byDistrict.values()) {
       for (const [k, list] of t.ranges) {
@@ -1008,6 +1026,6 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf, linked
     };
     return planned;
   }
-  const empty = { ranges: new Map(), stops: [], turns: [], loops: [] };
+  const empty = { ranges: new Map(), runs: [], stops: [], turns: [], loops: [] };
   return { plan, in: (d) => plan().byDistrict.get(d.key) || empty };
 }
