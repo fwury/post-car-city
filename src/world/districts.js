@@ -277,6 +277,22 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     cores: cityCores,
     district: (c) => district(c),
     metroLines: () => metro.plan().lines,
+    // Centres the metro or regional rail runs straight between (no other
+    // centre on the way).
+    linked: () => {
+      const out = new Set();
+      const pair = (a, b) => a && b && a !== b && out.add(a < b ? `${a}|${b}` : `${b}|${a}`);
+      const M = metro.plan();
+      for (const l of M.lines) {
+        const keys = l.stations.map((i) => M.stations[i]).filter((st) => st && st.core).map((st) => st.key);
+        for (let i = 1; i < keys.length; i++) pair(keys[i - 1], keys[i]);
+      }
+      for (const l of rail.lines) {
+        const keys = l.stations.map((i) => rail.stations[i] && rail.stations[i].key);
+        for (let i = 1; i < keys.length; i++) pair(keys[i - 1], keys[i]);
+      }
+      return out;
+    },
     // (The central district's station plaza is on the boulevard before its hall.)
     plazaOf: (d) => {
       const st = d.key === cityCores[0].key ? rail.stations.find((x) => x.central) : null;

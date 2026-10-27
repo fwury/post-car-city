@@ -15,8 +15,10 @@ test('every route runs from a loop to a loop, at the city edge, a park or a stat
 });
 
 test('every route stops at the station plaza of a district centre it passes', () => {
+  // (Crosstown routes, added for coverage, pass none; most routes do.)
+  assert.ok(plan.routes.filter((r) => r.anchors.length).length >= plan.routes.length / 2);
   for (const r of plan.routes) {
-    assert.ok(r.anchors.length >= 1);
+    if (!r.anchors.length) continue;
     const plazas = plan.stops.filter((s) => s.plaza || s.end);
     assert.ok(r.stops.some((p) => plazas.some((s) => dist(s.p, p) < 1)), 'no stop at a plaza');
   }
@@ -52,4 +54,40 @@ test('only routed streets have tracks; the rest have none', () => {
     }
   }
   assert.ok(routed > 0 && routed < all, `${routed} of ${all} main streets routed`);
+});
+
+test('neighbouring centres with no metro or rail between them have a tram route straight between them', () => {
+  const { must, mustJoined, all, joined } = plan.judged.pairs;
+  assert.ok(all > 0 && must > 0, `${all} neighbouring pairs, ${must} with no metro or rail`);
+  assert.equal(mustJoined, must);
+  assert.ok(joined / all >= 0.5, `${joined} of ${all} pairs joined`);
+});
+
+test('nearly everyone lives within 400 m of a tram stop', () => {
+  const G = 200;
+  const idx = new Map();
+  for (const s of plan.stops) {
+    const k = `${Math.floor(s.p[0] / G)},${Math.floor(s.p[1] / G)}`;
+    if (!idx.has(k)) idx.set(k, []);
+    idx.get(k).push(s.p);
+  }
+  const near = (x, y) => {
+    for (let a = Math.floor(x / G) - 2; a <= Math.floor(x / G) + 2; a++) for (let b = Math.floor(y / G) - 2; b <= Math.floor(y / G) + 2; b++) for (const p of idx.get(`${a},${b}`) || []) if (Math.hypot(p[0] - x, p[1] - y) < 400) return true;
+    return false;
+  };
+  let all = 0;
+  let served = 0;
+  for (const c of world.cityCores) {
+    const R = world.district(c).stage3.raster;
+    for (let j = 0; j < R.H; j++) {
+      for (let i = 0; i < R.W; i++) {
+        const n = j * R.W + i;
+        if (R.label[n] < 0 || !R.dens[n]) continue;
+        const w = R.dens[n] * R.cell * R.cell;
+        all += w;
+        if (near(R.x0 + (i + 0.5) * R.cell, R.y0 + (j + 0.5) * R.cell)) served += w;
+      }
+    }
+  }
+  assert.ok(served / all >= 0.95, `${((served / all) * 100).toFixed(1)}% within 400 m`);
 });
