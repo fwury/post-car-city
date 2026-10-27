@@ -36,6 +36,18 @@ export const STREET_TYPES = {
     side: [['frontage', 2.5], ['clearway', 3.5], ['furnishing', 1.8], ['cycle', 2.1], ['buffer', 0.5], ['drive', 3.0]],
     centre: [['median', 10.2]],
   },
+  // The old town's pedestrian main street: no traffic lanes, the trams
+  // down its middle, side platforms at stops in the wide furnishing zone.
+  pedestrianMainStreet: {
+    width: 31.0, speed: 0,
+    side: [['clearway', 5.5], ['furnishing', 1.2], ['cycle', 2.1], ['furnishing', 3.2]],
+    centre: [['tram', 3.5], ['tram', 3.5]],
+  },
+  pedestrianMainStreetPlanted: {
+    width: 31.0, speed: 0,
+    side: [['clearway', 5.5], ['furnishing', 1.2], ['cycle', 2.1], ['furnishing', 3.2]],
+    centre: [['median', 7.0]],
+  },
   coreCrossStreet: {
     width: 26.8, speed: 20,
     side: [['frontage', 2.5], ['clearway', 3.5], ['furnishing', 1.8], ['cycle', 2.1], ['buffer', 0.5]],

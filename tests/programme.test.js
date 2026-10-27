@@ -19,7 +19,8 @@ test('every neighbourhood has its square, park, schools and civic buildings', ()
     for (const h of d.stage3.hoods) {
       const here = plots.filter((p) => p.hood === h.id);
       const count = (use) => here.filter((p) => has(p, use)).length;
-      assert.equal(count(h.core ? 'districtPlaza' : 'market'), 1, `${h.key}: square`);
+      // (The old town's square is the city-centre district's plaza too.)
+      assert.equal(count(h.core || h.oldTown ? 'districtPlaza' : 'market'), 1, `${h.key}: square`);
       if (h.core) continue;
       assert.equal(count('neighbourhoodPark'), 1, `${h.key}: park`);
       assert.equal(count('secondarySchool'), 1, `${h.key}: secondary school`);
@@ -114,4 +115,54 @@ test('big buildings of their own stand on plots big enough for them', () => {
       }
     }
   }
+});
+
+test('the old town holds city hall facing its plaza, the main library, museums, the tourist centre and boutique hotels', () => {
+  const d = world.cityCores.map((c) => world.district(c)).find((x) => x.stage3.hoods.some((h) => h.oldTown));
+  assert.ok(d, 'no old town');
+  const h = d.stage3.hoods.find((x) => x.oldTown);
+  const here = plotsOf(d).filter((p) => p.hood === h.id);
+  const count = (use) => here.filter((p) => has(p, use)).length;
+  const plaza = here.find((p) => has(p, 'districtPlaza'));
+  const hall = here.find((p) => has(p, 'cityHall'));
+  assert.ok(plaza && hall, 'no plaza or city hall');
+  assert.ok(near(plaza.c, hall.c, 160), 'city hall is not on the plaza');
+  assert.equal(count('mainLibrary'), 1);
+  assert.ok(count('museum') >= 2, `${count('museum')} museums`);
+  assert.equal(count('touristCentre'), 1);
+  assert.ok(count('boutiqueHotel') >= 4, `${count('boutiqueHotel')} boutique hotels`);
+});
+
+test('the business district: all podiums, a convention centre, flagship hotels, office towers and an observation tower on its own plaza', () => {
+  const d = world.cityCores.map((c) => world.district(c)).find((x) => x.stage3.hoods.some((h) => h.oldTown));
+  const core = d.stage3.hoods.find((h) => h.core);
+  assert.ok(['Financial District', 'Downtown', 'Business District', 'New Town', 'The City', 'Exchange', 'The Loop'].includes(world.names.hood(d, core)));
+  const blocks = world.blocks(d).blocks.filter((b) => b.hood === core.id);
+  assert.ok(!blocks.some((b) => b.use === 'rowhouse'), 'rowhouses in the business district');
+  assert.equal(blocks.filter((b) => b.use === 'observationTower').length, 1);
+  const here = blocks.flatMap((b) => b.plots || []);
+  assert.ok(here.some((p) => has(p, 'conventionCentre')), 'no convention centre');
+  assert.ok(here.filter((p) => has(p, 'hotel')).length >= 3, 'too few hotels');
+  const towers = here.filter((p) => p.towerSite);
+  const offices = towers.filter((p) => p.officeTower);
+  assert.ok(offices.length > 0 && offices.length < towers.length, `${offices.length} of ${towers.length} towers offices`);
+  assert.ok(offices.every((p) => !p.dwellings));
+});
+
+test('the city centre has its main courthouse and arts centre on their plazas, a research hospital and embassies', () => {
+  const d = world.cityCores.map((c) => world.district(c)).find((x) => x.stage3.hoods.some((h) => h.oldTown));
+  const plots = plotsOf(d);
+  const one = (use) => plots.filter((p) => has(p, use));
+  for (const [use, plaza] of [['mainCourthouse', 'courthousePlaza'], ['mainArts', 'artsPlaza']]) {
+    const [b] = one(use);
+    const [q] = one(plaza);
+    assert.ok(b && q, `no ${use} or ${plaza}`);
+    assert.ok(near(b.c, q.c, 230), `${use} is not on its plaza`);
+    // (At a neighbourhood with a metro station.)
+    const h = d.stage3.hoods.find((x) => x.id === q.hood);
+    assert.ok(h.metro && h.metro.length, `${use}'s neighbourhood has no metro station`);
+  }
+  assert.ok(one('researchHospital').length >= 1, 'no research hospital');
+  const embassies = one('embassy');
+  assert.ok(embassies.length >= 6, `${embassies.length} embassies`);
 });

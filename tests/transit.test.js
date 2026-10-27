@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { createWorld } from '../src/world/districts.js';
 import { seedFromText } from '../src/core/hash.js';
 import { minRadius, MIN_RADIUS } from '../src/world/rail.js';
+import { pointInPolygon } from '../src/util/geom.js';
 import { minRadius as metroRadius, METRO_RADIUS } from '../src/world/metro.js';
 
 const world = createWorld(seedFromText('1'), { population: 6e6 });
@@ -20,12 +21,36 @@ test('a large city has a loop line through its central station; a small one a ce
   assert.ok(small.rail.lines.length >= 1);
 });
 
-test('nearly every district has a rail station in it or next to it', () => {
+test('every district centre is served by the regional rail or the metro', () => {
   for (const w of [world, small]) {
-    const pts = P(w);
-    const on = w.rail.stations.filter((s) => s.key).map((s) => pts[w.cityCores.findIndex((c) => c.key === s.key)]);
-    const near = pts.filter((p) => on.some((q) => dist(p, q) < 3000)).length;
-    assert.ok(near >= pts.length * 0.8, `${near} of ${pts.length} districts by the rail`);
+    const plan = w.metro.plan();
+    for (const c of w.cityCores) {
+      const served = w.rail.stations.some((s) => s.key === c.key) || plan.stations.some((m) => m.core && m.key === c.key);
+      assert.ok(served, `${c.key}: no rail or metro station`);
+    }
+  }
+});
+
+test('rail stations stand only at district centres, under the metro station there', () => {
+  for (const w of [world, small]) {
+    const metro = w.metro.plan().stations.filter((m) => m.core);
+    for (const st of w.rail.stations) {
+      assert.ok(st.key, 'a rail station away from any district centre');
+      if (st.central) continue;
+      const c = w.cityCores.find((x) => x.key === st.key);
+      assert.ok(dist(st.p, [c.x, c.y]) < 1, `${st.key}: the station is off its centre`);
+      const m = metro.find((x) => x.key === st.key);
+      if (m) assert.ok(dist(m.p, st.p) < 1, `${st.key}: the metro and rail stations are apart`);
+    }
+  }
+});
+
+test('the rail runs underground all through the city', () => {
+  for (const c of small.cityCores) {
+    const d = small.district(c);
+    for (const P of small.rail.surfaceIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1)) {
+      for (const q of P) assert.ok(!pointInPolygon(q[0], q[1], d.ring), `track above ground at ${q.map(Math.round)}`);
+    }
   }
 });
 

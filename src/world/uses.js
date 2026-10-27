@@ -163,6 +163,29 @@ export const USES = {
   altSecondary: { label: 'Alternative secondary school', cat: 'education', floor: 'dedicated' },
   college: { label: 'College or university campus', cat: 'education', floor: 'dedicated' },
   museum: { label: 'Museum', cat: 'civic', floor: 'dedicated' },
+  // The old town's, in the city-centre district.
+  cityHall: { label: 'City hall', cat: 'civic', floor: 'dedicated' },
+  // The business district's.
+  conventionCentre: { label: 'Convention centre', cat: 'civic', floor: 'dedicated' },
+  observationTower: { label: 'Observation tower', cat: 'civic', floor: 'dedicated' },
+  // The city-centre district's facilities, each at a neighbourhood centre
+  // near a metro station, and its plaza.
+  mainCourthouse: { label: 'Main courthouse', cat: 'civic', floor: 'dedicated' },
+  courthousePlaza: { label: 'Courthouse square', cat: 'civic', floor: 'open' },
+  researchHospital: { label: 'Research hospital', cat: 'health', floor: 'dedicated' },
+  childrensHospital: { label: "Children's hospital", cat: 'health', floor: 'dedicated' },
+  cancerCentre: { label: 'Cancer centre', cat: 'health', floor: 'dedicated' },
+  rehabHospital: { label: 'Rehabilitation hospital', cat: 'health', floor: 'dedicated' },
+  eyeHospital: { label: 'Eye hospital', cat: 'health', floor: 'dedicated' },
+  researchInstitute: { label: 'Medical research institute', cat: 'health', floor: 'dedicated' },
+  mainArts: { label: 'Performing arts centre', cat: 'culture', floor: 'dedicated' },
+  operaHouse: { label: 'Opera house', cat: 'culture', floor: 'dedicated' },
+  artsPlaza: { label: 'Arts plaza', cat: 'civic', floor: 'open' },
+  theatre: { label: 'Theatre', cat: 'culture', floor: 'dedicated' },
+  embassy: { label: 'Embassy or consulate', cat: 'civic', floor: 'dedicated' },
+  mainLibrary: { label: 'Central library', cat: 'civic', floor: 'dedicated' },
+  touristCentre: { label: 'Tourist information centre', cat: 'civic', floor: 'ground' },
+  boutiqueHotel: { label: 'Boutique hotel', cat: 'lodging', floor: 'upper' },
   gallery: { label: 'Art gallery', cat: 'civic', floor: 'ground' },
   nightclub: { label: 'Nightclub', cat: 'entertainment', floor: 'ground' },
   bikeParking: { label: 'Bicycle parking', cat: 'transport', floor: 'ground' },
@@ -225,7 +248,8 @@ export const CORNER_MIX = [
 // neighbours along the block until big enough.)
 export const MIN_PLOT = {
   church: 600, mosque: 700, synagogue: 450, temple: 600,
-  museum: 2500, districtLibrary: 1800, library: 900, courthouse: 2500, police: 1200, fireStation: 1000,
+  museum: 2500, cityHall: 3000, conventionCentre: 9000, mainCourthouse: 4000, mainArts: 6000, operaHouse: 5000, theatre: 900, embassy: 450,
+  childrensHospital: 4000, cancerCentre: 3500, rehabHospital: 3000, eyeHospital: 2500, researchInstitute: 2500, mainLibrary: 3500, districtLibrary: 1800, library: 900, courthouse: 2500, police: 1200, fireStation: 1000,
   performingArts: 2500, hotel: 1200, officeTower: 1200, departmentStore: 3000, inn: 350, hospice: 900,
   altPrimary: 1500, altSecondary: 2000, skatingRink: 2500, climbing: 1000, gymnastics: 1200,
   emergencyHousing: 600, transitionalHousing: 600,

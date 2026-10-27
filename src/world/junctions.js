@@ -115,11 +115,11 @@ export function profile(type) {
 }
 
 // Street types by rank (lower is higher).
-const RANK = { boulevard: 1, boulevardPlanted: 1, mainStreet: 2, coreMainStreet: 2, mainStreetPlanted: 2, coreMainStreetPlanted: 2, coreCrossStreet: 3, coreCrossStreetNarrow: 3, localStreet: 4, laneway: 5 };
+const RANK = { boulevard: 1, boulevardPlanted: 1, pedestrianMainStreet: 2, pedestrianMainStreetPlanted: 2, mainStreet: 2, coreMainStreet: 2, mainStreetPlanted: 2, coreMainStreetPlanted: 2, coreCrossStreet: 3, coreCrossStreetNarrow: 3, localStreet: 4, laneway: 5 };
 // (Tram streets by their class: those with no route have a planted median
 // for tracks.)
-export const isTramStreet = (type) => ['boulevard', 'mainStreet', 'coreMainStreet', 'boulevardPlanted', 'mainStreetPlanted', 'coreMainStreetPlanted'].includes(type);
-export const plantedOf = (type) => (['boulevard', 'mainStreet', 'coreMainStreet'].includes(type) ? `${type}Planted` : type);
+export const isTramStreet = (type) => ['boulevard', 'mainStreet', 'coreMainStreet', 'pedestrianMainStreet', 'boulevardPlanted', 'mainStreetPlanted', 'coreMainStreetPlanted', 'pedestrianMainStreetPlanted'].includes(type);
+export const plantedOf = (type) => (['boulevard', 'mainStreet', 'coreMainStreet', 'pedestrianMainStreet'].includes(type) ? `${type}Planted` : type);
 
 // ---- Geometry ----
 function params(P) {
@@ -373,6 +373,9 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
   for (const j of junctions) {
     const ks = j.kinds;
     if (ks.has('major')) j.kind = 'D';
+    // (Along a pedestrian main street, its pavement runs on across every
+    // side street: no signals, no crossings.)
+    else if (j.M && j.M.pedestrian) j.kind = 'PED';
     else if (j.M) {
       if (ks.has('rail')) j.kind = 'GREEN';
       else if (ks.has('pedestrian') && !ks.has('local') && !ks.has('core') && !ks.has('coreNarrow')) j.kind = 'PED';
@@ -444,7 +447,7 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     const L = M.cum[M.cum.length - 1];
     const here = [];
     for (const j of junctions) {
-      if (j.kind !== 'D' && j.kind !== 'CONT') continue;
+      if (j.kind !== 'D' && j.kind !== 'CONT' && !(M.pedestrian && j.kind === 'PED')) continue;
       const pr = project(M.pts, M.cum, j.p);
       if (pr.r > 3) continue;
       const near = places.some((q) => len(sub(q, j.p)) < 140);
@@ -459,7 +462,7 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     // (A side street's mouth may open beside a main street's island
     // platform, since nothing turns left across the tracks; it may not
     // beside a boulevard's side platform, which takes the tree buffer.)
-    const sideOnly = (j) => j.kinds && [...j.kinds].every((k) => k === 'local' || k === 'core' || k === 'coreNarrow');
+    const sideOnly = (j) => j.kinds && [...j.kinds].every((k) => k === 'local' || k === 'core' || k === 'coreNarrow' || k === 'pedestrian');
     // Which sides of the street (+1 its right, -1 its left, going along it)
     // a side street opens on.
     const sidesOf = (j, pr) => new Set(j.arms.filter((a) => !a.line).map((a) => Math.sign(cross(pr.t, a.dir)) || 1));
@@ -470,7 +473,11 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     // (A platform on a junction's far side going one way stands on the
     // right of the trams leaving that way: the street's right going +1, its
     // left going -1.)
-    const blocks = (o, way) => !o.side || (M.type === 'boulevard' && o.opens.has(way));
+    // (A pedestrian main street's side platforms, like a boulevard's.)
+    const sidePlatforms = M.type === 'boulevard' || M.pedestrian;
+    // (On a pedestrian main street a side street's mouth may open beside a
+    // platform too: people walk round it.)
+    const blocks = (o, way) => !o.side || (sidePlatforms && !M.pedestrian && o.opens.has(way));
     const room = (s0, way) => {
       const own = onLine.find((o) => Math.abs(o.s - s0) < 1);
       const need = (own ? own.r : MINOR_REACH) + 1 + PLATFORM_LENGTH;
@@ -478,7 +485,9 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     };
     // Which side(s) of a junction its platforms go: a boulevard's on both,
     // a main street's island on one (either), or none if there is no room.
-    const sidesFor = (s0) => (M.type === 'boulevard' ? (room(s0, 1) && room(s0, -1) ? [1, -1] : null) : room(s0, 1) ? [1] : room(s0, -1) ? [-1] : null);
+    const sidesFor = (s0) => (sidePlatforms ? (room(s0, 1) && room(s0, -1) ? [1, -1] : null) : room(s0, 1) ? [1] : room(s0, -1) ? [-1] : null);
+    // (A stop on a pedestrian main street needs no signals: nothing to stop.)
+    const crossing = M.pedestrian ? 'STOP' : 'XING';
     const stopAt = (j, s0) => {
       if (j.kind === 'CONT') j.kind = 'D';
       (j.stops ||= []).push({ line: M, s: s0, ways: sidesFor(s0) });
@@ -507,7 +516,7 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
           }
         }
         if (s0 === null) continue;
-        const j = keep({ p: pointAt(M.pts, M.cum, s0), arms: armsAlong(M, s0, M.type), kinds: new Set(['crossing']), kind: 'XING' });
+        const j = keep({ p: pointAt(M.pts, M.cum, s0), arms: armsAlong(M, s0, M.type), kinds: new Set(['crossing']), kind: crossing });
         onLine.push({ s: s0, r: MINOR_REACH, side: false, opens: new Set() });
         here.push({ j, s: s0, score: 0 });
         here.sort((a, b) => a.s - b.s);
@@ -545,7 +554,7 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
           continue;
         }
         const p = pointAt(M.pts, M.cum, s0);
-        const j = keep({ p, arms: armsAlong(M, s0, M.type), kinds: new Set(['crossing']), kind: 'XING' });
+        const j = keep({ p, arms: armsAlong(M, s0, M.type), kinds: new Set(['crossing']), kind: crossing });
         onLine.push({ s: s0, r: MINOR_REACH, side: false, opens: new Set() });
         here.push({ j, s: s0, score: 0 });
         here.sort((a, b) => a.s - b.s);
@@ -572,7 +581,7 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
       const li = lines.indexOf(st.line);
       for (const a of arms) {
         if (!st.ways.includes(a.way)) continue;
-        stops.push({ ...platform(j, a, type === 'boulevard' ? 'side' : 'island', type), line: li, at: st.s });
+        stops.push({ ...platform(j, a, type === 'boulevard' || st.line.pedestrian ? 'side' : 'island', type), line: li, at: st.s });
       }
     }
     j.stop = !!(j.stops && j.stops.length);
@@ -586,8 +595,10 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
   }
   // A zebra across every tram street at least every 115 m: at its
   // junctions, and between them where they are farther apart (clear of
-  // junctions and platforms).
+  // junctions and platforms). (None along a pedestrian main street:
+  // nothing to cross.)
   for (const M of lines) {
+    if (M.pedestrian) continue;
     const L = M.cum[M.cum.length - 1];
     const at0 = [];
     const busy = [];

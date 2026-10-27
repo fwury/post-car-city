@@ -21,6 +21,9 @@
 import { pointInPolygon } from '../util/geom.js';
 import { hash, toUnit } from '../core/hash.js';
 
+// Each route's colour on the map, by its number.
+const ROUTE_COLOURS = ['#d6453d', '#2f7fc1', '#3a9a5b', '#e08a1e', '#8e5bb5', '#c2477f', '#1d9a9a', '#9a7b2f', '#5a6fd6', '#d2603a', '#4f8f2f', '#b0418f', '#2e8bb0', '#c79a1b', '#6b5bd0', '#3d7f6a'];
+export const routeColour = (id) => ROUTE_COLOURS[id % ROUTE_COLOURS.length];
 export const STOP_EVERY = [300, 400]; // metres between stops along a route
 const STOP_MERGE = 220; // metres: another route's stop this close along the same street is the same stop
 const EDGE_NEAR = 80; // metres: a main street ending this close to its district's edge, with nothing beyond, ends at the city's edge
@@ -45,6 +48,11 @@ const PER_CENTRE = 60; // candidate routes through each centre, the straightest
 const PER_HOOD = 15000; // people: what joining a neighbourhood to its centre is worth
 const PER_KM_RUN = 2500; // people: what each kilometre of a route must serve, to be worth running
 const PER_KM_TRACK = 2000; // and each kilometre of new track it needs, to be worth laying
+const PER_PAIR_MUST = 40000; // people: what joining two neighbouring centres with no metro or rail between is worth
+const PER_PAIR = 6000; // ...and two that have one
+const COVER_TARGET = 0.97; // of residents, those a route should pass within a short walk of
+const COVER_ROUNDS = 120; // routes added for coverage, at most
+const GAP_TRIES = 3; // gaps a round looks for streets near
 const TURN = (25 * Math.PI) / 180; // a route changing streets turns at least this much to need turning track
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
@@ -164,7 +172,7 @@ function heap() {
 // stage 3 (neighbourhoods and main streets), boulevards and parks;
 // metroLines(): the metro's lines ({ pts }); plazaOf(d): where a district's
 // station plaza meets its street.
-export function createTrams(seed, { cores, district, metroLines, plazaOf }) {
+export function createTrams(seed, { cores, district, metroLines, plazaOf, linked = () => new Set() }) {
   let planned = null;
   function plan() {
     if (planned) return planned;
@@ -591,49 +599,96 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf }) {
       }
     }
     for (const list of longest.values()) list.sort((a, b) => b.v - a.v);
-    function seek(hi) {
-      const x = hoods[hi];
-      const C = centreNode.get(x.d);
-      if (!C || !longest.has(hi)) return null;
+    // Routes through a district's centre that run along a given stretch:
+    // in from the centre to one end of it, out of the other and on to an
+    // end beyond; back out of the centre the other way.
+    function through(dk, e, limit = 1) {
+      const C = centreNode.get(dk);
+      const found = [];
+      if (!C) return found;
       // (Fit to run: one overall way, not too roundabout.)
       const fit = (r, A, B) => r && r.len <= DETOUR * len(sub(B, A)) + DETOUR_ADD && backOf(r.pts, A, B, [C.p]) <= BACK;
-      for (const { e } of longest.get(hi).slice(0, SEEK_TRIES)) {
-        // Along it either way: in from the centre to one end, out of the other.
-        for (const [near, far] of [[e.a, e.b], [e.b, e.a]]) {
-          const toNear = pathFrom(trees[0], x.d, near);
-          if (!toNear || toNear.includes(e.id)) continue;
-          const head = [...toNear, e.id];
-          const way = unit(sub(nodes[far].p, C.p));
-          const out = growFrom(far, new Set(head));
-          const outs = [];
-          for (const t of ends) {
-            if (t === C || dot(unit(sub(t.p, C.p)), way) < 0.3) continue;
-            const r = out(t.id);
-            if (r) outs.push({ t, ...r });
-          }
-          outs.sort((p, q) => p.cost - q.cost);
-          for (const best of outs.slice(0, 3)) {
-            const half = [...head, ...best.path];
-            // (From a loop at the centre, that is the route.)
-            if (C.end) {
-              const r = routeOf(C.id, half);
-              if (fit(r, C.p, best.t.p)) return { ...r, ends: [C.id, best.t.id], anchors: [x.d], made: hi };
-              continue;
-            }
-            const back = growFrom(C.id, new Set(half));
-            const others = [];
-            for (const t of ends) {
-              if (t === best.t || dot(unit(sub(t.p, C.p)), unit(sub(best.t.p, C.p))) > Math.cos(THROUGH)) continue;
-              const r = back(t.id);
-              if (r) others.push({ t, ...r });
-            }
-            others.sort((p, q) => p.cost - q.cost);
-            for (const other of others.slice(0, 3)) {
-              const r = routeOf(other.t.id, [...other.path.slice().reverse(), ...half]);
-              if (fit(r, other.t.p, best.t.p)) return { ...r, ends: [other.t.id, best.t.id], anchors: [x.d], made: hi };
-            }
-          }
+      for (const [near, far] of [[e.a, e.b], [e.b, e.a]]) {
+        const toNear = pathFrom(trees[0], dk, near);
+        if (!toNear || toNear.includes(e.id)) continue;
+        const head = [...toNear, e.id];
+        const way = unit(sub(nodes[far].p, C.p));
+        const out = growFrom(far, new Set(head));
+        const outs = [];
+        for (const t of ends) {
+          if (t === C || dot(unit(sub(t.p, C.p)), way) < 0.3) continue;
+          const r = out(t.id);
+          if (r) outs.push({ t, ...r });
         }
+        outs.sort((p, q) => p.cost - q.cost);
+        for (const best of outs.slice(0, 3)) {
+          const half = [...head, ...best.path];
+          // (From a loop at the centre, that is the route.)
+          if (C.end) {
+            const r = routeOf(C.id, half);
+            if (fit(r, C.p, best.t.p)) found.push({ ...r, ends: [C.id, best.t.id], anchors: [dk] });
+            if (found.length >= limit) return found;
+            continue;
+          }
+          const back = growFrom(C.id, new Set(half));
+          const others = [];
+          for (const t of ends) {
+            if (t === best.t || dot(unit(sub(t.p, C.p)), unit(sub(best.t.p, C.p))) > Math.cos(THROUGH)) continue;
+            const r = back(t.id);
+            if (r) others.push({ t, ...r });
+          }
+          others.sort((p, q) => p.cost - q.cost);
+          for (const other of others.slice(0, 3)) {
+            const r = routeOf(other.t.id, [...other.path.slice().reverse(), ...half]);
+            if (fit(r, other.t.p, best.t.p)) {
+              found.push({ ...r, ends: [other.t.id, best.t.id], anchors: [dk] });
+              break;
+            }
+          }
+          if (found.length >= limit) return found;
+        }
+      }
+      return found;
+    }
+    // A crosstown route along a given stretch: out of each end of it and on
+    // to an end beyond, keeping to one way.
+    function across(e) {
+      const found = [];
+      const way = unit(sub(nodes[e.b].p, nodes[e.a].p));
+      const outB = growFrom(e.b, new Set([e.id]));
+      const tb = [];
+      for (const t of ends) {
+        if (dot(unit(sub(t.p, nodes[e.b].p)), way) < 0.3) continue;
+        const r = outB(t.id);
+        if (r) tb.push({ t, ...r });
+      }
+      tb.sort((p, q) => p.cost - q.cost);
+      for (const b of tb.slice(0, 2)) {
+        const outA = growFrom(e.a, new Set([e.id, ...b.path]));
+        const ta = [];
+        for (const t of ends) {
+          if (t === b.t || dot(unit(sub(t.p, nodes[e.a].p)), way) > -0.3) continue;
+          const r = outA(t.id);
+          if (r) ta.push({ t, ...r });
+        }
+        ta.sort((p, q) => p.cost - q.cost);
+        for (const a of ta.slice(0, 2)) {
+          const r = routeOf(a.t.id, [...a.path.slice().reverse(), e.id, ...b.path]);
+          const D = len(sub(b.t.p, a.t.p));
+          if (!r || D < SPAN[0] || r.len > DETOUR * D + DETOUR_ADD || backOf(r.pts, a.t.p, b.t.p, []) > BACK) continue;
+          if (new Set(r.edges).size !== r.edges.length) continue;
+          found.push({ ...r, ends: [a.t.id, b.t.id], anchors: [] });
+          return found;
+        }
+      }
+      return found;
+    }
+    function seek(hi) {
+      const x = hoods[hi];
+      if (!centreNode.get(x.d) || !longest.has(hi)) return null;
+      for (const { e } of longest.get(hi).slice(0, SEEK_TRIES)) {
+        const [r] = through(x.d, e);
+        if (r) return { ...r, made: hi };
       }
       return null;
     }
@@ -643,11 +698,63 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf }) {
       if (c) cands.push(c);
     }
 
+    // ---- Centre to centre ----
+    // Each two neighbouring districts: a route through both centres, on
+    // beyond each (or, failing that, from a loop at one's station plaza to
+    // a loop at the other's). Where neither the metro nor regional rail
+    // joins them it must run; elsewhere it is worth running if it can.
+    const linkedSet = linked();
+    const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+    const pairs = [];
+    for (const d of ds) {
+      for (const k of d.neighbours || []) {
+        if (d.key >= k || !centreNode.has(d.key) || !centreNode.has(k)) continue;
+        pairs.push({ a: d.key, b: k, must: !linkedSet.has(pairKey(d.key, k)), cands: [] });
+      }
+    }
+    for (const P of pairs) {
+      const A = centreNode.get(P.a);
+      const B = centreNode.get(P.b);
+      const mid = pathFrom(trees[0], P.a, B.id);
+      if (!mid || !mid.length) continue;
+      const fit = (r, X, Y) => r && r.len <= DETOUR * len(sub(Y, X)) + DETOUR_ADD && backOf(r.pts, X, Y, [A.p, B.p]) <= BACK;
+      // On beyond each centre, away from the other.
+      const beyond = (from, away, banned) => {
+        const grow = growFrom(from.id, banned);
+        const out = [];
+        for (const t of ends) {
+          if (t === from || dot(unit(sub(t.p, from.p)), away) < 0.3) continue;
+          const r = grow(t.id);
+          if (r) out.push({ t, ...r });
+        }
+        return out.sort((p, q) => p.cost - q.cost).slice(0, 3);
+      };
+      const ab = unit(sub(B.p, A.p));
+      const outB = B.end ? [{ t: B, path: [] }] : beyond(B, ab, new Set(mid));
+      for (const b of outB) {
+        const outA = A.end ? [{ t: A, path: [] }] : beyond(A, mul(ab, -1), new Set([...mid, ...b.path]));
+        for (const a of outA) {
+          const r = routeOf(a.t.id, [...a.path.slice().reverse(), ...mid, ...b.path]);
+          if (!r || new Set(r.edges).size !== r.edges.length || !fit(r, a.t.p, b.t.p)) continue;
+          P.cands.push({ ...r, ends: [a.t.id, b.t.id], anchors: [P.a, P.b] });
+          break;
+        }
+        if (P.cands.length) break;
+      }
+      // (Loop to loop between the two plazas.)
+      if (!P.cands.length) {
+        const r = routeOf(A.id, mid);
+        if (r) P.cands.push({ ...r, ends: [A.id, B.id], anchors: [P.a, P.b], plazaLoops: true });
+      }
+      cands.push(...P.cands);
+    }
+
     // ---- Choosing routes ----
     const covered = new Uint8Array(samples.length);
     const usedEdge = new Uint8Array(edges.length);
     const routes = [];
-    for (const c of cands) {
+    const centreIds = new Map([...centreNode].map(([k, n]) => [n.id, k]));
+    const prep = (c) => {
       const ss = new Set();
       const anchorSet = new Set(c.anchors);
       const inHood = new Map();
@@ -658,26 +765,37 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf }) {
       c.samples = [...ss];
       c.hoods = [...inHood].filter(([h, l]) => l >= CONNECT && anchorSet.has(hoods[h].d)).map(([h]) => h);
       if (c.made !== undefined && !c.hoods.includes(c.made)) c.hoods.push(c.made);
-    }
+      // The neighbouring centres it runs straight between.
+      const through = new Set(c.nodes.filter((n) => centreIds.has(n)).map((n) => centreIds.get(n)));
+      c.pairs = pairs.filter((P) => through.has(P.a) && through.has(P.b));
+    };
+    for (const c of cands) prep(c);
     // What a route would do now: the people it newly serves (and the
-    // neighbourhoods it newly joins), less the cost of running it and of
-    // the new track it needs.
+    // neighbourhoods and neighbouring centres it newly joins), less the
+    // cost of running it and of the new track it needs.
     const costOf = (c) => {
       let cost = (c.len / 1000) * PER_KM_RUN;
       for (const id of c.edges) if (!usedEdge[id]) cost += (edges[id].len / 1000) * PER_KM_TRACK;
       return cost;
     };
-    const valueOf = (c) => {
+    const gainOf = (c) => {
       let gain = 0;
       for (const s of c.samples) if (!covered[s]) gain += samples[s].w;
+      return gain;
+    };
+    const valueOf = (c) => {
+      let gain = gainOf(c);
       for (const h of c.hoods) if (!hoods[h].joined) gain += PER_HOOD;
+      for (const P of c.pairs) if (!P.joined) gain += P.must ? PER_PAIR_MUST : PER_PAIR;
       return gain - costOf(c);
     };
     const take = (c) => {
       c.taken = true;
       for (const s of c.samples) covered[s] = 1;
       for (const h of c.hoods) hoods[h].joined = true;
+      for (const P of c.pairs) P.joined = true;
       for (const id of c.edges) usedEdge[id] = 1;
+      if (c.plazaLoops) for (const n of c.ends) nodes[n].end ||= 'plaza';
       routes.push(c);
     };
     // (Lazily: a route's value only falls as others are chosen, but for the
@@ -697,6 +815,25 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf }) {
       if (v <= 0) continue;
       take(c);
     }
+    // Neighbouring centres with no metro or rail between them and no route
+    // yet: the cheapest that joins them, whatever it costs.
+    for (const P of pairs) {
+      if (!P.must || P.joined) continue;
+      const best = P.cands.filter((c) => !c.taken).sort((x, y) => costOf(x) - costOf(y))[0];
+      if (best) take(best);
+    }
+    // The old town's pedestrian main street: trams run along it (the
+    // cheapest route that does, whatever it costs).
+    for (const e of edges) {
+      if (!e.L.src.pedestrian || usedEdge[e.id]) continue;
+      const cs = [...through(e.L.d, e, 2), ...across(e)];
+      for (const c of cs) {
+        prep(c);
+        cands.push(c);
+      }
+      const best = cs.sort((x, y) => costOf(x) - costOf(y))[0];
+      if (best) take(best);
+    }
     // Neighbourhoods still not joined to their centres: the routes that
     // join most of them for what they cost, whatever that is.
     for (;;) {
@@ -710,6 +847,57 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf }) {
       }
       if (!best) break;
       take(best.c);
+    }
+    // Then homes still beyond a short walk of a stop: routes along the
+    // streets nearest the biggest gaps, the most people for the track,
+    // until nearly everyone is served (or no street comes near enough).
+    {
+      const total = samples.reduce((a, x) => a + x.w, 0);
+      const reach = new Uint8Array(samples.length);
+      for (const e of edges) for (const x of e.samples) reach[x] = 1;
+      let got = samples.reduce((a, x) => a + (covered[x.id] ? x.w : 0), 0);
+      const tried = new Set();
+      for (let round = 0; round < COVER_ROUNDS && got < COVER_TARGET * total; round++) {
+        // (Candidates through the streets nearest the biggest gaps.)
+        const gaps = samples.filter((x) => !covered[x.id] && reach[x.id]).sort((a, b) => b.w - a.w);
+        let added = 0;
+        for (const g of gaps) {
+          if (added >= GAP_TRIES) break;
+          let best = null;
+          for (const code of segs.near(g.p[0], g.p[1], COVER)) {
+            const { L, i, a, b } = segAt(code);
+            const ab = sub(b, a);
+            const t = Math.max(0, Math.min(1, dot(sub(g.p, a), ab) / (dot(ab, ab) || 1)));
+            const r = len(sub(add(a, mul(ab, t)), g.p));
+            if (r < COVER && (!best || r < best.r)) best = { r, L, s: L.cum[i - 1] + t * (L.cum[i] - L.cum[i - 1]) };
+          }
+          if (!best) continue;
+          const e = edges.find((x) => x.L === best.L && best.s >= x.s0 - 1 && best.s <= x.s1 + 1);
+          if (!e || tried.has(e.id)) continue;
+          tried.add(e.id);
+          added++;
+          for (const c of [...through(e.L.d, e, 2), ...across(e)]) {
+            prep(c);
+            cands.push(c);
+          }
+        }
+        let best = null;
+        for (const c of cands) {
+          if (c.taken) continue;
+          const gain = gainOf(c);
+          if (gain <= 0) continue;
+          let track = 0;
+          for (const id of c.edges) if (!usedEdge[id]) track += edges[id].len;
+          const v = gain / (1 + track / 1000 + (c.len / 1000) * 0.25);
+          if (!best || v > best.v) best = { c, v };
+        }
+        if (!best) {
+          if (!added) break;
+          continue;
+        }
+        take(best.c);
+        got = samples.reduce((a, x) => a + (covered[x.id] ? x.w : 0), 0);
+      }
     }
 
     // ---- Stops ----
@@ -792,7 +980,7 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf }) {
     // ---- What each district holds ----
     const byDistrict = new Map();
     const of = (k) => {
-      if (!byDistrict.has(k)) byDistrict.set(k, { ranges: new Map(), stops: [], turns: [], loops: [] });
+      if (!byDistrict.has(k)) byDistrict.set(k, { ranges: new Map(), runs: [], stops: [], turns: [], loops: [] });
       return byDistrict.get(k);
     };
     const routedEdges = new Map();
@@ -802,6 +990,9 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf }) {
       const t = of(e.L.d);
       if (!t.ranges.has(e.L.key)) t.ranges.set(e.L.key, []);
       t.ranges.get(e.L.key).push([e.s0, e.s1, rs]);
+      // (And the stretch as drawn: the routes along it, in number order so
+      // each keeps its place beside the others from one stretch to the next.)
+      t.runs.push({ pts: e.pts, routes: rs.slice().sort((a, b) => a - b) });
     }
     for (const t of byDistrict.values()) {
       for (const [k, list] of t.ranges) {
@@ -831,10 +1022,10 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf }) {
       turns,
       loops,
       byDistrict,
-      judged: { routes: routes.length, km: routes.reduce((a, r) => a + r.len, 0) / 1000, track: [...routedEdges.keys()].reduce((a, id) => a + edges[id].len, 0) / 1000, joined: joinedShare, covered: coveredShare, hoods: hoods.length, candidates: cands.length, ends: ends.length },
+      judged: { pairs: { must: pairs.filter((P) => P.must).length, mustJoined: pairs.filter((P) => P.must && P.joined).length, all: pairs.length, joined: pairs.filter((P) => P.joined).length }, routes: routes.length, km: routes.reduce((a, r) => a + r.len, 0) / 1000, track: [...routedEdges.keys()].reduce((a, id) => a + edges[id].len, 0) / 1000, joined: joinedShare, covered: coveredShare, hoods: hoods.length, candidates: cands.length, ends: ends.length },
     };
     return planned;
   }
-  const empty = { ranges: new Map(), stops: [], turns: [], loops: [] };
+  const empty = { ranges: new Map(), runs: [], stops: [], turns: [], loops: [] };
   return { plan, in: (d) => plan().byDistrict.get(d.key) || empty };
 }

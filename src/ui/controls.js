@@ -2,7 +2,7 @@
 // (seed, pop, x, y, zoom).
 
 const DEFAULT_VIEW = { seed: '1', pop: 1500000, x: 0, y: 0, zoom: 0.03 };
-const MIN_POPULATION = 150000;
+const MIN_POPULATION = 750000; // (regional rail, metro and a city centre need a city this size)
 const MAX_POPULATION = 10000000;
 const LAYERS_KEY = 'post-car-city:layers:v5';
 export const MAP_LAYERS = ['cores', 'streets', 'green', 'outlines', 'neighbourhoods', 'blocks'];

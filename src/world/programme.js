@@ -31,6 +31,23 @@ import {
 } from './uses.js';
 
 const WORSHIP_PER_HOOD = 3;
+const OLD_TOWN_MUSEUMS = 2; // besides the district's own, there too
+const OLD_TOWN_HOTELS = 6;
+const OLD_TOWN_USES = new Set(['museum', 'gallery', 'districtLibrary']);
+const OPERA_FROM = 2.5e6; // people: a city this big has an opera house
+const THEATRES = 8; // a theatre district's
+const THEATRE_GAP = 60; // metres between them
+const SPECIALTY_HOSPITALS = ['childrensHospital', 'cancerCentre', 'researchInstitute', 'rehabHospital', 'eyeHospital']; // a medical district's
+const EMBASSIES = [6, 40]; // at least, at most
+const EMBASSY_PEOPLE = 150000; // people to an embassy or consulate
+const EMBASSY_GAP = 120; // metres between them
+const OFFICE_LIST = 12; // floors of an office tower whose tenants are listed
+const FLAGSHIP_HOTELS = 3; // the business district's, besides the district's own
+const OBSERVATION_BLOCK = [3000, 16000]; // m²: the observation tower's block, its plaza round it
+const OBSERVATION_REACH = 450; // metres from the station, about
+const OFFICE_TOWERS = 0.5; // of the business district's towers, those of offices (the rest flats)
+const CENTRE_PARKETTE_EVERY = 10; // podium blocks to a parkette, at most
+const CENTRE_GREEN_REACH = 220; // metres: in a district's core, a park, green or parkette within this of every block
 const ELEMENTARY_PER_HOOD = 2;
 const SCHOOL_BLOCK = [0.3e4, 1.3e4]; // m², net: a block an elementary school takes
 const HOSPITAL_BLOCK = [1.0e4, 3.5e4];
@@ -40,6 +57,7 @@ const REC_BLOCK = [0.5e4, 1.6e4];
 const WHOLE_BLOCK = 1500; // m²: a building of its own this big takes a whole block if it can...
 const WHOLE_MAX = 4; // ...one up to this many times its size
 const JOIN_STEPS = 5;
+const LOUD = new Set(['pub', 'liveMusic', 'nightclub', 'restaurant', 'karaoke', 'arcade', 'comedy']); // kept to the main streets
 const JOINABLE = new Set(['main', 'corner', 'unit', 'house', 'rowCorner', 'unitShop', 'cornerShop']); // plots a building of its own may take in
 const WORSHIP_PLOT = 600; // m²: what a place of worship looks for // plots each way along a block a building of its own may take in
 const PARKETTE_WALK = 400; // metres: three parkettes within this of every rowhouse
@@ -52,7 +70,7 @@ const CORNER_SHOPS = 0.45; // ... of rowhouse end plots
 // Buildings by plot class: usual storeys, their range, the depth of the
 // building from the street where the plot runs deeper (rowhouse gardens).
 const HEIGHTS = {
-  main: { base: 6, storeys: [4, 10] },
+  main: { base: 6, storeys: [3, 10] },
   unit: { base: 5, storeys: [3, 9] },
   unitShop: { base: 5, storeys: [3, 9] },
   corner: { base: 5, storeys: [3, 9] },
@@ -377,6 +395,32 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   const free = (b) => (b.plots || []).every((p) => !p.dedicated && !p.ground && !p.upper);
   const floorOf = (use) => (USES[use].floor === 'upper' ? 'upper' : USES[use].floor === 'dedicated' ? 'dedicated' : 'ground');
 
+  // ---- The old town ----
+  // In the city-centre district, the old-town neighbourhood: its square the
+  // district plaza with city hall facing it; the main library, museums and
+  // the tourist centre in its old buildings, and boutique hotels in its
+  // perimeter blocks (no big buildings of their own).
+  const oldHood = hoods.find((h) => h.oldTown);
+  if (oldHood) {
+    const inOld = (p) => p.hood === oldHood.id;
+    const sq = blocks.find((b) => b.use === 'square' && b.hood === oldHood.id && b.plots);
+    const q = sq ? centroid(sq.pts) : oldHood.centre;
+    if (sq) sq.plots[0].dedicated = 'districtPlaza';
+    dedicate(q, 'cityHall', ['main', 'corner', 'unit'], 160, MIN_PLOT.cityHall);
+    dedicate(oldHood.centre, 'mainLibrary', ['main', 'corner', 'unit'], 350, MIN_PLOT.mainLibrary);
+    for (let k = 0; k < OLD_TOWN_MUSEUMS; k++) dedicate(oldHood.centre, 'museum', ['main', 'corner', 'unit'], 400, MIN_PLOT.museum);
+    const tc = nearest(oldHood.centre, ['main', 'corner', 'unit'], 'ground', 300, inOld);
+    if (tc) put(tc, 'touristCentre', 'ground');
+    // (Spread about it.)
+    const hotels = [];
+    for (let k = 0; k < OLD_TOWN_HOTELS; k++) {
+      const p = nearest(oldHood.centre, ['main', 'corner', 'unit'], 'upper', 500, (o) => inOld(o) && hotels.every((x) => len(sub(x.c, o.c)) > 90));
+      if (!p) break;
+      put(p, 'boutiqueHotel', 'upper');
+      hotels.push(p);
+    }
+  }
+
   // ---- Each neighbourhood's own ----
   // (A neighbourhood with a park has its community centre built into it.)
   const withPark = new Set(blocks.filter((b) => b.use === 'park').map((b) => b.hood));
@@ -390,8 +434,9 @@ export function assignProgramme(seed, d, blocks, planned = null) {
           const size = use === 'communityCentre' ? 800 : use === 'inn' ? 450 : 400;
           dedicate(q, use, use === 'inn' ? ['main'] : ['main', 'corner', 'unit'], 700, size);
         } else {
-          // (Along its main streets; failing that, on a corner near its square.)
-          const p = nearest(q, ['main', 'podium'], slot, 900, (o) => o.hood === h.id) || nearest(q, ['corner', 'unit'], slot, 700, (o) => o.hood === h.id) || nearest(q, ['main', 'podium'], slot, 1400);
+          // (Along its main streets; failing that, on a corner near its square,
+          // but for what is loud at night: only on a main street.)
+          const p = nearest(q, ['main', 'podium'], slot, 900, (o) => o.hood === h.id) || (LOUD.has(use) ? null : nearest(q, ['corner', 'unit'], slot, 700, (o) => o.hood === h.id)) || nearest(q, ['main', 'podium'], slot, 1400);
           if (p) put(p, use, slot);
         }
       }
@@ -434,13 +479,110 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     }
   }
 
+  // ---- The business district ----
+  // The city-centre district's core: the city's convention centre, and its
+  // observation tower on a block of its own, a plaza all round it.
+  const coreHood = hoods.find((h) => h.core);
+  if (oldHood && coreHood) {
+    dedicate(S, 'conventionCentre', ['podium'], 800, MIN_PLOT.conventionCentre);
+    const site = blocks
+      .filter((b) => b.use === 'podium' && b.plots && b.hood === coreHood.id && free(b) && b.area >= OBSERVATION_BLOCK[0] && b.area <= OBSERVATION_BLOCK[1])
+      .sort((x, y) => Math.abs(len(sub(centroid(x.pts), S)) - OBSERVATION_REACH) - Math.abs(len(sub(centroid(y.pts), S)) - OBSERVATION_REACH))[0];
+    if (site) dedicateBlock(site, 'observationTower');
+  }
+
+  // ---- The city centre's facilities ----
+  // At the neighbourhoods stage 3 chose: the main courthouse facing its
+  // square; the main performing arts centre (and in a big city an opera
+  // house) facing its own, or a theatre district's theatres along its main
+  // streets; the research hospital, or a medical district's hospitals,
+  // whole blocks; and embassies along the district's main streets.
+  const cityPeople = d.stage3.cityPeople || 0;
+  const squareOfHood = (h) => blocks.find((b) => b.use === 'square' && !b.stationPlaza && b.hood === h.id && b.plots);
+  const plazaFor = (h, use) => {
+    const sq = squareOfHood(h);
+    if (!sq) return h.centre;
+    sq.plots[0].dedicated = use;
+    sq.plots[0].also = 'market';
+    return centroid(sq.pts);
+  };
+  const wholeBlockNear = (q, use, h, [lo, hi]) => {
+    const b = blocks
+      .filter((o) => (o.use === 'perimeter' || o.use === 'podium') && o.plots && free(o) && o.area >= lo && o.area <= hi && (!h || o.hood === h.id))
+      .sort((x, y) => len(sub(centroid(x.pts), q)) - len(sub(centroid(y.pts), q)))[0];
+    if (b) dedicateBlock(b, use);
+    return b;
+  };
+  for (const h of hoods) {
+    if (h.role === 'courts') {
+      const q = plazaFor(h, 'courthousePlaza');
+      dedicate(q, 'mainCourthouse', ['main', 'corner', 'unit'], 200, MIN_PLOT.mainCourthouse);
+    } else if (h.role === 'arts') {
+      const q = plazaFor(h, 'artsPlaza');
+      dedicate(q, 'mainArts', ['main', 'corner', 'unit'], 220, MIN_PLOT.mainArts);
+      if (cityPeople >= OPERA_FROM) dedicate(q, 'operaHouse', ['main', 'corner', 'unit'], 260, MIN_PLOT.operaHouse);
+      if (h.cluster) {
+        // Theatres along its main streets, apart.
+        const theatres = [];
+        for (let k = 0; k < THEATRES; k++) {
+          const p = nearest(h.centre, ['main'], 'dedicated', 700, (o) => o.hood === h.id && theatres.every((x) => len(sub(x.c, o.c)) > THEATRE_GAP));
+          if (!p) break;
+          theatres.push(dedicatePlot(p, 'theatre', MIN_PLOT.theatre));
+        }
+      }
+    } else if (h.role === 'medical') {
+      wholeBlockNear(h.centre, 'researchHospital', h, HOSPITAL_BLOCK) || wholeBlockNear(h.centre, 'researchHospital', null, HOSPITAL_BLOCK);
+      if (h.cluster) for (const use of SPECIALTY_HOSPITALS) wholeBlockNear(h.centre, use, h, [MIN_PLOT[use], HOSPITAL_BLOCK[1]]);
+    }
+  }
+  if (cityPeople) {
+    const n = Math.max(EMBASSIES[0], Math.min(EMBASSIES[1], Math.round(cityPeople / EMBASSY_PEOPLE)));
+    const placed = [];
+    const along = plots.filter((p) => p.cls === 'main' && hoods[p.hood] && !hoods[p.hood].core && !hoods[p.hood].oldTown);
+    along.sort((a, b) => toUnit(hash(seed, 'embassy', Math.floor(a.c[0]), Math.floor(a.c[1]))) - toUnit(hash(seed, 'embassy', Math.floor(b.c[0]), Math.floor(b.c[1]))));
+    for (const p of along) {
+      if (placed.length >= n) break;
+      if (taken(p, 'dedicated') || p.cls !== 'main' || placed.some((x) => len(sub(x.c, p.c)) < EMBASSY_GAP)) continue;
+      placed.push(dedicatePlot(p, 'embassy', MIN_PLOT.embassy));
+    }
+  }
+
+  // ---- More green in the core ----
+  // A district's core has few courtyards: a parkette (a small block given
+  // over to green) wherever a block is far from any park or green.
+  if (coreHood) {
+    const greens = blocks.filter((b) => b.pts && ['park', 'green', 'parkette', 'campus'].includes(b.use)).map((b) => centroid(b.pts));
+    const own = blocks.filter((b) => b.use === 'podium' && b.plots && b.hood === coreHood.id);
+    // (Nearest the station first, so its own are seen to.)
+    own.sort((x, y) => len(sub(centroid(x.pts), S)) - len(sub(centroid(y.pts), S)));
+    let room = Math.floor(own.length / CENTRE_PARKETTE_EVERY);
+    for (const b of own) {
+      const c = centroid(b.pts);
+      if (room <= 0) break;
+      if (b.use !== 'podium' || greens.some((g) => len(sub(g, c)) < CENTRE_GREEN_REACH)) continue;
+      // The smallest free block near it.
+      const pk = own
+        .filter((o) => o.use === 'podium' && free(o) && len(sub(centroid(o.pts), c)) < CENTRE_GREEN_REACH * 0.6)
+        .sort((x, y) => x.area - y.area)[0];
+      if (!pk) continue;
+      dedicateBlock(pk, 'parkette');
+      room--;
+      pk.plots[0].cls = 'open';
+      greens.push(centroid(pk.pts));
+    }
+  }
+
   // ---- The district's own ----
-  const core = sqCentre.get(0) || S;
+  const coreAt = sqCentre.get(0) || S;
   const twoOrThree = toUnit(hash(seed, 'district-share', ...keyInts(d.coreInfo)));
   const extra = [];
   if (twoOrThree < 0.4) extra.push(['departmentStore', 1, 'core']);
   if (twoOrThree > 0.6) extra.push(['courthouse', 1, 'core']);
+  if (oldHood) extra.push(['hotel', FLAGSHIP_HOTELS, 'core']);
   for (const [use, count, where] of DISTRICT_LIST.concat(extra)) {
+    // (In the city-centre district, the museums, galleries and library
+    // are the old town's.)
+    const core = oldHood && OLD_TOWN_USES.has(use) ? oldHood.centre : coreAt;
     for (let k = 0; k < count; k++) {
       const slot = floorOf(use);
       if (where === 'large') {
@@ -601,6 +743,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
   for (const p of live) {
     const t = Math.min(1, len(sub(p.c, S)) / (d.coreReach * 1.25));
     p.towerSite = p.cls === 'podium' && polygonArea(p.pts) >= TOWER_SITE && toUnit(hash(seed, 'tower', Math.floor(p.c[0]), Math.floor(p.c[1]))) < TOWER_SHARE * (1 - 0.7 * t);
+    // (In the business district, many towers are offices: head offices.)
+    p.officeTower = p.towerSite && !!oldHood && toUnit(hash(seed, 'office-tower', Math.floor(p.c[0]), Math.floor(p.c[1]))) < OFFICE_TOWERS;
   }
   const heightsOf = (p) => (p.towerSite ? HEIGHTS.podiumTower : HEIGHTS[p.cls]);
   const people = (p) => {
@@ -608,6 +752,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     const footprint = H.depth ? Math.min(polygonArea(p.pts), p.front * H.depth || polygonArea(p.pts)) : polygonArea(p.pts);
     const homesFloors = Math.max(0, p.storeys - (p.ground ? 1 : 0) - (p.upper ? 1 : 0));
     // (A tower's homes are all in the tower; its podium is shops and offices.)
+    if (p.officeTower) return (p.dwellings = 0);
     const floorArea = H.tower ? Math.min(footprint, TOWER_PLATE) * Math.max(0, p.storeys - (p.baseStoreys || PODIUM_STOREYS)) : footprint * homesFloors;
     // A house of three storeys or more is split into flats (a plex).
     const dwellings = H.house ? Math.max(1, Math.min(3, p.storeys - (p.ground ? 1 : 0) - 1)) : Math.floor((floorArea * NET_SHARE) / DWELLING);
@@ -662,7 +807,7 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     p.shops = [p.ground || pick(HIGH_STREET_MIX, r)];
     while (p.shops.length < shops) p.shops.push(pick(HIGH_STREET_MIX, r));
     // (Under a tower every floor above the shops is offices; otherwise one is.)
-    const officeFloors = p.towerSite ? Math.max(1, (p.baseStoreys || PODIUM_STOREYS) - 1) : 1;
+    const officeFloors = p.officeTower ? Math.min(OFFICE_LIST, p.storeys - 1) : p.towerSite ? Math.max(1, (p.baseStoreys || PODIUM_STOREYS) - 1) : 1;
     const perFloor = Math.max(2, Math.min(6, Math.round(polygonArea(p.pts) / 450)));
     // (Whatever was put upstairs already, a gym or a clinic, stays among them.)
     p.offices = p.upper ? [p.upper] : [];

@@ -21,6 +21,7 @@ import { USES } from './uses.js';
 import { PODIUM_STOREYS, TOWER_PLATE } from './programme.js';
 
 const GROUND_EXTRA = 1.2; // metres a shop floor is taller than an upper floor
+const OBSERVATION_HEIGHT = [380, 520]; // metres: an observation tower's shaft (its mast above)
 
 // Storeys and style of buildings of their own, by use.
 const LANDMARKS = {
@@ -39,6 +40,20 @@ const LANDMARKS = {
   communityCentre: { storeys: 2, styles: ['modern'] },
   recCentre: { storeys: 2, styles: ['modern'], floor: 5, inset: 5 },
   hospital: { storeys: 7, styles: ['modern'], inset: 6, share: 0.68 },
+  researchHospital: { storeys: 10, styles: ['modern'], inset: 6, share: 0.75 },
+  childrensHospital: { storeys: 7, styles: ['modern'], inset: 6, share: 0.7 },
+  cancerCentre: { storeys: 8, styles: ['modern'], inset: 6, share: 0.7 },
+  rehabHospital: { storeys: 5, styles: ['modern'], inset: 6, share: 0.6 },
+  eyeHospital: { storeys: 6, styles: ['modern', 'beauxArts'], inset: 6, share: 0.6 },
+  researchInstitute: { storeys: 7, styles: ['modern'], inset: 5, share: 0.7 },
+  cityHall: { storeys: 5, styles: ['beauxArts', 'neoclassical', 'gothic'], setback: 4, spire: [45, 70] },
+  mainLibrary: { storeys: 5, styles: ['beauxArts', 'neoclassical', 'modern'], setback: 4 },
+  mainCourthouse: { storeys: 6, styles: ['beauxArts', 'neoclassical'], setback: 5, dome: true },
+  mainArts: { storeys: 6, styles: ['modern', 'beauxArts'], setback: 5 },
+  operaHouse: { storeys: 6, styles: ['beauxArts', 'modern'], setback: 5, dome: true },
+  theatre: { storeys: 4, styles: ['beauxArts', 'artDeco'], setback: 1 },
+  embassy: { storeys: 4, styles: ['neoclassical', 'beauxArts', 'modern'], setback: 3 },
+  conventionCentre: { storeys: 3, styles: ['modern'], floor: 6, inset: 4 },
   hospice: { storeys: 3, styles: ['modern'] },
   elementarySchool: { storeys: 2, styles: ['modern'], inset: 6, strip: [22, 90] },
   secondarySchool: { storeys: 3, styles: ['modern'], inset: 6, strip: [30, 130] },
@@ -115,6 +130,13 @@ export function rect(c, u, l, w) {
 
 // A cross-shaped plan: nave along u, transept across it two thirds of the
 // way along, the chancel at the far end.
+// A round footprint.
+function circle(c, r, n = 20) {
+  const out = [];
+  for (let i = 0; i < n; i++) out.push([c[0] + r * Math.cos((2 * Math.PI * i) / n), c[1] + r * Math.sin((2 * Math.PI * i) / n)]);
+  return out;
+}
+
 function cross(c, u, l, w, tl) {
   const v = [-u[1], u[0]];
   const p = (a, b) => [c[0] + u[0] * a + v[0] * b, c[1] + u[1] * a + v[1] * b];
@@ -294,6 +316,17 @@ export function assignBuildings(seed, d, blocks) {
             p.bldg.pitch = rect(ax.c, ax.u, Math.min(105, L - 2 * depth - 8), Math.min(68, W - 2 * depth - 8));
             return;
           }
+        }
+        if (p.dedicated === 'observationTower') {
+          // A slender shaft on a low round base in the middle of its plaza,
+          // a mast on top: Skytree, the CN Tower.
+          const c = centroid(p.pts);
+          const H = OBSERVATION_HEIGHT[0] + u(28, bi) * (OBSERVATION_HEIGHT[1] - OBSERVATION_HEIGHT[0]);
+          const bl = make(circle(c, 22), 3, 'modern', k, { landmark: 'observationTower', ridge: null });
+          bl.tower = make(circle(c, 9, 12), 1, 'tower', [...k, 1], { floor: H, ridge: null });
+          bl.tower.spire = { p: c, h: H * 1.18, thin: true };
+          p.bldg = bl;
+          return;
         }
         if (p.dedicated === 'cathedral') {
           // A cross plan in its close, the west front facing the square.

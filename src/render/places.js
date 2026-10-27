@@ -38,7 +38,7 @@ const SHOWN = {
   altPrimary: ['school', 1.5], altSecondary: ['school', 1.5], stadium: ['sport', 1], recCentre: ['sport', 1.5], skatingRink: ['sport', 1.5],
   climbing: ['sport', 1.5], gymnastics: ['sport', 1.5], museum: ['culture', 1], gallery: ['culture', 2], performingArts: ['stage', 1],
   cinema: ['stage', 1.5], library: ['library', 1.5], districtLibrary: ['library', 1], police: ['police', 1], fireStation: ['fire', 1],
-  courthouse: ['civic', 1], governmentOffice: ['civic', 1.5], communityCentre: ['civic', 1.5], employment: ['civic', 2], postOffice: ['post', 1.5],
+  courthouse: ['civic', 1], cityHall: ['civic', 1], mainCourthouse: ['civic', 1], courthousePlaza: ['market', 1], artsPlaza: ['market', 1], researchHospital: ['health', 1], childrensHospital: ['health', 1], cancerCentre: ['health', 1], rehabHospital: ['health', 1], eyeHospital: ['health', 1], researchInstitute: ['health', 1.5], mainArts: ['stage', 1], operaHouse: ['stage', 1], theatre: ['stage', 1.5], embassy: ['civic', 1.5], conventionCentre: ['civic', 1], observationTower: ['stage', 1], mainLibrary: ['library', 1], touristCentre: ['civic', 1.5], boutiqueHotel: ['lodging', 1.5], governmentOffice: ['civic', 1.5], communityCentre: ['civic', 1.5], employment: ['civic', 2], postOffice: ['post', 1.5],
   church: ['worship', 1.5], cathedral: ['worship', 1], mosque: ['mosque', 1.5], synagogue: ['synagogue', 1.5], temple: ['worship', 1.5],
   stationEntrance: ['rail', 1.5],
   departmentStore: ['shop', 1], hotel: ['lodging', 1], inn: ['lodging', 1.5], market: ['market', 1.5], districtPlaza: ['market', 1],
@@ -77,7 +77,7 @@ export function placesOf(blocks) {
       if (!at) continue;
       const uses = [];
       if (plot.dedicated) uses.push(plot.dedicated);
-      for (const a of plot.also || []) uses.push(a);
+      for (const a of [].concat(plot.also || [])) uses.push(a);
       if (plot.ground && plot.ground !== 'stationEntrance') uses.push(plot.ground);
       if (plot.shops) for (const s of plot.shops.slice(1, 3)) uses.push(s);
       // A rail station's entrances, each where it is on the frontage.

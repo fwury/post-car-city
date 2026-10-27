@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { seedFromText } from '../src/core/hash.js';
 import { createWorld } from '../src/world/districts.js';
 import { distToLine } from '../src/world/boulevards.js';
-import { NEIGHBOURHOODS, MAIN_STREET_REACH, RING_MARGIN, GATEWAY_TWO } from '../src/world/neighbourhoods.js';
+import { NEIGHBOURHOODS, MAIN_STREET_REACH, RING_MARGIN, GATEWAY_EVERY } from '../src/world/neighbourhoods.js';
 import { pointInPolygon, polygonArea } from '../src/util/geom.js';
 
 // A big city on flat land, so a wide square of it is all districts.
@@ -82,7 +82,7 @@ test('each neighbourhood houses about 15 000 people, at its own density', () => 
   assert.ok(mean(low) > mean(dense) * 1.3, 'rowhouse neighbourhoods should be larger than perimeter-block ones');
 });
 
-test('nearly every neighbourhood has a main street, and few have more than three', () => {
+test('nearly every neighbourhood has a main street, and few have more than five', () => {
   const none = [];
   let many = 0;
   let total = 0;
@@ -100,13 +100,13 @@ test('nearly every neighbourhood has a main street, and few have more than three
       if (streets < 1) none.push(h.key);
       if (!h.core) {
         total++;
-        if (streets > 3) many++;
+        if (streets > 5) many++;
       }
     }
   }
   // (Large, less dense neighbourhoods are crossed by more of them.)
   // (More where streets are laid to bring every spot within reach of one.)
-  assert.ok(many <= total * 0.18, `${many} of ${total} neighbourhoods have more than three main streets`);
+  assert.ok(many <= total * 0.15, `${many} of ${total} neighbourhoods have more than five main streets`);
   assert.ok(none.length <= total * 0.03, `${none.join(', ')} have no main street of their own`);
 });
 
@@ -263,6 +263,8 @@ test('main streets never dead-end (they may end at a park gate, or the land\'s e
     const lines = streetsOf(d);
     const ring = d.ring.concat([d.ring[0]]);
     for (const l of d.stage3.lines) {
+      // (A loop, like the old town's frame, has no ends.)
+      if (Math.hypot(l.points[0][0] - l.points[l.points.length - 1][0], l.points[0][1] - l.points[l.points.length - 1][1]) < 1) continue;
       const ends = [[l.points[0], !!l.crossing, l.parkStart], [l.points[l.points.length - 1], !!l.crossingEnd, l.parkEnd]];
       for (const [k, [e, crossingStart, park]] of ends.entries()) {
         if (crossingStart) continue; // carries on in the next district
@@ -319,15 +321,21 @@ test('junctions are crossings or T junctions, never many streets at one spot', (
           if (seen.some((q) => Math.hypot(q[0] - c.p[0], q[1] - c.p[1]) < 40)) continue;
           seen.push(c.p);
           junctions++;
-          // Streets passing within 40 m of the junction.
-          const through = lines.filter((q) => distToLine(c.p[0], c.p[1], q) < 40).length;
-          assert.ok(through <= 3, `${through} streets meet at ${c.p.map(Math.round)} in ${d.key}`);
-          if (through > 2) crowded++;
+          // Arms of the streets within 40 m of the junction: two for a street
+          // running through, one for a street ending there.
+          let arms = 0;
+          for (const q of lines) {
+            if (distToLine(c.p[0], c.p[1], q) >= 40) continue;
+            const ends = [q[0], q[q.length - 1]].filter((e) => Math.hypot(e[0] - c.p[0], e[1] - c.p[1]) < 40).length;
+            arms += Math.max(0, 2 - ends);
+          }
+          assert.ok(arms <= 5, `${arms} arms meet at ${c.p.map(Math.round)} in ${d.key}`);
+          if (arms > 4) crowded++;
         }
       }
     }
   }
-  assert.ok(crowded <= junctions * 0.02, `${crowded} of ${junctions} junctions have three streets close together`);
+  assert.ok(crowded <= junctions * 0.02, `${crowded} of ${junctions} junctions have more than four arms`);
 });
 
 test('main streets keep apart: none runs alongside another', () => {
@@ -450,17 +458,19 @@ test('every spot is within 600 m of a main street or boulevard (away from the ed
   assert.ok(far <= n * 0.03, `${far} of ${n} spots more than 600 m from a main street`);
 });
 
-test('each shared greenway has one gateway for main streets, two if long', () => {
+test('main streets cross each shared greenway about every 900 m, well apart', () => {
   for (const d of inner()) {
     const per = new Map();
     for (const x of d.stage3.crossings) {
       const k = x.key.slice(0, x.key.lastIndexOf('#'));
-      per.set(k, (per.get(k) || 0) + 1);
+      if (!per.has(k)) per.set(k, []);
+      per.get(k).push(x.p);
     }
     for (const c of d.chains) {
-      const n = per.get(c.geo.key) || 0;
+      const ps = per.get(c.geo.key) || [];
       const L = c.geo.points.reduce((s, q, i, p) => (i ? s + Math.hypot(q[0] - p[i - 1][0], q[1] - p[i - 1][1]) : 0), 0);
-      assert.ok(n <= (L >= GATEWAY_TWO ? 2 : 1), `${n} gateways on a ${L.toFixed(0)} m greenway in ${d.key}`);
+      assert.ok(ps.length <= Math.max(1, Math.round(L / GATEWAY_EVERY)), `${ps.length} gateways on a ${L.toFixed(0)} m greenway in ${d.key}`);
+      for (let i = 0; i < ps.length; i++) for (let j = i + 1; j < ps.length; j++) assert.ok(Math.hypot(ps[i][0] - ps[j][0], ps[i][1] - ps[j][1]) >= 500, `gateways close together in ${d.key}`);
     }
   }
 });
@@ -486,4 +496,86 @@ test('main streets bend but never curl round', () => {
       }
     }
   }
+});
+
+test('main streets run side by side with another closer than 250 m only rarely', () => {
+  let samples = 0;
+  let beside = 0;
+  for (const d of inner().slice(0, 12)) {
+    const mains = d.stage3.lines.map((l) => l.points);
+    const all = streetsOf(d);
+    for (const A of mains) {
+      for (let i = 3; i < A.length - 3; i += 5) {
+        samples++;
+        const t = [A[i + 2][0] - A[i - 2][0], A[i + 2][1] - A[i - 2][1]];
+        const lt = Math.hypot(...t);
+        const p = A[i];
+        const close = all.some((B) => {
+          if (B === A) return false;
+          for (let j = 1; j < B.length - 1; j += 2) {
+            const v = [B[j][0] - p[0], B[j][1] - p[1]];
+            if (Math.hypot(...v) > 260) continue;
+            const u = [B[j + 1][0] - B[j - 1][0], B[j + 1][1] - B[j - 1][1]];
+            if (Math.abs(t[0] * u[0] + t[1] * u[1]) / (lt * Math.hypot(...u)) < 0.9) continue;
+            // Beside it (offset to one side, not ahead along it).
+            const side = Math.abs(t[0] * v[1] - t[1] * v[0]) / lt;
+            const ahead = Math.abs(t[0] * v[0] + t[1] * v[1]) / lt;
+            if (side >= 30 && side <= 250 && ahead <= 150) return true;
+          }
+          return false;
+        });
+        if (close) beside++;
+      }
+    }
+  }
+  assert.ok(beside / samples < 0.07, `${((100 * beside) / samples).toFixed(1)}% of main street runs within 250 m beside another`);
+});
+
+test('main streets meet each other square on, at 60° or near it', () => {
+  let n = 0;
+  let sharp = 0;
+  for (const d of inner().slice(0, 12)) {
+    const mains = d.stage3.lines.map((l) => l.points);
+    const all = streetsOf(d);
+    for (const A of mains) {
+      for (const [e, f] of [[A[0], A[2]], [A[A.length - 1], A[A.length - 3]]]) {
+        for (const B of all) {
+          if (B === A || [B[0], B[B.length - 1]].some((q) => Math.hypot(q[0] - e[0], q[1] - e[1]) < 1)) continue;
+          if (distToLine(e[0], e[1], B) > 1) continue;
+          let best = null;
+          for (let j = 1; j < B.length; j++) {
+            const r = distToLine(e[0], e[1], [B[j - 1], B[j]]);
+            if (!best || r < best.r) best = { r, u: [B[j][0] - B[j - 1][0], B[j][1] - B[j - 1][1]] };
+          }
+          const v = [f[0] - e[0], f[1] - e[1]];
+          const s = Math.abs(best.u[0] * v[1] - best.u[1] * v[0]) / (Math.hypot(...best.u) * Math.hypot(...v));
+          n++;
+          if (s < Math.sin((55 * Math.PI) / 180)) sharp++;
+          break;
+        }
+      }
+    }
+  }
+  assert.ok(n > 100, `only ${n} junctions`);
+  assert.ok(sharp <= n * 0.02, `${sharp} of ${n} main streets meet another at under 55°`);
+});
+
+test('nearly all homes are within 400 m of a main street or boulevard (where trams run)', () => {
+  let n = 0;
+  let near = 0;
+  for (const d of inner().slice(0, 12)) {
+    const R = d.stage3.raster;
+    const S = streetsOf(d);
+    for (let j = 1; j < R.H; j += 4) {
+      for (let i = 1; i < R.W; i += 4) {
+        const k = j * R.W + i;
+        if (R.label[k] < 0 || !R.dens[k]) continue;
+        const x = R.x0 + (i + 0.5) * R.cell;
+        const y = R.y0 + (j + 0.5) * R.cell;
+        n += R.dens[k];
+        if (S.some((P) => distToLine(x, y, P) <= 400)) near += R.dens[k];
+      }
+    }
+  }
+  assert.ok(near / n >= 0.95, `only ${((100 * near) / n).toFixed(1)}% of residents within 400 m`);
 });

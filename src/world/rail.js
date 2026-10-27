@@ -48,18 +48,11 @@ const LAYOUTS = 45; // whole networks laid out and judged
 const PART = 1400; // metres out from a division before its two tracks must be GAP apart
 const TAIL_TURN = (75 * Math.PI) / 180; // the most a line out into the country turns
 const NEAR = 3000; // metres: districts this close are next to each other
-const INFILL = 3200; // metres: a stretch this long between stations gets an infill stop
 const RING_CITY = 20; // districts (3 million people): from here, a loop line
 const RING_SIZE = [0.24, 0.3, 0.36]; // the loop's radius, as a share of the city's
 const RING_CHOICES = 3; // loops laid out networks are tried round
-const UNDER = 260; // metres either side of a station the track is underground
-const RAMP = 420; // metres of ramp between tunnel and viaduct
-const ALONG_GAP = 45; // metres: track this close beside a street running the same way...
-const ALONG_COS = 0.88; // (within about 28 degrees of it)...
-const ALONG_MIN = 120; // ...for this far or more goes underground
-const ALONG_NEAR = 100; // (and on underground while within this of it)
+const RAMP = 700; // metres of ramp from the tunnel up to the surface (20 m at 3%)
 const OVER = 600; // metres the path beside the track runs on over a tunnel, at most (into a station hall's forecourt)
-const TUNNEL_CENTRE = [1400, 3200]; // metres: how far out from the central station the lines run in tunnel, at least and at most
 const COUNTRY = 14000; // metres the lines run on beyond the city
 const STEP = 20; // metres between points of track
 // Line colours, as on a transit map.
@@ -182,7 +175,7 @@ function closedCurve(Q, step = STEP) {
 }
 
 // cores: the city's cores, the central one first.
-export function createRail(seed, { cores, terrain, sites = [], streetsNear = () => [] }) {
+export function createRail(seed, { cores, terrain, sites = [], inCity = () => true }) {
   const u = (...k) => toUnit(hash(seed, 'rail', ...k));
   if (!cores.length) return { segments: [], stations: [], lines: [], near: () => [], surfaceIn: () => [], joins: () => false, termini: [] };
   const N = cores.length;
@@ -401,21 +394,14 @@ export function createRail(seed, { cores, terrain, sites = [], streetsNear = () 
       }
       return true;
     };
-    // A station's place: at its core, or a little to one side of it if
-    // that lets the line run more gently.
-    const OFFSETS = [0, 220, -220, 400, -400];
+    // A station's place: at its core, under the district centre's main
+    // junction (where the metro meets it too).
     const reach = (from, dir, i, mode) => {
-      let best = null;
-      const v = unit(sub(P[i], from));
-      for (const o of OFFSETS) {
-        const q = add(P[i], mul([-v[1], v[0]], o));
-        if (wet(q)) continue;
-        const t = track(from, dir, q, mode);
-        if (!t || angleBetween(t.arrive, sub(q, hub)) > (ring ? OUT_ANGLE : OUT_ANGLE * 1.35) || !clear(t.pts, mode === 'junction')) continue;
-        const score = t.turn + Math.abs(o) / 800;
-        if (!best || score < best.score) best = { t, q, score };
-      }
-      return best;
+      const q = P[i];
+      if (wet(q)) return null;
+      const t = track(from, dir, q, mode);
+      if (!t || angleBetween(t.arrive, sub(q, hub)) > (ring ? OUT_ANGLE : OUT_ANGLE * 1.35) || !clear(t.pts, mode === 'junction')) return null;
+      return { t, q, score: t.turn };
     };
     const place = (s, c, r, side, splits) => {
       taken[c] = 1;
@@ -794,92 +780,24 @@ export function createRail(seed, { cores, terrain, sites = [], streetsNear = () 
     for (const [x, y] of sg.pts) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
     sg.bbox = { x0, y0, x1, y1 };
   }
-  // Infill stops on long stretches between district stations, where people
-  // live (but not just by another station).
-  const stops = [];
-  const stationAt = (q, r) => [...stations.values()].some((st) => len(sub(st.p, q)) < r);
-  for (const sg of segments) {
-    if (sg.country) continue;
-    const L = lengthOf(sg.pts);
-    if (L < INFILL) continue;
-    const p = pointAlong(sg.pts, L / 2);
-    if (terrain.isWater(p[0], p[1]) || stationAt(p, 1000) || stops.some((o) => len(sub(o.p, p)) < 1000)) continue;
-    const q = pointAlong(sg.pts, L / 2 + 20);
-    stops.push({ id: `m${sg.key}`, p, key: null, central: false, dir: unit(sub(q, p)), stop: true, segment: sg.key, lines: sg.lines.slice() });
-  }
-  const all = [...stations.values(), ...stops];
+  // (Stations at district centres only: no infill stops between.)
+  const all = [...stations.values()];
 
   // ---- Tunnel, ramp and viaduct ----
-  // Underground through the centre and at every station, on viaducts
-  // between, with ramps from one to the other; each stretch in runs.
-  const tunnelReach = Math.max(TUNNEL_CENTRE[0], Math.min(TUNNEL_CENTRE[1], farthest * 0.15));
-  const depth = (q) => {
-    let r = len(sub(q, cp)) - tunnelReach;
-    for (const st of all) {
-      const d = len(sub(q, st.p)) - (st.central ? UNDER * 1.6 : UNDER);
-      if (d < r) r = d;
-    }
-    return r < 0 ? 'tunnel' : r < RAMP ? 'ramp' : 'viaduct';
-  };
-  // Track running alongside a street (a boulevard, say) above ground would
-  // wall it off from the blocks across it: such a stretch goes underground
-  // too. (Worked out for a stretch of track when it is first needed, by
-  // when the boulevards near it are known.)
-  function along(pts) {
-    let x0 = Infinity;
-    let y0 = Infinity;
-    let x1 = -Infinity;
-    let y1 = -Infinity;
-    for (const [x, y] of pts) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
-    const streets = streetsNear(x0 - ALONG_GAP, y0 - ALONG_GAP, x1 + ALONG_GAP, y1 + ALONG_GAP);
-    // How far each point is from a street running the same way.
-    const gap = pts.map((q, i) => {
-      const d = unit(sub(pts[Math.min(pts.length - 1, i + 1)], pts[Math.max(0, i - 1)]));
-      let best = Infinity;
-      for (const P of streets) {
-        for (let k = 0; k < P.length - 1; k++) {
-          const a = P[k];
-          const ab = sub(P[k + 1], a);
-          const l = len(ab);
-          if (!l || Math.abs(dot(ab, d)) / l < ALONG_COS) continue;
-          const t = Math.max(0, Math.min(1, dot(sub(q, a), ab) / (l * l)));
-          best = Math.min(best, len(sub(add(a, mul(ab, t)), q)));
-        }
-      }
-      return best;
-    });
-    // Stretches of some length right beside one (a street merely crossed
-    // is no matter), each carried on while the track stays near it, so it
-    // ramps up only once clear.
-    const out = pts.map(() => false);
-    for (let i = 0; i < pts.length; ) {
-      if (gap[i] >= ALONG_GAP) {
-        i++;
-        continue;
-      }
-      let j = i;
-      while (j + 1 < pts.length && gap[j + 1] < ALONG_GAP) j++;
-      if ((j - i) * STEP >= ALONG_MIN) {
-        let a = i;
-        let b = j;
-        while (a > 0 && gap[a - 1] < ALONG_NEAR) a--;
-        while (b + 1 < pts.length && gap[b + 1] < ALONG_NEAR) b++;
-        for (let k = a; k <= b; k++) out[k] = true;
-      }
-      i = j + 1;
-    }
-    return out;
-  }
+  // Underground all through the city (at 20 000 people a km², a line above
+  // ground, and the long ramps a 3% grade needs between a viaduct and an
+  // underground station, would cut the city apart); out of the city, up a
+  // ramp onto the surface. Each stretch in runs.
   function profile(sg) {
     const pts = resample(sg.pts, STEP);
-    const buried = sg.country ? pts.map(() => false) : along(pts);
+    const buried = pts.map((q) => inCity(q));
     const idx = buried.map((b, i) => (b ? i : -1)).filter((i) => i >= 0);
     const runs = [];
     let run = null;
     pts.forEach((q, i) => {
-      let k = sg.country && len(sub(q, cp)) > farthest + 3000 ? 'viaduct' : depth(q);
-      if (idx.length && k !== 'tunnel') {
-        // (Ramping down to such a stretch as to a station.)
+      let k = 'viaduct';
+      if (idx.length) {
+        // (Ramping up out of the tunnel beyond the city's edge.)
         let r = Infinity;
         for (const j of idx) r = Math.min(r, Math.abs(j - i) * STEP);
         if (r === 0) k = 'tunnel';

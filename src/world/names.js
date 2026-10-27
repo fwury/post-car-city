@@ -89,6 +89,14 @@ export const STREET_TYPES_NAMES = {
   Terr: 'Terrace', Walk: 'Walk', Mews: 'Mews', Row: 'Row', Sq: 'Square',
 };
 
+// The business district's names, the common ones more often.
+const CBD_NAMES = [['Financial District', 20], ['Downtown', 20], ['Business District', 12], ['New Town', 10], ['The City', 8], ['Exchange', 6], ['The Loop', 2]];
+const weightedPick = (list, r) => {
+  let t = r * list.reduce((a, [, w]) => a + w, 0);
+  for (const [name, w] of list) if ((t -= w) < 0) return name;
+  return list[list.length - 1][0];
+};
+
 export function createNames(seed) {
   const u = (...k) => toUnit(hash(seed, 'names', ...k));
   const pick = (list, ...k) => list[Math.floor(u(...k) * list.length) % list.length];
@@ -145,7 +153,10 @@ export function createNames(seed) {
   return {
     mainStreet: (d, l) => mainStreets(d).get(l) || null,
     district: (d) => place(hashString(d.key), 1),
-    hood: (d, h) => place(hashString(d.key), 2, h.id),
+    // (The city-centre district's core is its business district, by one of
+    // the usual names.)
+    // (A medical or theatre district, by its own name and what it is.)
+    hood: (d, h) => (h.core && d.stage3.hoods.some((o) => o.oldTown) ? weightedPick(CBD_NAMES, u(hashString(d.key), 40)) : h.suffix ? `${place(hashString(d.key), 2, h.id)} ${h.suffix}` : place(hashString(d.key), 2, h.id)),
     // kind: boulevard, main, local, pedestrian, parkside; shape: { length, curved }.
     street(kind, key, shape = {}, salt = 0) {
       const k = (typeof key === 'number' ? key : hashString(String(key))) + salt * 7919;

@@ -4,7 +4,7 @@
 
 import { createNoise, createWarp } from '../core/noise.js';
 import { placesOf, drawPlaces, PLACE_MIN_ZOOM } from './places.js';
-import { drawDistricts, drawDistrictOutlines, renderDistrictTile } from './districtLayer.js';
+import { drawDistricts, drawDistrictOutlines, renderDistrictTile, drawRouteNumbers, ROUTE_NUMBER_ZOOM } from './districtLayer.js';
 import { palette, fonts } from './styles.js';
 import { TileManager } from './tiles.js';
 import { drawLabels } from './labels.js';
@@ -214,6 +214,19 @@ export class Renderer {
       ctx.globalAlpha = 0.55;
       this.drawTileLayer(this.noiseTiles, this.noiseTiles.visible(camera), false);
       ctx.globalAlpha = 1;
+    }
+    if (L.transit && camera.zoom >= ROUTE_NUMBER_ZOOM && camera.zoom < 1.6 && this.tramsFor) {
+      // Tram route numbers along the routes.
+      const b = camera.bounds();
+      const runs = [];
+      for (const d of this.getWorld().districtsInRect(b.x0, b.y0, b.x1, b.y1)) {
+        const t = this.tramsFor(d);
+        if (t && t.runs) runs.push(...t.runs);
+      }
+      this.resetTransform();
+      ctx.setTransform(1, 0, 0, 1, 0, 0);
+      drawRouteNumbers(ctx, runs, (p) => camera.worldToScreen(p[0], p[1]).map((v) => v * this.dpr), this.dpr, this.canvas.width, this.canvas.height);
+      this.resetTransform();
     }
     if (L.transit && camera.zoom >= STATION_MIN_ZOOM) this.drawStations();
     // Places of note, as markers; close in, everyday ones too.
