@@ -24,7 +24,7 @@ phase builds on the ones before it. Nothing here is started yet.
    - Rail lines no longer divide neighbourhoods; streets run straight
      over them. Check this is fully the case.
 
-## Phase 2. Street structure
+## Phase 2. Street structure (main street grid done; see notes)
 
 3. **Neighbourhood boundaries that make sense.** Main streets are the main
    way of dividing land. Some neighbourhoods must be bounded by main

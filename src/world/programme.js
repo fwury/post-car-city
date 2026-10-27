@@ -40,6 +40,7 @@ const REC_BLOCK = [0.5e4, 1.6e4];
 const WHOLE_BLOCK = 1500; // m²: a building of its own this big takes a whole block if it can...
 const WHOLE_MAX = 4; // ...one up to this many times its size
 const JOIN_STEPS = 5;
+const LOUD = new Set(['pub', 'liveMusic', 'nightclub', 'restaurant', 'karaoke', 'arcade', 'comedy']); // kept to the main streets
 const JOINABLE = new Set(['main', 'corner', 'unit', 'house', 'rowCorner', 'unitShop', 'cornerShop']); // plots a building of its own may take in
 const WORSHIP_PLOT = 600; // m²: what a place of worship looks for // plots each way along a block a building of its own may take in
 const PARKETTE_WALK = 400; // metres: three parkettes within this of every rowhouse
@@ -52,7 +53,7 @@ const CORNER_SHOPS = 0.45; // ... of rowhouse end plots
 // Buildings by plot class: usual storeys, their range, the depth of the
 // building from the street where the plot runs deeper (rowhouse gardens).
 const HEIGHTS = {
-  main: { base: 6, storeys: [4, 10] },
+  main: { base: 6, storeys: [3, 10] },
   unit: { base: 5, storeys: [3, 9] },
   unitShop: { base: 5, storeys: [3, 9] },
   corner: { base: 5, storeys: [3, 9] },
@@ -390,8 +391,9 @@ export function assignProgramme(seed, d, blocks, planned = null) {
           const size = use === 'communityCentre' ? 800 : use === 'inn' ? 450 : 400;
           dedicate(q, use, use === 'inn' ? ['main'] : ['main', 'corner', 'unit'], 700, size);
         } else {
-          // (Along its main streets; failing that, on a corner near its square.)
-          const p = nearest(q, ['main', 'podium'], slot, 900, (o) => o.hood === h.id) || nearest(q, ['corner', 'unit'], slot, 700, (o) => o.hood === h.id) || nearest(q, ['main', 'podium'], slot, 1400);
+          // (Along its main streets; failing that, on a corner near its square,
+          // but for what is loud at night: only on a main street.)
+          const p = nearest(q, ['main', 'podium'], slot, 900, (o) => o.hood === h.id) || (LOUD.has(use) ? null : nearest(q, ['corner', 'unit'], slot, 700, (o) => o.hood === h.id)) || nearest(q, ['main', 'podium'], slot, 1400);
           if (p) put(p, use, slot);
         }
       }

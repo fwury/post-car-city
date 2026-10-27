@@ -55,9 +55,10 @@ export const NEIGHBOURHOODS = [1, 22]; // per district, besides the core (as man
 export const RING_MARGIN = 80; // land this close to a district's greenway is the greenway's
 const BOULEVARD_SNAP = 140; // metres a metro station's neighbourhood centre may move to sit on its boulevard
 export const SPINE_REACH = 450; // metres of its main street either side of a centre a neighbourhood grows from
-export const GATEWAY_TWO = 2600; // a shared greenway this long gets two gateways for main streets, else one
+const GATEWAY_GAP = 550; // metres between gateways on a stretch, at least
+export const GATEWAY_EVERY = 900; // metres of shared greenway to a gateway for main streets, about
 const EDGE_END = 400; // crossings keep this far from the ends of a greenway stretch
-const EDGE_CLEAR = 380; // and this far from a boulevard crossing
+const EDGE_CLEAR = 550; // and this far from a boulevard crossing (main streets running the same way keep this apart)
 const CELL = 50;
 export const ROWHOUSE_SHARE = 0.3; // of a district's neighbourhoods, the share built as rowhouses (the least dense)...
 export const ROWHOUSE_DENSITY = 20000; // ...if under this many people per km² (more than rowhouses can house)
@@ -116,8 +117,10 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     const L = arcLength(pts);
     const span = L - 2 * EDGE_END;
     if (span > 0) {
-      // One gateway, or two on a long stretch, kept clear of the boulevard's crossing.
-      const k = L >= GATEWAY_TWO ? 2 : 1;
+      // A gateway about every GATEWAY_EVERY metres (the main streets' grid
+      // carrying on into the next district), kept clear of the boulevard's
+      // crossing.
+      const k = Math.max(1, Math.round(span / GATEWAY_EVERY));
       const bp = boulevards.crossingOf(geo).p;
       for (let i = 0; i < k; i++) {
         const u = toUnit(hash(seed, 'street-crossing', hashString(geo.key), i));
@@ -130,6 +133,8 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
           s = moved;
           p = along(pts, s);
         }
+        // (Nor beside another of the stretch's gateways.)
+        if (list.some((o) => len(sub(o.p, p)) < GATEWAY_GAP)) continue;
         const t = unit(sub(along(pts, Math.min(L, s + 60)), along(pts, Math.max(0, s - 60))));
         list.push({ key: `${geo.key}#${i}`, p, t });
       }

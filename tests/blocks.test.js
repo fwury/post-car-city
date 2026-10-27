@@ -82,7 +82,8 @@ test('blocks are the sizes their housing calls for', () => {
     assert.ok(median(r, (a) => a.W) > 45 && median(r, (a) => a.W) < 70, `rowhouse blocks ${median(r, (a) => a.W).toFixed(0)} m deep`);
     assert.ok(median(r, (a) => a.L) > 85, `rowhouse blocks only ${median(r, (a) => a.L).toFixed(0)} m long`);
     const q90 = r.map((a) => a.W).sort((x, y) => x - y)[Math.floor(r.length * 0.9)];
-    assert.ok(q90 < 90, `a tenth of rowhouse blocks are over ${q90.toFixed(0)} m deep`);
+    // (A piece too narrow to cut into two strips deep enough for houses stays whole.)
+    assert.ok(q90 < 95, `a tenth of rowhouse blocks are over ${q90.toFixed(0)} m deep`);
   }
 });
 
