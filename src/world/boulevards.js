@@ -21,9 +21,11 @@ import { hash, hashString, toUnit } from '../core/hash.js';
 import { createNoise } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { keyInts } from './cores.js';
-import { isDistrictKey } from './growth.js';
+import { isDistrictKey, COUNTRY } from './growth.js';
 
 export const MIN_SHARED_EDGE = 450; // metres of shared greenway needed for a link
+const COUNTRY_EDGE = 1200; // metres of edge with the country a boulevard out of the city needs
+const COUNTRY_LINK = 0.6; // of districts with such an edge, those with a boulevard out
 export const MIN_RADIUS = 50; // metres, tightest bend allowed on a boulevard
 export const ROUNDABOUT_RADIUS = 90; // centreline radius of a large roundabout
 const ROUNDABOUT_SHARE = 0; // share of districts that get one: none inside the city
@@ -267,6 +269,22 @@ export function createBoulevards(seed) {
       const ty = same ? x.t[1] : -x.t[1];
       links.push({ key: c.key, neighbour, p: x.p, n: [ty, -tx], edge: L });
     }
+    // A boulevard out into the country, in some districts on the city's
+    // edge (across their longest stretch of it): it carries on beyond the
+    // city as a road.
+    let out = null;
+    for (const c of b.chains) {
+      if (c.neighbour !== COUNTRY || !c.geo) continue;
+      const L = crossingOf(c.geo).length;
+      if (L >= COUNTRY_EDGE && (!out || L > out.L || (L === out.L && c.key < out.c.key))) out = { c, L };
+    }
+    if (out && toUnit(hash(seed, 'country-link', ...keyInts(b.core))) < COUNTRY_LINK) {
+      const x = crossingOf(out.c.geo);
+      const same = out.c.points === out.c.geo.points;
+      const tx = same ? x.t[0] : -x.t[0];
+      const ty = same ? x.t[1] : -x.t[1];
+      links.push({ key: out.c.key, neighbour: COUNTRY, p: x.p, n: [ty, -tx], edge: out.L, country: true });
+    }
     links.sort((a, b2) => (a.key < b2.key ? -1 : 1));
     return links;
   }
@@ -335,7 +353,9 @@ export function createBoulevards(seed) {
     };
     const dirTo = (l) => unit(sub(l.p, S));
     const outward = (l) => [-l.n[0], -l.n[1]];
-    const usable = links.filter((l) => len(sub(l.p, S)) > b.coreRadius * 0.6);
+    // (A boulevard out into the country comes last, branching off the
+    // rest, so the district's own layout is as it would be without it.)
+    const usable = links.filter((l) => !l.country && len(sub(l.p, S)) > b.coreRadius * 0.6);
     const done = new Set();
 
     if (usable.length === 1) {
@@ -413,8 +433,16 @@ export function createBoulevards(seed) {
     }
     // Links too close to the station for a curve of their own.
     for (const l of links) {
-      if (usable.includes(l)) continue;
+      if (usable.includes(l) || l.country) continue;
       add([S, l.p], 'spur', l);
+    }
+    for (const l of links) {
+      if (!l.country) continue;
+      if (lines.length) {
+        const { pts, at } = branch(b, l, lines, junctions, links, salt);
+        add(pts, 'branch', l, { country: true });
+        junctions.push(at);
+      } else add(curve([{ p: S, d: dirTo(l) }, { p: l.p, d: outward(l), edge: true }], salt), 'spur', l, { country: true });
     }
     net = { key: b.key, links, lines, roundabout, junctions };
     networks.set(b.key, net);

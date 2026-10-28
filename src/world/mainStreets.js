@@ -166,7 +166,8 @@ export function createMainStreets(seed) {
       lines.set(id, l);
       return l;
     };
-    const blvds = d.network.lines.filter((l) => l.kind !== 'roundabout');
+    // (Not a boulevard out to the country: it was not planned round.)
+    const blvds = d.network.lines.filter((l) => l.kind !== 'roundabout' && !l.country);
     blvds.forEach((l, k) => {
       const P = l.points;
       addLine(-1 - k, P, { boulevard: true, closed: len(sub(P[0], P[P.length - 1])) < 1 });

@@ -37,6 +37,8 @@ test("each neighbourhood's list is along its main streets, close to its square",
     const plots = plotsOf(d);
     const squares = world.blocks(d).blocks.filter((b) => b.use === 'square');
     for (const h of d.stage3.hoods) {
+      // (A campus has its own buildings instead.)
+      if (h.campus) continue;
       const sq = squares.find((b) => b.hood === h.id);
       const at = sq ? sq.plots[0].c : h.centre;
       for (const [use] of NEIGHBOURHOOD_LIST) {

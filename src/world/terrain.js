@@ -43,6 +43,10 @@ const OCEAN = { estuary: 0.85, shore: 0.7 }; // shares of water sites on the oce
 const PENINSULA = { estuary: 0.2, shore: 0.35 }; // ... with a peninsula
 const ISLAND = { estuary: 0.4, shore: 0.3 }; // ... with an island cut off by a channel
 const MOUNTAINS = 0.22; // shares of cities with a mountain range on one side
+const MEANDER = 2.4; // a river's meanders swing this many widths either way, at most
+const MEANDER_LENGTH = 13; // widths from one meander to the next, about
+const WIDTH_VARY = 0.3; // a river widens and narrows by up to this share along its way
+const TRIBUTARY = 0.5; // share of river and estuary cities with a smaller river joining
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const len = (v) => Math.hypot(v[0], v[1]);
@@ -92,8 +96,14 @@ export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
     const nrm = [-dir[1], dir[0]];
     const L = ext * 2.3;
     const pts = [];
+    // Meanders: swinging from side to side every so many widths, now
+    // tighter, now hardly at all, as a river's do.
+    const wave = width * MEANDER_LENGTH;
+    const phase = u(40, salt) * Math.PI * 2;
     for (let s = -L / 2; s <= (end ? 0 : L / 2); s += 60) {
-      const wobble = noise.fbm(s / 5200 + salt * 13.1, salt * 7.7, 3, 2, 0.5) * 1700 + noise.fbm(s / 1400 + salt * 3.3, 4.1 + salt, 2) * 260;
+      const swing = 0.45 + 0.55 * Math.max(0, Math.min(1, noise.fbm(s / (wave * 2.5) + salt * 4.7, 9.3 + salt, 2) * 1.6 + 0.5));
+      const meander = Math.sin((s / wave) * Math.PI * 2 + phase) * width * MEANDER * swing;
+      const wobble = noise.fbm(s / 5200 + salt * 13.1, salt * 7.7, 3, 2, 0.5) * 1700 + noise.fbm(s / 1400 + salt * 3.3, 4.1 + salt, 2) * 260 + meander;
       pts.push([dir[0] * s + nrm[0] * (offset + wobble), dir[1] * s + nrm[1] * (offset + wobble)]);
     }
     // Shift so the river passes the centre at the offset asked for (or ends
@@ -153,8 +163,20 @@ export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
     return coastOffset + noise.fbm(along / 7000 + 31, 5.5, 3, 2, 0.5) * amp + noise.fbm(along / 1600 + 9, 2.2, 2) * amp * 0.18;
   };
   const big = 160 + 220 * u(4);
+  // A smaller river joining the main one, from one side, somewhere out
+  // from the centre.
+  const tributary = (main, salt) => {
+    const at = radius * (0.45 + 0.8 * u(41, salt));
+    let meet = null;
+    for (const p of main.pts) if (Math.abs(len(p) - at) < 120 && !(seaAt && seaAt(p))) meet = meet || p;
+    if (!meet) return;
+    const side = u(42, salt) < 0.5 ? 1 : -1;
+    const along = Math.atan2(meet[1], meet[0]);
+    rivers.push(riverLine(along + side * (0.7 + 0.6 * u(43, salt)), 0, Math.max(50, big * (0.25 + 0.1 * u(44, salt))), 10 + salt, meet));
+  };
   if (site === 'river') {
     rivers.push(riverLine(theta, (u(5) - 0.5) * 900, big, 1));
+    if (u(45) < TRIBUTARY) tributary(rivers[0], 1);
   } else if (site === 'confluence') {
     rivers.push(riverLine(theta, (u(5) - 0.5) * 700, big, 1));
     // A tributary joining near the centre, from the side.
@@ -193,6 +215,7 @@ export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
       const rv = riverLine(coastDir, 0, big, 3, [mouth[0] + cn[0] * 900, mouth[1] + cn[1] * 900]);
       rv.widenTo = { p: mouth, width: Math.min(900, big * 3), reach: 3500 };
       rivers.push(rv);
+      if (u(46) < TRIBUTARY) tributary(rv, 2);
       if (island) {
         // A channel leaving the river above its mouth and running out to
         // the water to one side: the land between is an island.
@@ -318,11 +341,14 @@ export function createTerrain(seed, { population = DEFAULT_POPULATION } = {}) {
   const riverMask = new Uint8Array(W * H);
   for (const rv of rivers) stamp(CELL, riverMask, W, H, x0, y0, rv.pts);
   const riverDist = rivers.length ? distanceField(CELL, riverMask, W, H) : null;
+  // (Wider and narrower along its way; wider still toward a mouth.)
+  const widthNoise = createNoise(seed, 'river-width');
   const widthOf = (rv, p) => {
-    if (!rv.widenTo) return rv.width;
+    const w = rv.channel ? rv.width : rv.width * (1 + WIDTH_VARY * Math.max(-1, Math.min(1, widthNoise.fbm(p[0] / 4200, p[1] / 4200, 2) * 1.6)));
+    if (!rv.widenTo) return w;
     const d = len(sub(p, rv.widenTo.p));
     const t = Math.max(0, 1 - d / rv.widenTo.reach);
-    return rv.width + (rv.widenTo.width - rv.width) * t * t;
+    return w + (rv.widenTo.width - w) * t * t;
   };
   // The nearest river to a point, if one is within REACH: distance, nearest
   // point, direction, width. Cells are searched in rings outward until no

@@ -36,6 +36,8 @@ test('nearly every pair of neighbouring districts is linked by a boulevard', () 
 test('both halves of a link meet exactly, crossing the greenway at right angles', () => {
   for (const d of inner()) {
     for (const l of d.network.links) {
+      // (A boulevard out into the country has no other half.)
+      if (l.country) continue;
       const e = other(l.neighbour);
       const back = e.network.links.find((x) => x.key === l.key);
       assert.ok(back, `${e.key} is missing link ${l.key}`);

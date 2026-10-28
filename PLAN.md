@@ -302,7 +302,7 @@ Notes on what was built:
 - Adult secondary schools: one per 50 000 residents in each district,
   in its most populous neighbourhoods.
 
-## Phase 7. Periphery
+## Phase 7. Periphery (done; see notes)
 
 18. **Greenbelt**: a naturalised green buffer **1–2 km wide** between the
     built-up edge and the expressway, scaling with city size. Transit
@@ -354,7 +354,37 @@ Notes on what was built:
     (as intercity rail) meets the expressway, a large parking facility at
     a regional rail station, clearly named as a park-and-ride.
 
-## Phase 8. Airports
+Notes on what was built (src/world/periphery.js, src/render/peripheryLayer.js):
+- Planned once for the whole city on a 100 m grid, about 1 s at 1.5M and
+  2.6 s at 6M, the first time the map draws.
+- The greenbelt is the city's edge pushed out by its width (1.1 km at
+  1.5M, 1.7 km at 6M), its notches rounded over; the expressway follows
+  its outer edge, smoothed to gentle curves, and is cut where it meets the
+  sea or mountains (an open road then, not a ring). It bridges rivers.
+- About three edge districts in five get a boulevard out to the country,
+  branching off their network last. Neighbourhoods, main streets and the
+  metro are planned as if it weren't there, so the city keeps its layout;
+  trams may use it. Each such boulevard runs on as a road to the
+  expressway, with a trail 40 m to one side.
+- Trumpets and diverging diamonds are drawn as simple ramp curves, not
+  engineered junctions.
+- Industrial areas sit on rail lines out of the city where they can (with
+  a station), otherwise out along a road; the nearest road continues to
+  each at a diverging diamond. An area no road reaches gets a road of its
+  own in from the expressway. Uses follow the list above, with at most one
+  power station, water treatment plant, waste transfer station or
+  recycling centre per area, and rail depots by the track.
+- Attractions (botanical garden from 1.5M, zoo 2M, amusement park 2.5M,
+  racetrack 3M) sit in the greenbelt at the end of a metro line run on out
+  to them, 350 m or more from any road.
+- Park-and-rides stand 350 m outside where each rail line crosses the
+  expressway.
+- Not done yet: peripheral buses (Phase 10), room left for satellite
+  towns.
+- Tram stops: the junction planner now looks up to 140 m for a junction
+  before dropping a planned stop.
+
+## Phase 8. Airports (23 and 24 done; see notes)
 
 23. **Main airport** for cities of 1M+, outside the expressway.
     - Size and complexity scale with population: one terminal for smaller
@@ -367,6 +397,18 @@ Notes on what was built:
 24. **General aviation airfield** beyond the expressway, from **3M**.
 25. Later: ferry terminals, cruise terminals and seaports for large
     coastal cities.
+
+Notes on what was built:
+- The main airport sits out along a rail line beyond the greenbelt (one
+  without an industrial area where there is a choice), the line running
+  on through it with a station at the terminals: the existing line goes
+  on, no branch. Two parallel runways 1.4 km apart (four from 4M, as two
+  close pairs), 3.2 to 3.8 km long; one to four terminals by population,
+  either side of the track, with aprons and taxiways.
+- The nearest metro line end is run on out to it, and a road comes in
+  from the expressway.
+- From 3M, a general aviation airfield: one 1.6 km runway with apron and
+  hangars at the end of a road that crosses the expressway to it.
 
 ## Phase 9. Water
 
