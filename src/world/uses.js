@@ -161,7 +161,6 @@ export const USES = {
   bloodDonation: { label: 'Blood donation centre', cat: 'health', floor: 'ground' },
   altPrimary: { label: 'Alternative primary school', cat: 'education', floor: 'dedicated' },
   altSecondary: { label: 'Alternative secondary school', cat: 'education', floor: 'dedicated' },
-  college: { label: 'College or university campus', cat: 'education', floor: 'dedicated' },
   museum: { label: 'Museum', cat: 'civic', floor: 'dedicated' },
   // A university campus's.
   campusLawn: { label: 'Front lawn', cat: 'park', floor: 'open' },
@@ -177,6 +176,14 @@ export const USES = {
   studentResidence: { label: 'Student residence', cat: 'housing', floor: 'upper' },
   // Higher education besides: on main streets, by their names.
   college: { label: 'College', cat: 'education', floor: 'dedicated' },
+  adultSchool: { label: 'Adult secondary school', cat: 'education', floor: 'dedicated' },
+  // The city's facilities.
+  fairground: { label: 'Fairground', cat: 'park', floor: 'open' },
+  zoo: { label: 'Zoo', cat: 'park', floor: 'open' },
+  aquarium: { label: 'Aquarium', cat: 'culture', floor: 'dedicated' },
+  athleticTrainingCentre: { label: 'Athletic training centre', cat: 'recreation', floor: 'dedicated' },
+  mentalHealthHospital: { label: 'Mental health hospital', cat: 'health', floor: 'dedicated' },
+  correctionalCentre: { label: 'Correctional centre', cat: 'civic', floor: 'dedicated' },
   polytechnic: { label: 'Polytechnic', cat: 'education', floor: 'dedicated' },
   tradeSchool: { label: 'Trade school', cat: 'education', floor: 'dedicated' },
   specialistSchool: { label: 'School', cat: 'education', floor: 'dedicated' },
@@ -270,6 +277,7 @@ export const MIN_PLOT = {
   performingArts: 2500, hotel: 1200, officeTower: 1200, departmentStore: 3000, inn: 350, hospice: 900,
   altPrimary: 1500, altSecondary: 2000, skatingRink: 2500, climbing: 1000, gymnastics: 1200,
   emergencyHousing: 600, transitionalHousing: 600,
+  adultSchool: 1500, aquarium: 7000, athleticTrainingCentre: 9000, mentalHealthHospital: 5000, correctionalCentre: 7000,
   college: 3000, polytechnic: 3500, tradeSchool: 2000, specialistSchool: 1500,
 };
 

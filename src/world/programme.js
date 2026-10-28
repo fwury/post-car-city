@@ -36,6 +36,9 @@ const WORSHIP_PER_HOOD = 3;
 const OLD_TOWN_MUSEUMS = 2; // besides the district's own, there too
 const OLD_TOWN_HOTELS = 6;
 const OLD_TOWN_USES = new Set(['museum', 'gallery', 'districtLibrary']);
+const ADULT_SCHOOL_PEOPLE = 5e4; // people to an adult secondary school
+// The buildings of the city's facilities, by the plan's names.
+const FACILITY_USES = { aquarium: 'aquarium', athleticTraining: 'athleticTrainingCentre', mentalHealthHospital: 'mentalHealthHospital', correctional: 'correctionalCentre' };
 const CAMPUS_STADIUM = 1.2e4; // m²: the least a campus stadium's block takes
 const CAMPUS_WORSHIP = ['church', 'mosque', 'synagogue']; // a campus's places of worship, of several faiths
 const FACING_REACH = 200; // metres from its plaza a big building facing it may stand
@@ -654,6 +657,29 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     const h = schoolHoods[Math.floor(toUnit(hash(seed, 'higher-ed-hood', ...keyInts(d.coreInfo), n)) * schoolHoods.length)];
     const p = dedicate(h.centre, use, ['main'], 500, MIN_PLOT[use]);
     if (p) p.name = createNames(seed).school(d, h, kind, n);
+  }
+
+  // ---- The city's facilities ----
+  // Those the city's plan gives this district, each a building of its own:
+  // the aquarium by the core, a corrective facility as far out as it can
+  // be, the others in a neighbourhood of their own choosing. (The stadium
+  // has its block already; fairgrounds and zoos are in district parks.)
+  const outer = hoods.filter((h) => !h.campus && !h.oldTown && !h.core);
+  const pickHood = (k, n) => outer[Math.floor(toUnit(hash(seed, 'facility-hood', ...keyInts(d.coreInfo), k, n)) * outer.length)];
+  (d.stage3.facilities || []).forEach((kind, n) => {
+    const use = FACILITY_USES[kind];
+    if (!use) return;
+    let q = (sqCentre.get(0) || S);
+    if (kind === 'correctional' && outer.length) q = outer.slice().sort((a, b) => len(sub(b.centre, (sqCentre.get(0) || S))) - len(sub(a.centre, (sqCentre.get(0) || S))))[0].centre;
+    else if (kind !== 'aquarium' && outer.length) q = pickHood(n, 1).centre;
+    dedicate(q, use, ['main', 'corner', 'unit'], 700, MIN_PLOT[use]);
+  });
+  // Adult secondary schools: one for so many people, each in a
+  // neighbourhood of its own, the most populous first.
+  const residents = hoods.reduce((s, h) => s + (h.population || 0), 0);
+  const adult = outer.slice().sort((a, b) => (b.population || 0) - (a.population || 0));
+  for (let k = 0; k < Math.max(1, Math.round(residents / ADULT_SCHOOL_PEOPLE)) && adult.length; k++) {
+    dedicate(adult[k % adult.length].centre, 'adultSchool', ['main', 'corner', 'unit'], 600, MIN_PLOT.adultSchool);
   }
 
   // ---- The district's own ----

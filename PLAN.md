@@ -270,7 +270,7 @@ Notes on what was built:
   people, shared among the districts by seed. Specialised schools start
   at 3M, one more kind for each million beyond.
 
-## Phase 6. City-wide facilities and the stadium fix
+## Phase 6. City-wide facilities and the stadium fix (done; see notes)
 
 17. Where the city is large enough to justify them, within the built-up
     area:
@@ -285,6 +285,22 @@ Notes on what was built:
 | Adult secondary schools | 1 per 50 000, spread evenly across districts |
 | Corrective facilities | progressive/Scandinavian style, lower security, 1 per million |
 | Small zoos | in district parks, about 1 per million |
+
+Notes on what was built:
+- A city-wide plan (src/world/facilities.js) shares stadiums, athletic
+  training centres and corrective facilities among the districts, one
+  per million people each; the aquarium (from 2M) and mental health
+  hospitals (from about 3M) go to the city-centre district first, and
+  corrective facilities never do, sitting in the district's outermost
+  neighbourhood.
+- Stadiums follow the plan instead of three districts in five. A district
+  without room for a stadium block goes without, so a few may be missing.
+- Fairgrounds and zoos go to the biggest district parks (with some
+  leeway), one to a park, as an open area the paths go round. One that
+  doesn't fit its park is left out (at 3.5M, 6 of 7 fairgrounds and 3 of
+  4 zoos).
+- Adult secondary schools: one per 50 000 residents in each district,
+  in its most populous neighbourhoods.
 
 ## Phase 7. Periphery
 

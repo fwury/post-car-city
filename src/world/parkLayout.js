@@ -285,10 +285,27 @@ function segDist(q, a, b) {
   return len(sub([a[0] + ab[0] * t, a[1] + ab[1] * t], q));
 }
 
-export function layoutDistrictPark(P, rng, isWater = () => false) {
+// (Sizes, m, of a fairground's open ground and a small zoo's enclosure.)
+const PARK_EXTRAS = { fairground: [170, 110], zoo: [210, 150] };
+
+export function layoutDistrictPark(P, rng, isWater = () => false, extras = []) {
   const s = new Site(P, rng, 10);
   s.wet = (q) => isWater(q[0], q[1]);
   const A = polygonArea(P);
+  // A fairground or a zoo first, on dry land, the paths going round it.
+  for (const kind of extras) {
+    const [l, w] = PARK_EXTRAS[kind];
+    for (const k of [1, 0.8, 0.65]) {
+      const f = s.place(kind, l * k, w * k, { tries: 200, gap: 12 });
+      if (!f) continue;
+      if (f.pts.some((q) => s.wet(q))) {
+        s.features.pop();
+        s.solid.pop();
+        continue;
+      }
+      break;
+    }
+  }
   // Ponds: one to three, with natural outlines, set apart, on dry land.
   const ponds = Math.max(1, Math.min(3, Math.round(A / 2.5e5)));
   for (let k = 0, tries = 0; k < ponds && tries < 12; tries++) {
@@ -312,7 +329,8 @@ export function layoutDistrictPark(P, rng, isWater = () => false) {
   let wooded = 0;
   let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
   for (const [x, y] of s.inner) [x0, y0, x1, y1] = [Math.min(x0, x), Math.min(y0, y), Math.max(x1, x), Math.max(y1, y)];
-  const water = s.features.filter((f) => f.kind === 'pond').map((f) => grow(f.pts, 12));
+  // (Nor over a fairground or zoo.)
+  const water = s.features.filter((f) => f.kind === 'pond' || PARK_EXTRAS[f.kind]).map((f) => grow(f.pts, 12));
   for (let t = 0; t < 200 && wooded < A * WOODED; t++) {
     const c = [x0 + (x1 - x0) * rng.next(), y0 + (y1 - y0) * rng.next()];
     if (!inside(s.inner, c) || s.wet(c) || water.some((W) => inside(W, c))) continue;

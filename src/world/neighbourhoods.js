@@ -113,7 +113,7 @@ function along(pts, s) {
   return pts[pts.length - 1];
 }
 
-export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metroIn = () => [], oldTownIn = () => null, population = 0, higherEdIn = () => [] }) {
+export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metroIn = () => [], oldTownIn = () => null, population = 0, higherEdIn = () => [], facilitiesIn = () => [] }) {
   const mainStreets = createMainStreets(seed);
   const friction = createNoise(seed, 'neighbourhood-friction');
   // Housing form: perimeter blocks where high, rowhouses and villas where low.
@@ -979,7 +979,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     }
     // The rasters later stages read: residents per m² and neighbourhood per cell.
     const raster = { x0, y0, W, H, cell: CELL, dens, label };
-    return { hoods, chains: again.chains, crossings, lines: streets.lines, raster, oldTown: streets.oldTown, cityPeople: oldTown ? population : 0, higherEd: higherEdIn(d) };
+    return { hoods, chains: again.chains, crossings, lines: streets.lines, raster, oldTown: streets.oldTown, cityPeople: oldTown ? population : 0, higherEd: higherEdIn(d), facilities: facilitiesIn(d) };
   }
 
   // ---- Boundary tracing ----

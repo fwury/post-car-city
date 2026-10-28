@@ -199,3 +199,22 @@ test('colleges and other schools: about two per million people, each named on a 
     for (const p of schools) assert.ok(p.name, `${d.key}: a ${p.dedicated} with no name`);
   }
 });
+
+test("the city's facilities: one stadium, training centre and corrective facility per million, adult schools by population", () => {
+  const all = world.cityCores.map((c) => world.district(c));
+  const count = (kind) => all.reduce((n, d) => n + d.stage3.facilities.filter((k) => k === kind).length, 0);
+  const m = Math.max(1, Math.round(world.population / 1e6));
+  for (const kind of ['stadium', 'athleticTraining', 'correctional']) assert.equal(count(kind), m, kind);
+  const centre = all.find((d) => d.stage3.oldTown);
+  assert.ok(!centre.stage3.facilities.includes('correctional'), 'a corrective facility in the city centre');
+  for (const d of districts) {
+    const plots = plotsOf(d);
+    const people = d.stage3.hoods.reduce((s, h) => s + (h.population || 0), 0);
+    const adult = plots.filter((p) => p.dedicated === 'adultSchool' && p.cls === 'dedicated').length;
+    assert.ok(Math.abs(adult - people / 5e4) <= 1.5, `${d.key}: ${adult} adult schools for ${people} people`);
+    for (const kind of d.stage3.facilities) {
+      const use = { athleticTraining: 'athleticTrainingCentre', correctional: 'correctionalCentre', aquarium: 'aquarium', mentalHealthHospital: 'mentalHealthHospital' }[kind];
+      if (use) assert.ok(plots.some((p) => p.dedicated === use), `${d.key}: no ${use}`);
+    }
+  }
+});

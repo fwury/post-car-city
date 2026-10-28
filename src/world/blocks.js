@@ -84,7 +84,6 @@ const LINEAR_PARK_SHARE = 0.5; // of such stretches of boundary, those made line
 const LINEAR_PARK_WIDTH = [28, 40]; // metres
 const ROW_AWKWARD_AREA = 0.9e4; // m²: a rowhouse block bigger than this that is far from rectangular is split again ...
 const TERRACE_RECT_GOOD = 0.78; // ... (rectangular enough, by this measure); a smaller one is a green
-const STADIUM_SHARE = 0.6; // of districts, those with a stadium
 const STADIUM_SITE = [250, 200]; // metres, centreline: a stadium's block (a 60 000-seat bowl and its concourse)
 const STADIUM_REACH = [300, 1500]; // metres from the station
 const ROW_STRIP = 74; // metres, centreline to centreline: a rowhouse block's width (two houses, gardens and the lane)
@@ -344,7 +343,7 @@ function centralSite(st) {
   };
 }
 
-export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [], tramsIn = () => null }) {
+export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [], tramsIn = () => null, parkFacilities = () => [] }) {
   // A path that would run through water is left out.
   const dryPath = (pts) => pts && !pts.some((q) => isWater(q[0], q[1]));
   const names = createNames(seed);
@@ -1419,8 +1418,8 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       return null;
     };
 
-    // About three districts in five have a stadium.
-    const wantStadium = toUnit(hash(seed, 'stadium', ...keyInts(d.coreInfo))) < STADIUM_SHARE;
+    // A stadium where the city's plan puts one: about one per million people.
+    const wantStadium = (d.stage3.facilities || []).includes('stadium');
     let stadiumPlaced = false;
     // Cut a block of a stadium's size from a node: a strip of its width
     // along one side, then that strip cut to its length. Returns the block
@@ -2008,7 +2007,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       if (b.use === 'stadium' && b.plots[0].bldg && b.plots[0].bldg.pitch) b.layout = { features: [{ kind: 'pitch', pts: b.plots[0].bldg.pitch }], paths: [] };
     }
     // District parks, laid out the same way by every district they touch.
-    const districtParks = d.parks.map((pk) => ({ key: pk.key, layout: layoutDistrictPark(pk.shape, rngFor(seed, 'district-park', hashString(pk.key)), isWater) }));
+    const districtParks = d.parks.map((pk) => ({ key: pk.key, layout: layoutDistrictPark(pk.shape, rngFor(seed, 'district-park', hashString(pk.key)), isWater, parkFacilities(pk)) }));
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));

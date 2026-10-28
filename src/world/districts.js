@@ -28,6 +28,7 @@ import { createMetro } from './metro.js';
 import { createNames } from './names.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
 import { higherEdPlan } from './university.js';
+import { facilityPlan, parkFacilityCount } from './facilities.js';
 export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
 import { createBlocks } from './blocks.js';
@@ -220,6 +221,10 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   // Colleges and other schools, shared out among the districts.
   let higherEd = null;
   const higherEdIn = (d) => (higherEd ||= higherEdPlan(seed, cityCores, population, (c) => keyInts(c).join(','))).get(keyInts(d.coreInfo).join(',')) || [];
+  // The city's facilities likewise (the centre's core first in the list).
+  let facilities = null;
+  const coreKey = (c) => keyInts(c).join(',');
+  const facilitiesIn = (d) => (facilities ||= facilityPlan(seed, cityCores, population, coreKey, cityCores.length ? coreKey(cityCores[0]) : '')).get(coreKey(d.coreInfo)) || [];
   const hoods = createNeighbourhoods(seed, {
     boulevards,
     railIn: (d) => rail.surfaceIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1),
@@ -231,6 +236,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     },
     population,
     higherEdIn,
+    facilitiesIn,
   });
   const parks = createParks(seed, {
     baseOf: (k) => baseOf(k), label: (i, j) => growth.label(i, j), parcel: PARCEL,
@@ -762,7 +768,25 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   }
 
   // Stage 4: local streets and blocks, worked out only when wanted.
-  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops, tramsIn: (d) => trams.in(d) });
+  // Fairgrounds and small zoos, in the city's district parks: one to a
+  // park, the biggest parks first (with some leeway), so every district a
+  // park touches lays it out the same.
+  let parkPlan = null;
+  const parkFacilities = (pk) => {
+    if (!parkPlan) {
+      const all = new Map();
+      for (const c of cityCores) for (const p of parks.parksOf(base(c))) all.set(p.key, p);
+      const order = [...all.values()].map((p) => ({ p, r: p.area * (0.6 + 0.8 * toUnit(hash(seed, 'park-facility', hashString(p.key)))) })).sort((a, b) => b.r - a.r).map((o) => o.p.key);
+      // (Taking turns, so neither has all the biggest parks.)
+      const nf = parkFacilityCount('fairground', population);
+      const nz = parkFacilityCount('zoo', population);
+      const want = [];
+      for (let i = 0; i < Math.max(nf, nz); i++) want.push(...(i < nf ? ['fairground'] : []), ...(i < nz ? ['zoo'] : []));
+      parkPlan = new Map(order.slice(0, want.length).map((k, i) => [k, [want[i]]]));
+    }
+    return parkPlan.get(pk.key) || [];
+  };
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops, tramsIn: (d) => trams.in(d), parkFacilities });
 
   return {
     seed, population, terrain, centre, cityCores, rail, metro, cores, growth, boulevards,

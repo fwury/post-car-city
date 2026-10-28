@@ -34,11 +34,11 @@ const KINDS = {
 // Uses shown, with their kind and from which tier: 1 the district's own,
 // from middling zoom; 1.5 each neighbourhood's own; 2 everyday, close in.
 const SHOWN = {
-  hospital: ['health', 1], hospice: ['health', 1], college: ['school', 1], secondarySchool: ['school', 1.5], elementarySchool: ['school', 1.5],
+  hospital: ['health', 1], hospice: ['health', 1], secondarySchool: ['school', 1.5], elementarySchool: ['school', 1.5],
   altPrimary: ['school', 1.5], altSecondary: ['school', 1.5], stadium: ['sport', 1], recCentre: ['sport', 1.5], skatingRink: ['sport', 1.5],
   climbing: ['sport', 1.5], gymnastics: ['sport', 1.5], museum: ['culture', 1], gallery: ['culture', 2], performingArts: ['stage', 1],
   cinema: ['stage', 1.5], library: ['library', 1.5], districtLibrary: ['library', 1], police: ['police', 1], fireStation: ['fire', 1],
-  courthouse: ['civic', 1], cityHall: ['civic', 1], universityLibrary: ['library', 1], convocationHall: ['school', 1], universityMuseum: ['culture', 1], campusBookstore: ['shop', 1.5], athleticCentre: ['sport', 1.5], studentUnion: ['school', 1.5], campusClinic: ['health', 1.5], campusStadium: ['sport', 1], department: ['school', 1.5], college: ['school', 1], polytechnic: ['school', 1], tradeSchool: ['school', 1], specialistSchool: ['school', 1], studentResidence: ['lodging', 1.5], mainCourthouse: ['civic', 1], courthousePlaza: ['market', 1], artsPlaza: ['market', 1], researchHospital: ['health', 1], childrensHospital: ['health', 1], cancerCentre: ['health', 1], rehabHospital: ['health', 1], eyeHospital: ['health', 1], researchInstitute: ['health', 1.5], mainArts: ['stage', 1], operaHouse: ['stage', 1], theatre: ['stage', 1.5], embassy: ['civic', 1.5], conventionCentre: ['civic', 1], observationTower: ['stage', 1], mainLibrary: ['library', 1], touristCentre: ['civic', 1.5], boutiqueHotel: ['lodging', 1.5], governmentOffice: ['civic', 1.5], communityCentre: ['civic', 1.5], employment: ['civic', 2], postOffice: ['post', 1.5],
+  courthouse: ['civic', 1], cityHall: ['civic', 1], universityLibrary: ['library', 1], convocationHall: ['school', 1], universityMuseum: ['culture', 1], campusBookstore: ['shop', 1.5], athleticCentre: ['sport', 1.5], studentUnion: ['school', 1.5], campusClinic: ['health', 1.5], campusStadium: ['sport', 1], department: ['school', 1.5], college: ['school', 1], polytechnic: ['school', 1], tradeSchool: ['school', 1], specialistSchool: ['school', 1], adultSchool: ['school', 1.5], aquarium: ['culture', 1], athleticTrainingCentre: ['sport', 1], mentalHealthHospital: ['health', 1], correctionalCentre: ['civic', 1], fairground: ['stage', 1], zoo: ['culture', 1], studentResidence: ['lodging', 1.5], mainCourthouse: ['civic', 1], courthousePlaza: ['market', 1], artsPlaza: ['market', 1], researchHospital: ['health', 1], childrensHospital: ['health', 1], cancerCentre: ['health', 1], rehabHospital: ['health', 1], eyeHospital: ['health', 1], researchInstitute: ['health', 1.5], mainArts: ['stage', 1], operaHouse: ['stage', 1], theatre: ['stage', 1.5], embassy: ['civic', 1.5], conventionCentre: ['civic', 1], observationTower: ['stage', 1], mainLibrary: ['library', 1], touristCentre: ['civic', 1.5], boutiqueHotel: ['lodging', 1.5], governmentOffice: ['civic', 1.5], communityCentre: ['civic', 1.5], employment: ['civic', 2], postOffice: ['post', 1.5],
   church: ['worship', 1.5], cathedral: ['worship', 1], mosque: ['mosque', 1.5], synagogue: ['synagogue', 1.5], temple: ['worship', 1.5],
   stationEntrance: ['rail', 1.5],
   departmentStore: ['shop', 1], hotel: ['lodging', 1], inn: ['lodging', 1.5], market: ['market', 1.5], districtPlaza: ['market', 1],
@@ -90,6 +90,15 @@ export function placesOf(blocks) {
         out.push({ p: [at[0] + k * 9, at[1]], use, kind: shown[0], tier: shown[1], block, plot });
         k++;
       }
+    }
+  }
+  // A district park's fairground or zoo.
+  for (const dp of blocks.districtParks || []) {
+    for (const f of (dp.layout && dp.layout.features) || []) {
+      const shown = f.pts && SHOWN[f.kind];
+      if (!shown) continue;
+      const c = centroid(f.pts);
+      out.push({ p: c, use: f.kind, kind: shown[0], tier: shown[1], block: null, plot: { dedicated: f.kind, cls: 'dedicated', pts: f.pts, c } });
     }
   }
   // Notable first, so they win a place when markers crowd.
