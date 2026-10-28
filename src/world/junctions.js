@@ -319,9 +319,11 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     }
     // (A viaduct's path meets a tram street once, however many pieces of
     // it end there.)
-    j = near(e.q, e.kind === 'rail' ? 40 : ALIGN).find((o) => !o.kinds.has('major') && o.M === e.M && (e.kind !== 'rail' || o.kinds.has('rail')));
+    // (A junction full already leaves the end one of its own.)
+    j = near(e.q, e.kind === 'rail' ? 40 : ALIGN).find((o) => !o.kinds.has('major') && o.M === e.M && (e.kind !== 'rail' || o.kinds.has('rail')) && (o.arms.length < 4 || o.arms.some((a) => dot(a.dir, e.dir) > 0.94)));
     if (!j) {
-      j = at(e.q);
+      j = find(e.q);
+      if (!j || j.arms.length >= 4) j = keep({ p: e.q, arms: [], kinds: new Set() });
       j.M = e.M;
       j.s = e.s;
       addArms(j, armsAlong(e.M, e.s, e.M.type));
@@ -354,7 +356,9 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
     for (const a of arms) if (!uniq.some((b) => dot(a.dir, b.dir) > 0.94)) uniq.push(a);
     if (uniq.length < 3) continue;
     if (lines.some((M) => project(M.pts, M.cum, q).r < 3)) continue;
-    const j = at(q);
+    // (Next to a junction that would get more than four arms: one of its own.)
+    let j = find(q);
+    if (!j || j.arms.length + uniq.filter((a) => !j.arms.some((b) => dot(a.dir, b.dir) > 0.94)).length > 4) j = keep({ p: q, arms: [], kinds: new Set() });
     for (const a of uniq) j.kinds.add(a.kind);
     addArms(j, uniq);
   }

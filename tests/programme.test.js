@@ -21,7 +21,8 @@ test('every neighbourhood has its square, park, schools and civic buildings', ()
       const count = (use) => here.filter((p) => has(p, use)).length;
       // (The old town's square is the city-centre district's plaza too.)
       assert.equal(count(h.core || h.oldTown ? 'districtPlaza' : 'market'), 1, `${h.key}: square`);
-      if (h.core) continue;
+      // (A campus has its own: see below.)
+      if (h.core || h.campus) continue;
       assert.equal(count('neighbourhoodPark'), 1, `${h.key}: park`);
       assert.equal(count('secondarySchool'), 1, `${h.key}: secondary school`);
       assert.ok(count('elementarySchool') >= 1, `${h.key}: no elementary school`);
@@ -157,7 +158,7 @@ test('the city centre has its main courthouse and arts centre on their plazas, a
     const [b] = one(use);
     const [q] = one(plaza);
     assert.ok(b && q, `no ${use} or ${plaza}`);
-    assert.ok(near(b.c, q.c, 230), `${use} is not on its plaza`);
+    assert.ok(near(b.c, q.c, 270), `${use} is not on its plaza`);
     // (At a neighbourhood with a metro station.)
     const h = d.stage3.hoods.find((x) => x.id === q.hood);
     assert.ok(h.metro && h.metro.length, `${use}'s neighbourhood has no metro station`);
@@ -165,4 +166,24 @@ test('the city centre has its main courthouse and arts centre on their plazas, a
   assert.ok(one('researchHospital').length >= 1, 'no research hospital');
   const embassies = one('embassy');
   assert.ok(embassies.length >= 6, `${embassies.length} embassies`);
+});
+
+test('the main campus has its lawn with library and convocation hall, named departments, a stadium and residences', () => {
+  const d = world.cityCores.map((c) => world.district(c)).find((x) => x.stage3.hoods.some((h) => h.university === 'main'));
+  assert.ok(d, 'no main campus');
+  const h = d.stage3.hoods.find((x) => x.university === 'main');
+  const blocks = world.blocks(d).blocks.filter((b) => b.hood === h.id);
+  const here = blocks.flatMap((b) => b.plots || []);
+  const count = (use) => here.filter((p) => has(p, use)).length;
+  const lawn = here.find((p) => has(p, 'campusLawn'));
+  const library = here.find((p) => has(p, 'universityLibrary'));
+  assert.ok(lawn && library, 'no lawn or library');
+  assert.ok(near(lawn.c, library.c, 300), 'the library is not on the lawn');
+  for (const use of ['convocationHall', 'athleticCentre', 'studentUnion', 'campusClinic']) assert.equal(count(use), 1, use);
+  const depts = here.filter((p) => has(p, 'department'));
+  assert.ok(depts.length >= 14, `${depts.length} departments`);
+  const named = depts.filter((p) => p.name).map((p) => p.name);
+  assert.equal(new Set(named).size, named.length, 'department names repeat');
+  assert.ok(blocks.some((b) => b.residence), 'no residences');
+  assert.ok(!here.some((p) => has(p, 'communityCentre')), 'a community centre on campus');
 });

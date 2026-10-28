@@ -21,6 +21,7 @@ import { USES } from './uses.js';
 import { PODIUM_STOREYS, TOWER_PLATE } from './programme.js';
 
 const GROUND_EXTRA = 1.2; // metres a shop floor is taller than an upper floor
+const CAMPUS_OLD = ['gothic', 'gothic', 'neoclassical', 'beauxArts', 'renaissance']; // a campus's older buildings
 const OBSERVATION_HEIGHT = [380, 520]; // metres: an observation tower's shaft (its mast above)
 
 // Storeys and style of buildings of their own, by use.
@@ -54,6 +55,14 @@ const LANDMARKS = {
   theatre: { storeys: 4, styles: ['beauxArts', 'artDeco'], setback: 1 },
   embassy: { storeys: 4, styles: ['neoclassical', 'beauxArts', 'modern'], setback: 3 },
   conventionCentre: { storeys: 3, styles: ['modern'], floor: 6, inset: 4 },
+  universityLibrary: { storeys: 5, styles: ['gothic', 'beauxArts', 'neoclassical'], inset: 6 },
+  convocationHall: { storeys: 4, styles: ['beauxArts', 'neoclassical'], floor: 5, inset: 8, dome: true },
+  universityMuseum: { storeys: 4, styles: ['beauxArts', 'neoclassical', 'gothic'], inset: 6 },
+  campusBookstore: { storeys: 3, styles: ['gothic', 'neoclassical'], inset: 8 },
+  athleticCentre: { storeys: 3, styles: ['modern'], floor: 5, inset: 6, share: 0.55 },
+  studentUnion: { storeys: 3, styles: ['gothic', 'neoclassical'], inset: 8 },
+  campusClinic: { storeys: 3, styles: ['modern'], inset: 8 },
+  department: { storeys: 6, styles: ['modern'], inset: 6 },
   hospice: { storeys: 3, styles: ['modern'] },
   elementarySchool: { storeys: 2, styles: ['modern'], inset: 6, strip: [22, 90] },
   secondarySchool: { storeys: 3, styles: ['modern'], inset: 6, strip: [30, 130] },
@@ -280,7 +289,7 @@ export function assignBuildings(seed, d, blocks) {
       if (['passage', 'merged'].includes(p.cls) || !p.pts || p.pts.length < 3) return;
       const own = p.dedicated && USES[p.dedicated];
       if (own && (own.floor === 'open' || own.cat === 'park')) return;
-      if (b.use === 'campus') {
+      if (b.use === 'campus' && !p.dedicated) {
         // A college quadrangle: a ring of buildings round a green.
         const outer = insetUniform(p.pts, 8);
         const court = outer && insetUniform(outer, 16);
@@ -297,10 +306,12 @@ export function assignBuildings(seed, d, blocks) {
       if (p.cls === 'dedicated' || (own && own.floor === 'dedicated')) {
         const L = LANDMARKS[p.dedicated] || { storeys: 3, styles: null };
         style = L.styles ? pick(L.styles, 9, ...k) : style;
-        const whole = p.pts === b.pts;
+        // (A campus building: old or modern, as the campus has it.)
+        if (p.old !== undefined && !['church', 'mosque', 'synagogue', 'temple'].includes(p.dedicated)) style = p.old ? pick(CAMPUS_OLD, 29, ...k) : 'modern';
+        const whole = p.pts === b.pts || b.use === 'campus';
         let pts = p.pts;
         const extra = { landmark: p.dedicated };
-        if (p.dedicated === 'stadium') {
+        if (p.dedicated === 'stadium' || p.dedicated === 'campusStadium') {
           // Stands round a pitch: an oval, a rounded rectangle or a horseshoe,
           // its stands as deep and as tall as the stadium is big.
           const ax = axesOf(insetUniform(p.pts, 8) || p.pts);

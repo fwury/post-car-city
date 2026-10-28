@@ -163,6 +163,18 @@ export const USES = {
   altSecondary: { label: 'Alternative secondary school', cat: 'education', floor: 'dedicated' },
   college: { label: 'College or university campus', cat: 'education', floor: 'dedicated' },
   museum: { label: 'Museum', cat: 'civic', floor: 'dedicated' },
+  // A university campus's.
+  campusLawn: { label: 'Front lawn', cat: 'park', floor: 'open' },
+  universityLibrary: { label: 'University library', cat: 'education', floor: 'dedicated' },
+  convocationHall: { label: 'Convocation hall', cat: 'education', floor: 'dedicated' },
+  universityMuseum: { label: 'University museum', cat: 'culture', floor: 'dedicated' },
+  campusBookstore: { label: 'University bookstore', cat: 'shop', floor: 'dedicated' },
+  athleticCentre: { label: 'Athletic centre', cat: 'recreation', floor: 'dedicated' },
+  studentUnion: { label: 'Student union', cat: 'education', floor: 'dedicated' },
+  campusClinic: { label: 'Student health clinic', cat: 'health', floor: 'dedicated' },
+  campusStadium: { label: 'Varsity stadium', cat: 'recreation', floor: 'dedicated' },
+  department: { label: 'Department building', cat: 'education', floor: 'dedicated' },
+  studentResidence: { label: 'Student residence', cat: 'housing', floor: 'upper' },
   // The old town's, in the city-centre district.
   cityHall: { label: 'City hall', cat: 'civic', floor: 'dedicated' },
   // The business district's.
