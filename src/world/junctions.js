@@ -503,7 +503,9 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
       let prev = -Infinity;
       const apart = (x) => x - prev >= STOP_SPACING[0] - 10;
       for (const t of M.targets.slice().sort((a, b) => a - b)) {
-        const within = (r) => here.filter((h) => Math.abs(h.s - t) <= r && h.s > 20 && h.s < L - 20 && apart(h.s) && sidesFor(h.s)).sort((a, b) => b.score - Math.abs(b.s - t) / 12 - (a.score - Math.abs(a.s - t) / 12))[0];
+        // (Only where trams run: a stretch no route takes is planted.)
+        const onTrack = (s) => !M.typeAt || profile(M.typeAt(pointAt(M.pts, M.cum, s))).tram.length > 0;
+        const within = (r) => here.filter((h) => Math.abs(h.s - t) <= r && h.s > 20 && h.s < L - 20 && apart(h.s) && sidesFor(h.s) && (r <= STOP_SNAP || onTrack(h.s))).sort((a, b) => b.score - Math.abs(b.s - t) / 12 - (a.score - Math.abs(a.s - t) / 12))[0];
         const pick = within(STOP_SNAP);
         if (pick) {
           stopAt(pick.j, pick.s);
@@ -518,6 +520,22 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
               s0 = x;
               break;
             }
+          }
+        }
+        if (s0 === null && sidePlatforms) {
+          // A split stop where side streets come too thick for both
+          // platforms at one junction: each direction's on the far side of
+          // the nearest junction with room on its side.
+          const half = (way) => here.filter((h) => Math.abs(h.s - t) <= STOP_SNAP * 2 && h.s > 20 && h.s < L - 20 && apart(h.s) && room(h.s, way)).sort((a, b) => Math.abs(a.s - t) - Math.abs(b.s - t))[0];
+          const A = half(1);
+          const B = half(-1);
+          if (A && B && A !== B && Math.abs(A.s - B.s) <= STOP_SNAP * 2) {
+            for (const [h, way] of [[A, 1], [B, -1]]) {
+              if (h.j.kind === 'CONT') h.j.kind = 'D';
+              (h.j.stops ||= []).push({ line: M, s: t, ways: [way] });
+            }
+            prev = Math.max(A.s, B.s);
+            continue;
           }
         }
         if (s0 === null) {

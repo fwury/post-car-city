@@ -78,3 +78,21 @@ test('an island is cut off by a channel the streets bridge', () => {
   }
   assert.fail('no seed with an island');
 });
+
+test('rivers meander, widen and narrow along their way', () => {
+  const w = createWorld(seedFor('river'), { population: 1.5e6 });
+  const rv = w.terrain.rivers[0];
+  const widths = [];
+  for (let i = 0; i < rv.pts.length; i += 10) {
+    const r = w.terrain.nearestRiver(rv.pts[i][0], rv.pts[i][1]);
+    if (r && r.river === 0) widths.push(r.width);
+  }
+  const lo = Math.min(...widths);
+  const hi = Math.max(...widths);
+  assert.ok(hi / lo > 1.2, `widths ${lo.toFixed(0)} to ${hi.toFixed(0)} m`);
+  // (Its course is longer than the straight line between its ends.)
+  let L = 0;
+  for (let i = 1; i < rv.pts.length; i++) L += Math.hypot(rv.pts[i][0] - rv.pts[i - 1][0], rv.pts[i][1] - rv.pts[i - 1][1]);
+  const D = Math.hypot(rv.pts[rv.pts.length - 1][0] - rv.pts[0][0], rv.pts[rv.pts.length - 1][1] - rv.pts[0][1]);
+  assert.ok(L / D > 1.08, `sinuosity ${(L / D).toFixed(2)}`);
+});

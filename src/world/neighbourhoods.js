@@ -390,7 +390,8 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     // The campus, if any: one of the free centres with room round it (the
     // more open half), near a metro station if one is, else picked by its
     // place alone.
-    let campus = null;
+    // (By its index: a free centre is replaced as it moves.)
+    let campus = -1;
     // (The main campus: at the metro station nearest the city centre's
     // core, the old town's aside.)
     if (hasCampus && oldTown) {
@@ -399,11 +400,11 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
         const r = len(sub(centres[k], S));
         if (r < best) {
           best = r;
-          campus = centres[k];
+          campus = k;
         }
       }
     }
-    if (hasCampus && !campus) {
+    if (hasCampus && campus < 0) {
       let best = -1;
       const room = (k) => Math.min(...centres.map((c, j) => (j === k ? Infinity : len(sub(c, centres[k])))));
       const rooms = [];
@@ -415,7 +416,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
         const u = (byMetro ? 1 : 0) + toUnit(hash(seed, 'campus-site', Math.floor(centres[k][0] / CELL), Math.floor(centres[k][1] / CELL)));
         if (u > best) {
           best = u;
-          campus = centres[k];
+          campus = k;
         }
       }
     }
@@ -457,7 +458,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     // (A campus houses few: the main one is a big neighbourhood for its
     // people, the others small ones.)
     // (And the core, for its civic buildings, offices and squares.)
-    const housing = (k) => (k === 0 ? CORE_HOUSING : centres[k] !== campus ? 1 : oldTown ? MAIN_CAMPUS_HOUSING : CAMPUS_HOUSING);
+    const housing = (k) => (k === 0 ? CORE_HOUSING : k !== campus ? 1 : oldTown ? MAIN_CAMPUS_HOUSING : CAMPUS_HOUSING);
     // People living in each neighbourhood of a labelling.
     const peopleOf = (lab, m) => {
       const pop = new Float64Array(m);
@@ -919,7 +920,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     const pop = peopleOf(label, total);
     for (const h of hoods) {
       // (The business district's towers are half offices: fewer homes.)
-      h.campus = centres[h.id] === campus;
+      h.campus = h.id === campus;
       // (A small campus's students, in its residences.)
       h.population = Math.round(pop[h.id] * (oldTown && h.core ? CBD_PEOPLE : 1) * (h.campus && !oldTown ? CAMPUS_RESIDENTS / CAMPUS_HOUSING : 1));
       if (h.campus) h.university = oldTown ? 'main' : 'small';
