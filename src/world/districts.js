@@ -42,6 +42,13 @@ export const GREENWAY_MIN = 50;
 export const GREENWAY_MAX = 160;
 export const BOULEVARD_WIDTH = STREET_TYPES.boulevard.width;
 const CORE_CLEAR = 300; // greenways keep this far from a station
+// Distance from q to segment ab.
+const segDistance = (q, a, b) => {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * abx + (q[1] - a[1]) * aby) / (abx * abx + aby * aby || 1)));
+  return Math.hypot(q[0] - a[0] - abx * t, q[1] - a[1] - aby * t);
+};
 const RIVER_STOP = 12; // metres back from the water a main street with no bridge stops
 const DISTRICT_REACH = 7000; // no district extends further than this from its core
 const DISTRICT_SEARCH = 5500; // cores this far outside a view can still reach into it
@@ -724,16 +731,36 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     };
     // Stage 3. The core is the neighbourhood around the station.
     d.stage3 = hoods.of(d);
-    // A main street running out into a river with no street across it on
-    // the far bank (no crossing agreed there) stops at the bank.
+    // A main street that does not cross a greenway (or a river) into the
+    // next district stops at its edge: at the bank, or where the greenway's
+    // green begins, never partway across.
+    const toChain = (q) => {
+      let best = Infinity;
+      for (const c of d.chains) {
+        const P = c.points;
+        for (let i = 0; i + 1 < P.length; i++) {
+          const [ax, ay] = P[i];
+          const abx = P[i + 1][0] - ax;
+          const aby = P[i + 1][1] - ay;
+          const t = Math.max(0, Math.min(1, ((q[0] - ax) * abx + (q[1] - ay) * aby) / (abx * abx + aby * aby || 1)));
+          best = Math.min(best, Math.hypot(q[0] - ax - abx * t, q[1] - ay - aby * t));
+        }
+      }
+      return best;
+    };
     for (const l of d.stage3.lines) {
       const P = l.points;
       if (P.length < 3 || dist(...P[0], ...P[P.length - 1]) < 1) continue;
       const wet = (q) => {
         const r = terrain.nearestRiver(q[0], q[1]);
-        return !!r && r.d < r.width / 2 + RIVER_STOP;
+        return (!!r && r.d < r.width / 2 + RIVER_STOP) || toChain(q) < greenwayWidth(q[0], q[1]) / 2 + 1;
       };
-      const crossed = (q) => (d.stage3.crossings || []).some((x) => dist(...x.p, ...q) < 30);
+      // (Not where it crosses into the next district, or meets another street.)
+      const others = [...d.stage3.lines.filter((o) => o !== l).map((o) => o.points), ...d.network.lines.map((o) => o.points)];
+      const onStreet = (q) => others.some((O) => O.some((p, i) => i > 0 && segDistance(q, O[i - 1], p) < 2));
+      // (Its own crossings only: another street's may lie close by.)
+      const mine = new Set([l.crossing, l.crossingEnd].filter(Boolean));
+      const crossed = (q) => (d.stage3.crossings || []).some((x) => mine.has(x.key) && dist(...x.p, ...q) < 30) || onStreet(q);
       let [a, b] = [0, P.length - 1];
       const endWet = wet(P[b]) && !crossed(P[b]);
       const startWet = wet(P[a]) && !crossed(P[a]);

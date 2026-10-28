@@ -645,6 +645,9 @@ function pedestrianEnd(ctx, c, j, px) {
       bollards(ctx, F(c, m, -9, lat), F(c, m, 9, lat), 1.5, 3, px);
     }
   }
+  // A zebra over the tram street beside the mouth, as at a continuous
+  // sidewalk. (Not where a tram platform runs past it.)
+  if (!j.platform) zebraAcross(ctx, c, m, 4.5, 8.5, P.edge, m.type);
 }
 
 // A pedestrian street meeting a local street: a change of paving and a

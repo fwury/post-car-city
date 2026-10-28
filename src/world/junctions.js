@@ -526,10 +526,10 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
           // A split stop where side streets come too thick for both
           // platforms at one junction: each direction's on the far side of
           // the nearest junction with room on its side.
-          const half = (way) => here.filter((h) => Math.abs(h.s - t) <= STOP_SNAP * 2 && h.s > 20 && h.s < L - 20 && apart(h.s) && room(h.s, way)).sort((a, b) => Math.abs(a.s - t) - Math.abs(b.s - t))[0];
+          const half = (way) => here.filter((h) => Math.abs(h.s - t) <= STOP_SNAP * 3 && h.s > 20 && h.s < L - 20 && apart(h.s) && room(h.s, way)).sort((a, b) => Math.abs(a.s - t) - Math.abs(b.s - t))[0];
           const A = half(1);
           const B = half(-1);
-          if (A && B && A !== B && Math.abs(A.s - B.s) <= STOP_SNAP * 2) {
+          if (A && B && A !== B && Math.abs(A.s - B.s) <= STOP_SNAP * 3) {
             for (const [h, way] of [[A, 1], [B, -1]]) {
               if (h.j.kind === 'CONT') h.j.kind = 'D';
               (h.j.stops ||= []).push({ line: M, s: t, ways: [way] });
@@ -637,7 +637,8 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
       const pr = project(M.pts, M.cum, j.p);
       if (pr.r > 3) continue;
       busy.push(pr.s);
-      if (j.kind === 'D' || j.kind === 'XING' || j.kind === 'GREEN' || j.kind === 'ZEBRA' || (j.kind === 'CONT' && !j.platform)) at0.push(pr.s);
+      // (A pedestrian street's mouth has its zebra beside it too.)
+      if (j.kind === 'D' || j.kind === 'XING' || j.kind === 'GREEN' || j.kind === 'ZEBRA' || ((j.kind === 'CONT' || j.kind === 'PED') && !j.platform)) at0.push(pr.s);
     }
     for (const st of stops) {
       const pr = project(M.pts, M.cum, st.p);
