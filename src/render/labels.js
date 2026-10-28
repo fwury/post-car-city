@@ -119,7 +119,8 @@ export function drawLabels(ctx, camera, world, blocksFor) {
       for (const h of d.stage3.hoods) {
         if (h.core) continue;
         const [x, y] = camera.worldToScreen(h.centre[0], h.centre[1]);
-        const name = world.names.hood(d, h).toUpperCase();
+        // (A campus by its university's name.)
+        const name = (h.campus ? world.names.university(d, h) : world.names.hood(d, h)).toUpperCase();
         ctx.font = font;
         const w = ctx.measureText(name).width;
         if (free(x, y + 14, w, 14)) text(name, x, y + 14, 0, font, palette.inkSoft);

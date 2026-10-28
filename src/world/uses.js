@@ -175,6 +175,11 @@ export const USES = {
   campusStadium: { label: 'Varsity stadium', cat: 'recreation', floor: 'dedicated' },
   department: { label: 'Department building', cat: 'education', floor: 'dedicated' },
   studentResidence: { label: 'Student residence', cat: 'housing', floor: 'upper' },
+  // Higher education besides: on main streets, by their names.
+  college: { label: 'College', cat: 'education', floor: 'dedicated' },
+  polytechnic: { label: 'Polytechnic', cat: 'education', floor: 'dedicated' },
+  tradeSchool: { label: 'Trade school', cat: 'education', floor: 'dedicated' },
+  specialistSchool: { label: 'School', cat: 'education', floor: 'dedicated' },
   // The old town's, in the city-centre district.
   cityHall: { label: 'City hall', cat: 'civic', floor: 'dedicated' },
   // The business district's.
@@ -265,6 +270,7 @@ export const MIN_PLOT = {
   performingArts: 2500, hotel: 1200, officeTower: 1200, departmentStore: 3000, inn: 350, hospice: 900,
   altPrimary: 1500, altSecondary: 2000, skatingRink: 2500, climbing: 1000, gymnastics: 1200,
   emergencyHousing: 600, transitionalHousing: 600,
+  college: 3000, polytechnic: 3500, tradeSchool: 2000, specialistSchool: 1500,
 };
 
 // Places of worship, in about Toronto's proportions.

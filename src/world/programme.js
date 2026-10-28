@@ -644,6 +644,18 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     }
   }
 
+  // ---- Colleges and other schools ----
+  // Each on a main street (one plot, or two or three joined) in a
+  // neighbourhood of its own choosing: not a campus, the old town or the
+  // core.
+  const schoolHoods = hoods.filter((h) => !h.campus && !h.oldTown && !h.core);
+  for (const { use, kind, n } of d.stage3.higherEd || []) {
+    if (!schoolHoods.length) break;
+    const h = schoolHoods[Math.floor(toUnit(hash(seed, 'higher-ed-hood', ...keyInts(d.coreInfo), n)) * schoolHoods.length)];
+    const p = dedicate(h.centre, use, ['main'], 500, MIN_PLOT[use]);
+    if (p) p.name = createNames(seed).school(d, h, kind, n);
+  }
+
   // ---- The district's own ----
   const coreAt = sqCentre.get(0) || S;
   const twoOrThree = toUnit(hash(seed, 'district-share', ...keyInts(d.coreInfo)));

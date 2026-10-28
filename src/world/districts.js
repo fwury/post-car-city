@@ -27,6 +27,7 @@ import { createTrams } from './trams.js';
 import { createMetro } from './metro.js';
 import { createNames } from './names.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
+import { higherEdPlan } from './university.js';
 export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
 import { createBlocks } from './blocks.js';
@@ -216,6 +217,9 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   // The metro, for the whole city: from the districts' boulevards, before
   // the neighbourhoods, whose centres its stations are.
   const metro = createMetro(seed, { cores: cityCores, base: (c) => base(c), network: (b) => boulevards.network(b), rail, population, isWater: terrain.isWater });
+  // Colleges and other schools, shared out among the districts.
+  let higherEd = null;
+  const higherEdIn = (d) => (higherEd ||= higherEdPlan(seed, cityCores, population, (c) => keyInts(c).join(','))).get(keyInts(d.coreInfo).join(',')) || [];
   const hoods = createNeighbourhoods(seed, {
     boulevards,
     railIn: (d) => rail.surfaceIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1),
@@ -226,6 +230,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
       return ot && ot.key === d.key ? ot : null;
     },
     population,
+    higherEdIn,
   });
   const parks = createParks(seed, {
     baseOf: (k) => baseOf(k), label: (i, j) => growth.label(i, j), parcel: PARCEL,

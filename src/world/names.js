@@ -160,6 +160,25 @@ export function createNames(seed) {
   return {
     city,
     surname: (...k) => pick(SURNAMES, ...k),
+    // A college or other school: by the city, the place, or a founder.
+    school(d, h, kind, n) {
+      const k = hashString(d.key) + n * 7919;
+      const r = u(k, 60);
+      const here = place(hashString(d.key), 2, h.id).split(' ')[0];
+      const who = pick(SURNAMES, k, 61);
+      const by = r < 0.15 ? city() : r < 0.7 ? here : who;
+      switch (kind) {
+        case 'college': return r < 0.5 ? `${by} College` : `${by} College of Applied Arts and Technology`;
+        case 'polytechnic': return r < 0.5 ? `${by} Polytechnic` : `${by} Institute of Technology`;
+        case 'trades': return u(k, 62) < 0.5 ? `${by} Trade School` : `${by} Institute of Skilled Trades`;
+        case 'art': return `${city()} College of Art and Design`;
+        case 'music': return u(k, 62) < 0.5 ? `${city()} Conservatory of Music` : `${who} School of Music and Drama`;
+        case 'film': return `${city()} Film and Acting School`;
+        case 'culinary': return `${city()} Culinary Institute`;
+        case 'seminary': return `${who} Theological Seminary`;
+        default: return `${who} Law School`;
+      }
+    },
     // A university by its campus: the main one the city's own ("University
     // of X", "X University"...), the others by a place or a founder.
     university(d, h) {

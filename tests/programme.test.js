@@ -187,3 +187,15 @@ test('the main campus has its lawn with library and convocation hall, named depa
   assert.ok(blocks.some((b) => b.residence), 'no residences');
   assert.ok(!here.some((p) => has(p, 'communityCentre')), 'a community centre on campus');
 });
+
+test('colleges and other schools: about two per million people, each named on a main street', () => {
+  const plans = world.cityCores.map((c) => world.district(c)).filter((d) => d.stage3.higherEd.length);
+  const planned = plans.reduce((n, d) => n + d.stage3.higherEd.length, 0);
+  const want = (world.population / 1e6) * 2;
+  assert.ok(planned >= want * 0.7 && planned <= want * 1.3 + 1, `${planned} schools for ${world.population} people`);
+  for (const d of plans.slice(0, 2)) {
+    const schools = plotsOf(d).filter((p) => p.cls === 'dedicated' && ['college', 'polytechnic', 'tradeSchool', 'specialistSchool'].includes(p.dedicated));
+    assert.equal(schools.length, d.stage3.higherEd.length, `${d.key}: schools placed`);
+    for (const p of schools) assert.ok(p.name, `${d.key}: a ${p.dedicated} with no name`);
+  }
+});

@@ -102,3 +102,31 @@ export function namerFor(seed, key, surname) {
     return `${dept} Building`;
   };
 }
+
+// Higher education besides the universities: about twice as many schools,
+// mostly colleges, polytechnics and trade schools; in a big city, a few
+// specialised ones too, at most one of each kind. [use, kind] for each.
+const SCHOOLS_PER_UNIVERSITY = 2;
+const UNIVERSITY_PEOPLE = 1e6;
+const SPECIAL_FROM = 3e6; // people before the first specialised school
+const SPECIAL_EVERY = 1e6; // and one more kind for each so many people more
+const SPECIAL = ['art', 'music', 'film', 'culinary', 'seminary', 'law'];
+const GENERAL = [['college', 'college'], ['college', 'college'], ['polytechnic', 'polytechnic'], ['tradeSchool', 'trades']];
+
+// The schools each district has, by its core's key.
+export function higherEdPlan(seed, cores, population, keyOf) {
+  const u = (...k) => toUnit(hash(seed, 'higher-ed', ...k));
+  const total = Math.max(1, Math.round((population / UNIVERSITY_PEOPLE) * SCHOOLS_PER_UNIVERSITY * (0.8 + 0.4 * u(1))));
+  const kinds = SPECIAL.map((k, i) => ({ k, r: u(2, i) })).sort((a, b) => a.r - b.r).map((o) => o.k);
+  const special = population < SPECIAL_FROM ? [] : kinds.slice(0, Math.min(kinds.length, 1 + Math.floor((population - SPECIAL_FROM) / SPECIAL_EVERY)));
+  const list = [...special.map((k) => ['specialistSchool', k])];
+  for (let i = 0; list.length < Math.max(total, special.length + 1); i++) list.push(GENERAL[Math.floor(u(3, i) * GENERAL.length)]);
+  const plan = new Map();
+  list.forEach(([use, kind], i) => {
+    const c = cores[Math.floor(u(4, i) * cores.length)];
+    const k = keyOf(c);
+    if (!plan.has(k)) plan.set(k, []);
+    plan.get(k).push({ use, kind, n: i });
+  });
+  return plan;
+}

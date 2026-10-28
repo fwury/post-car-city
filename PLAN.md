@@ -172,7 +172,7 @@ Notes on what was built:
 - Route colours and numbers show with the transit layer, between zoom
   0.12 and the street detail (numbers from 0.45).
 
-## Phase 5. Higher education
+## Phase 5. Higher education (done; see notes)
 
 14. **Main university campus** in the city centre, one in every city,
     taking a whole neighbourhood.
@@ -253,6 +253,22 @@ Notes on what was built:
       culinary, seminary, single-subject schools such as a standalone law
       school.
     - Each takes **one plot, or 2–3 adjacent plots**, on a main street.
+
+Notes on what was built:
+- The main campus is the city-centre neighbourhood nearest the central
+  station besides the old town and business district; other districts
+  get a smaller campus by chance, about one per million people in all.
+  Campus neighbourhoods house fewer people, mostly in their residences.
+- Campus lots are long low-rise buildings with walkways between. Lots
+  left after the departments become research institutes, then
+  laboratories, then plain research buildings, so names never repeat.
+- The map labels a campus by its university's name; its main streets keep
+  the neighbourhood's name.
+- No city building (a neighbouring neighbourhood's community centre, say)
+  is put on a campus.
+- Colleges, polytechnics and trade schools number about two per million
+  people, shared among the districts by seed. Specialised schools start
+  at 3M, one more kind for each million beyond.
 
 ## Phase 6. City-wide facilities and the stadium fix
 
