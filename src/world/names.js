@@ -164,6 +164,8 @@ export function createNames(seed) {
     // greenbelt's attractions.
     industrial: (k) => `${place(9100, k)} ${pick(['Industrial Park', 'Industrial Area', 'Works', 'Business Park', 'Industrial Estate'], 9101, k)}`,
     parkAndRide: (k) => `${place(9200, k)} Park-and-Ride`,
+    airport: () => (u(9400) < 0.6 ? `${city()} International Airport` : `${pick(SURNAMES, 9401)} International Airport`),
+    airfield: (k) => `${place(9402, k).split(' ')[0]} Airfield`,
     attraction(kind, k) {
       if (kind === 'zoo') return `${city()} Zoo`;
       if (kind === 'botanical') return u(9301, k) < 0.5 ? `${city()} Botanical Garden` : `${city()} Conservatory and Gardens`;

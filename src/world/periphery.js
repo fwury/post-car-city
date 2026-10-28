@@ -46,6 +46,15 @@ const ATTRACTIONS = [
 ];
 const ATTRACTION_CLEAR = 350; // metres an attraction keeps from roads
 const PARK_AND_RIDE = [320, 170]; // metres: the car park
+const AIRPORT_FROM = 1e6; // people before a city has its airport
+const AIRFIELD_FROM = 3e6; // and a general aviation airfield besides
+const RUNWAY = [3200, 3800]; // metres long, small city to big
+const RUNWAY_WIDTH = 60;
+const RUNWAY_APART = 1400; // metres between parallel runways, for independent use
+const RUNWAY_CLOSE = 380; // and between a close pair
+const TAXIWAY = 23; // metres wide
+const TERMINAL = [320, 130]; // metres: a terminal building
+const AIRFIELD = { runway: [1600, 30], apron: [260, 120], ground: [2100, 700] };
 
 // Industrial uses: [use, weight, whole block, at most per area].
 export const INDUSTRIAL_USES = [
@@ -303,7 +312,7 @@ export function createPeriphery(seed, { terrain, population, centre, rings, outL
         break;
       }
     }
-    if (s0 !== null) sites.push({ tail: T, s0, rail: true, r: u(10, k) });
+    if (s0 !== null) sites.push({ tail: T, s0, rail: true, r: u(10, k), k });
   }
   for (const rd of roads) sites.push({ road: rd, rail: false, r: 1 + u(11, rd.key) });
   sites.sort((a, b) => a.r - b.r);
@@ -339,7 +348,7 @@ export function createPeriphery(seed, { terrain, population, centre, rings, outL
       if (!ok) c = add(c, mul(unit(sub(c, centre)), 400));
     }
     if (!ok) continue;
-    industrial.push(layOutIndustry(industrial.length, c, ax, L, Wd, site.rail ? site.tail : null));
+    industrial.push({ ...layOutIndustry(industrial.length, c, ax, L, Wd, site.rail ? site.tail : null), tailIndex: site.rail ? site.k : -1, size: [L, Wd] });
   }
   function layOutIndustry(k, c, ax, L, Wd, tail) {
     const v = perp(ax);
@@ -460,6 +469,126 @@ export function createPeriphery(seed, { terrain, population, centre, rings, outL
       }
     }
   }
+  // ---- Airports ----
+  // The main airport, from a million people, out on a rail line (the line
+  // runs on to it, with a station in the terminal), a metro line run out
+  // to it too, and a road in from the expressway: its runways parallel
+  // either side of the line, the terminals and their aprons between.
+  const clearOf = (c, r) => industrial.every((a) => len(sub(a.c, c)) > r + Math.max(...a.size) / 2);
+  const roadIn = (from, key, extra) => {
+    // (Straight in toward the centre, to the expressway.)
+    const dir = unit(sub(centre, from));
+    const pts = [from];
+    let q = from;
+    let hit = null;
+    for (let s = 0; s < 9000 && !hit; s += ROAD_STEP) {
+      const next = add(q, mul(dir, ROAD_STEP));
+      if (isBlocked(next)) break;
+      hit = crossExpressway(q, next);
+      pts.push(hit ? hit.p : next);
+      q = next;
+    }
+    if (hit) roads.push({ pts: pts.slice().reverse(), at: hit.p, exp: hit.P, dir: mul(dir, -1), end: 'trumpet', key, ...extra });
+  };
+  let airport = null;
+  if (population >= AIRPORT_FROM) {
+    const big = Math.max(0, Math.min(1, (population - AIRPORT_FROM) / 5e6));
+    const RL = RUNWAY[0] + (RUNWAY[1] - RUNWAY[0]) * big;
+    const terminals = Math.max(1, Math.min(4, 1 + Math.floor((population - AIRPORT_FROM) / 2.5e6)));
+    // Runways: a pair either side for a big airport, one either side else.
+    const vs = population >= 4e6 ? [-RUNWAY_APART / 2 - RUNWAY_CLOSE, -RUNWAY_APART / 2, RUNWAY_APART / 2, RUNWAY_APART / 2 + RUNWAY_CLOSE] : [-RUNWAY_APART / 2, RUNWAY_APART / 2];
+    const half = [RL / 2 + 500, Math.max(...vs.map(Math.abs)) + 450];
+    const tails = railTails.map((T, k) => ({ T, k, used: industrial.some((a) => a.tailIndex === k), r: u(60, k) })).sort((a, b) => a.used - b.used || a.r - b.r);
+    for (const { T, k } of tails) {
+      if (airport) break;
+      const total = lengthOf(T);
+      for (let s = 0; s + half[0] < total; s += 250) {
+        const c = pointAlong(T, s);
+        if (at(Dc, c) < G + SMOOTH + half[1] + 600) continue;
+        const ax = unit(sub(pointAlong(T, s + 60), pointAlong(T, s - 60)));
+        const R = rect(c, ax, half[0] * 2, half[1] * 2);
+        let bad = false;
+        for (let a = 0; a <= 6 && !bad; a++) {
+          for (let b = 0; b <= 4 && !bad; b++) {
+            const q = add(add(R[0], mul(sub(R[1], R[0]), a / 6)), mul(sub(R[3], R[0]), b / 4));
+            if (isBlocked(q) || isWet(q) || at(Dc, q) < G + SMOOTH + 400) bad = true;
+          }
+        }
+        if (bad || !clearOf(c, Math.hypot(...half))) continue;
+        // (The track bends a little across the site: the runways follow its
+        // way at the terminal.)
+        const v = perp(ax);
+        const P = (a, b) => add(c, add(mul(ax, a), mul(v, b)));
+        const runways = vs.map((y) => rect(P(0, y), ax, RL, RUNWAY_WIDTH));
+        const taxiways = vs.map((y) => [P(-RL / 2, y - Math.sign(y) * 190), P(RL / 2, y - Math.sign(y) * 190)]);
+        for (const y of vs) for (const x of [-RL / 2, 0, RL / 2]) taxiways.push([P(x, y), P(x, y - Math.sign(y) * 190)]);
+        const span = terminals * (TERMINAL[0] + 120);
+        const buildings = [];
+        for (let t = 0; t < terminals; t++) {
+          const x = -span / 2 + (t + 0.5) * (TERMINAL[0] + 120);
+          // (Each side of the track, the stations' halls between.)
+          buildings.push(rect(P(x, 150), ax, TERMINAL[0], TERMINAL[1]), rect(P(x, -150), ax, TERMINAL[0], TERMINAL[1]));
+        }
+        const apron = [rect(P(0, 330), ax, span + 200, 230), rect(P(0, -330), ax, span + 200, 230)];
+        airport = { name: names.airport(), c, axis: ax, pts: R, runways, taxiways, apron, terminals: buildings, station: c, tailIndex: k };
+        break;
+      }
+    }
+    if (airport) {
+      // The metro line nearest out to it.
+      let best = null;
+      for (const L of metroLines) {
+        for (const [a, b] of [[L.pts[0], L.pts[Math.min(5, L.pts.length - 1)]], [L.pts[L.pts.length - 1], L.pts[Math.max(0, L.pts.length - 6)]]]) {
+          if (at(Di, a) > 2500) continue;
+          const r = len(sub(a, airport.c));
+          if (!best || r < best.r) best = { r, L, a, dir: unit(sub(a, b)) };
+        }
+      }
+      if (best) {
+        const end = add(airport.c, mul(perp(airport.axis), 60));
+        const ctl = add(best.a, mul(best.dir, best.r * 0.35));
+        const pts = [];
+        for (let k = 0; k <= 40; k++) {
+          const t = k / 40;
+          pts.push(add(add(mul(best.a, (1 - t) * (1 - t)), mul(ctl, 2 * t * (1 - t))), mul(end, t * t)));
+        }
+        airport.metro = { pts, colour: best.L.colour, name: best.L.name, station: end };
+      }
+      // Its road in from the expressway, from the landside of the terminals.
+      roadIn(add(airport.c, mul(unit(sub(centre, airport.c)), Math.hypot(...half) * 0.2)), 200, { toAirport: true });
+    }
+  }
+  // A general aviation airfield, from 3 million people: one runway with
+  // its hangars, out along a road that runs on to it.
+  let airfield = null;
+  if (population >= AIRFIELD_FROM) {
+    const cands = roads.filter((r) => r.end === 'trumpet' && !r.toIndustry && !r.toAirport).map((r) => ({ r, k: u(70, r.key) })).sort((a, b) => a.k - b.k);
+    for (const { r } of cands) {
+      const ax = unit(r.dir);
+      const c = add(r.at, mul(ax, 900 + AIRFIELD.ground[1] / 2));
+      const v = perp(ax);
+      // (The runway across the road's way, the road ending at the apron.)
+      const R = rect(c, v, AIRFIELD.ground[0], AIRFIELD.ground[1]);
+      if (R.concat([c]).some((q) => isBlocked(q) || isWet(q) || at(Dc, q) < G + SMOOTH + 300)) continue;
+      if (!clearOf(c, 1500) || (airport && len(sub(airport.c, c)) < 6000)) continue;
+      const apronC = add(c, mul(ax, -AIRFIELD.ground[1] / 2 + 110));
+      const hangars = [-1.5, -0.5, 0.5, 1.5].map((k) => rect(add(apronC, mul(v, k * 70 + 260)), ax, 50, 60));
+      airfield = {
+        name: names.airfield(r.key),
+        c,
+        axis: v,
+        pts: R,
+        runways: [rect(add(c, mul(ax, 120)), v, AIRFIELD.runway[0], AIRFIELD.runway[1])],
+        taxiways: [[add(add(c, mul(ax, 120 - 110)), mul(v, -AIRFIELD.runway[0] / 2)), add(add(c, mul(ax, 120 - 110)), mul(v, AIRFIELD.runway[0] / 2))]],
+        apron: [rect(apronC, v, AIRFIELD.apron[0], AIRFIELD.apron[1])],
+        terminals: hangars,
+      };
+      r.on = resample([r.at, add(apronC, mul(ax, -AIRFIELD.apron[1] / 2))], ROAD_STEP);
+      r.end = 'ddi';
+      break;
+    }
+  }
+
   // Each road's trail, a safe way off to one side.
   for (const rd of roads) {
     const all = rd.on ? rd.pts.concat(rd.on.slice(1)) : rd.pts;
@@ -590,6 +719,8 @@ export function createPeriphery(seed, { terrain, population, centre, rings, outL
     industrial,
     attractions,
     parkAndRides,
+    airport,
+    airfield,
     // How far out of the city a point is (0 inside it).
     outFromCity: (q) => at(Dc, q),
   };

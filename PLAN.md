@@ -384,7 +384,7 @@ Notes on what was built (src/world/periphery.js, src/render/peripheryLayer.js):
 - Tram stops: the junction planner now looks up to 140 m for a junction
   before dropping a planned stop.
 
-## Phase 8. Airports
+## Phase 8. Airports (23 and 24 done; see notes)
 
 23. **Main airport** for cities of 1M+, outside the expressway.
     - Size and complexity scale with population: one terminal for smaller
@@ -397,6 +397,18 @@ Notes on what was built (src/world/periphery.js, src/render/peripheryLayer.js):
 24. **General aviation airfield** beyond the expressway, from **3M**.
 25. Later: ferry terminals, cruise terminals and seaports for large
     coastal cities.
+
+Notes on what was built:
+- The main airport sits out along a rail line beyond the greenbelt (one
+  without an industrial area where there is a choice), the line running
+  on through it with a station at the terminals: the existing line goes
+  on, no branch. Two parallel runways 1.4 km apart (four from 4M, as two
+  close pairs), 3.2 to 3.8 km long; one to four terminals by population,
+  either side of the track, with aprons and taxiways.
+- The nearest metro line end is run on out to it, and a road comes in
+  from the expressway.
+- From 3M, a general aviation airfield: one 1.6 km runway with apron and
+  hangars at the end of a road that crosses the expressway to it.
 
 ## Phase 9. Water
 

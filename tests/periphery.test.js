@@ -20,7 +20,8 @@ test('a greenbelt 1 to 2 km wide, the expressway round its outer edge', () => {
 test('roads run on from boulevards at the city edge to the expressway, each with its trail', () => {
   assert.ok(P.roads.length >= 2, `${P.roads.length} roads`);
   for (const r of P.roads) {
-    if (r.toIndustry) continue;
+    // (A road out to the airport or an industrial area starts there instead.)
+    if (r.toIndustry || r.toAirport) continue;
     assert.ok(P.outFromCity(r.pts[0]) <= 150, 'a road starts away from the city');
     assert.ok(['trumpet', 'ddi'].includes(r.end));
     assert.ok(r.trail && r.trail.length === r.pts.length + (r.on ? r.on.length - 1 : 0), 'a road with no trail');
@@ -48,4 +49,16 @@ test('park-and-rides where rail lines cross the expressway; attractions in the g
     assert.ok(P.outFromCity(a.c) > 0 && P.outFromCity(a.c) < P.width, `${a.name} is not in the greenbelt`);
     assert.ok(a.metro.pts.length > 1, `${a.name} has no metro`);
   }
+});
+
+test('the airport: beyond the greenbelt, on a rail line, with a metro line and a road out to it', () => {
+  const A = P.airport;
+  assert.ok(A, 'no airport');
+  assert.ok(/Airport$/.test(A.name));
+  for (const q of A.pts) assert.ok(P.outFromCity(q) > P.width, 'the airport is inside the greenbelt');
+  assert.ok(A.runways.length >= 2 && A.terminals.length >= 2);
+  assert.ok(A.metro && A.metro.pts.length > 1, 'no metro to the airport');
+  assert.ok(P.roads.some((r) => r.toAirport), 'no road to the airport');
+  // (No general aviation airfield below 3 million people.)
+  assert.equal(P.airfield, null);
 });

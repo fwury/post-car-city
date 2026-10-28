@@ -23,6 +23,13 @@ const C = {
   lot: '#dcd8d0',
   lotLine: '#c3beb4',
   station: '#5f676e',
+  airport: '#e3e8dc',
+  runway: '#7c8186',
+  runwayMark: '#ffffff',
+  taxiway: '#a9aeb3',
+  apron: '#c7cace',
+  terminal: '#b7c4d2',
+  terminalEdge: '#8d9cad',
 };
 const EXPRESSWAY = 47; // metres
 const ROAD = 26;
@@ -110,7 +117,25 @@ function build(P) {
       stripes.lineTo(s1[0], s1[1]);
     }
   }
+  // Airports: grounds, runways (with their centrelines), taxiways, aprons
+  // and terminals or hangars.
+  const fields = [P.airport, P.airfield].filter(Boolean);
+  const centrelines = new Path2D();
+  for (const f of fields) {
+    for (const R of f.runways) {
+      const a = [(R[0][0] + R[3][0]) / 2, (R[0][1] + R[3][1]) / 2];
+      const c2 = [(R[1][0] + R[2][0]) / 2, (R[1][1] + R[2][1]) / 2];
+      centrelines.moveTo(a[0], a[1]);
+      centrelines.lineTo(c2[0], c2[1]);
+    }
+  }
   b = {
+    airGround: pathOf(fields.map((f) => f.pts), true),
+    runways: pathOf(fields.flatMap((f) => f.runways), true),
+    centrelines,
+    taxiways: pathOf(fields.flatMap((f) => f.taxiways), false),
+    aprons: pathOf(fields.flatMap((f) => f.apron), true),
+    terminals: pathOf(fields.flatMap((f) => f.terminals), true),
     belt: pathOf(P.greenbelt, true),
     woods: pathOf(P.woods, true),
     trails: pathOf(P.trails.concat(P.roads.map((r) => r.trail)), false),
@@ -125,7 +150,7 @@ function build(P) {
     track,
     lots: pathOf(P.parkAndRides.map((p) => p.lot), true),
     stripes,
-    metro: P.attractions.map((a) => ({ colour: a.metro.colour, path: pathOf([a.metro.pts], false) })),
+    metro: [...P.attractions.map((a) => a.metro), ...(P.airport && P.airport.metro ? [P.airport.metro] : [])].map((m) => ({ colour: m.colour, path: pathOf([m.pts], false) })),
   };
   cache.set(P, b);
   return b;
@@ -178,6 +203,30 @@ export function drawPeriphery(ctx, P, layers, zoom, px) {
       ctx.stroke(b.buildings);
       ctx.stroke(b.special);
     }
+    ctx.fillStyle = C.airport;
+    ctx.fill(b.airGround);
+    ctx.strokeStyle = C.taxiway;
+    ctx.lineWidth = Math.max(23, px(0.8));
+    ctx.stroke(b.taxiways);
+    ctx.fillStyle = C.apron;
+    ctx.fill(b.aprons);
+    ctx.fillStyle = C.runway;
+    ctx.fill(b.runways);
+    ctx.strokeStyle = C.runway;
+    ctx.lineWidth = Math.max(1, px(1.2));
+    ctx.stroke(b.runways);
+    if (zoom >= DETAIL_ZOOM) {
+      ctx.strokeStyle = C.runwayMark;
+      ctx.lineWidth = Math.max(1, px(0.5));
+      ctx.setLineDash([30, 20]);
+      ctx.stroke(b.centrelines);
+      ctx.setLineDash([]);
+    }
+    ctx.fillStyle = C.terminal;
+    ctx.fill(b.terminals);
+    ctx.strokeStyle = C.terminalEdge;
+    ctx.lineWidth = Math.max(1, px(0.6));
+    ctx.stroke(b.terminals);
     ctx.fillStyle = C.lot;
     ctx.fill(b.lots);
     if (zoom >= DETAIL_ZOOM) {
@@ -230,12 +279,17 @@ export function drawPeriphery(ctx, P, layers, zoom, px) {
     for (const a of P.attractions) dot(a.station, a.metro.colour, r);
     for (const a of P.industrial) if (a.station) dot(a.station, C.station, r);
     for (const p of P.parkAndRides) dot(p.station, C.station, r);
+    if (P.airport) {
+      dot(P.airport.station, C.station, r);
+      if (P.airport.metro) dot(P.airport.metro.station, P.airport.metro.colour, r);
+    }
   }
 }
 
 // Names to label, with where: industrial areas, attractions, park-and-rides.
 export function peripheryLabels(P) {
   return [
+    ...[P.airport, P.airfield].filter(Boolean).map((a) => ({ name: a.name, p: a.c, big: true })),
     ...P.industrial.map((a) => ({ name: a.name, p: a.c, big: true })),
     ...P.attractions.map((a) => ({ name: a.name, p: a.c, big: false })),
     ...P.parkAndRides.map((a) => ({ name: a.name, p: a.c, big: false })),
