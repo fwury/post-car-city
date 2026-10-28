@@ -302,7 +302,7 @@ Notes on what was built:
 - Adult secondary schools: one per 50 000 residents in each district,
   in its most populous neighbourhoods.
 
-## Phase 7. Periphery
+## Phase 7. Periphery (done; see notes)
 
 18. **Greenbelt**: a naturalised green buffer **1–2 km wide** between the
     built-up edge and the expressway, scaling with city size. Transit
@@ -353,6 +353,36 @@ Notes on what was built:
 22. **Park-and-ride**: where a rail line that continues beyond the city
     (as intercity rail) meets the expressway, a large parking facility at
     a regional rail station, clearly named as a park-and-ride.
+
+Notes on what was built (src/world/periphery.js, src/render/peripheryLayer.js):
+- Planned once for the whole city on a 100 m grid, about 1 s at 1.5M and
+  2.6 s at 6M, the first time the map draws.
+- The greenbelt is the city's edge pushed out by its width (1.1 km at
+  1.5M, 1.7 km at 6M), its notches rounded over; the expressway follows
+  its outer edge, smoothed to gentle curves, and is cut where it meets the
+  sea or mountains (an open road then, not a ring). It bridges rivers.
+- About three edge districts in five get a boulevard out to the country,
+  branching off their network last. Neighbourhoods, main streets and the
+  metro are planned as if it weren't there, so the city keeps its layout;
+  trams may use it. Each such boulevard runs on as a road to the
+  expressway, with a trail 40 m to one side.
+- Trumpets and diverging diamonds are drawn as simple ramp curves, not
+  engineered junctions.
+- Industrial areas sit on rail lines out of the city where they can (with
+  a station), otherwise out along a road; the nearest road continues to
+  each at a diverging diamond. An area no road reaches gets a road of its
+  own in from the expressway. Uses follow the list above, with at most one
+  power station, water treatment plant, waste transfer station or
+  recycling centre per area, and rail depots by the track.
+- Attractions (botanical garden from 1.5M, zoo 2M, amusement park 2.5M,
+  racetrack 3M) sit in the greenbelt at the end of a metro line run on out
+  to them, 350 m or more from any road.
+- Park-and-rides stand 350 m outside where each rail line crosses the
+  expressway.
+- Not done yet: peripheral buses (Phase 10), room left for satellite
+  towns.
+- Tram stops: the junction planner now looks up to 140 m for a junction
+  before dropping a planned stop.
 
 ## Phase 8. Airports
 

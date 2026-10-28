@@ -6,6 +6,7 @@
 // canvas float precision holds anywhere in the world. Colours are opaque, so a
 // shared feature drawn by both neighbours looks the same as drawn once.
 
+import { drawPeriphery } from './peripheryLayer.js';
 import { BOULEVARD_WIDTH, GREENWAY_MAX } from '../world/districts.js';
 import { ROUNDABOUT_RADIUS } from '../world/boulevards.js';
 import { STREET_TYPES } from '../world/streetTypes.js';
@@ -275,6 +276,11 @@ export function drawDistricts(ctx, view, world, layers) {
     ctx.fillStyle = palette.country;
     ctx.fillRect(0, 0, view.w, view.h);
     drawHighGround(ctx, view, terrain, px);
+    // Round the city: the greenbelt, roads, industry (under the city's land).
+    if (world.periphery) {
+      ctx.setTransform(s, 0, 0, s, -x0 * s, -y0 * s);
+      drawPeriphery(ctx, world.periphery, layers, zoom, px);
+    }
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.fillStyle = palette.land;
     for (const { d, p } of items) {

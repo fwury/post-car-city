@@ -279,7 +279,10 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
     // ---- Links between district centres, along the boulevards ----
     const edges = [];
     const edgeAt = new Map(); // "i|j" -> edge
-    const linesOf = (i) => nets[i].lines.filter((l) => l.kind !== "roundabout").map((l) => l.points);
+    // (Not a boulevard out into the country: the metro keeps to the city.)
+    const outOf = (i) => nets[i].links.filter((lk) => lk.country).map((lk) => lk.p);
+    const toCountry = (i, P) => outOf(i).some((q) => [P[0], P[P.length - 1]].some((e) => len(sub(e, q)) < 1));
+    const linesOf = (i) => nets[i].lines.filter((l) => l.kind !== "roundabout" && !toCountry(i, l.points)).map((l) => l.points);
     for (let i = 0; i < N; i++) {
       for (const l of nets[i].links) {
         const j = idx.get(l.neighbour);
@@ -311,7 +314,8 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
     // A district on the city's edge: one with a boulevard out of the city,
     // or a wide side with no district of the city beyond it.
     const atEdge = S.map((p, n) => {
-      if (nets[n].links.some((l) => !idx.has(l.neighbour))) return true;
+      // (A boulevard out into the country, running on as a road, is not one.)
+      if (nets[n].links.some((l) => !l.country && !idx.has(l.neighbour))) return true;
       const a = adj[n].map((e) => Math.atan2(S[other(e, n)][1] - p[1], S[other(e, n)][0] - p[0])).sort((x, y) => x - y);
       if (a.length < 2) return true;
       for (let k = 0; k < a.length; k++) if ((k + 1 < a.length ? a[k + 1] : a[0] + 2 * Math.PI) - a[k] > EDGE_GAP) return true;
@@ -871,7 +875,7 @@ export function createMetro(seed, { cores, base, network, rail, population, isWa
       const dir = mul(leave(inE, n), -1);
       // Where it might run to: a boulevard out of the city, or the far end
       // of any boulevard ahead not leading on to another district.
-      const ends = nets[n].links.filter((lk) => !idx.has(lk.neighbour)).map((lk) => lk.p);
+      const ends = nets[n].links.filter((lk) => !lk.country && !idx.has(lk.neighbour)).map((lk) => lk.p);
       for (const P of linesOf(n)) for (const q of [P[0], P[P.length - 1]]) if (!nearCity(q)) ends.push(q);
       let best = null;
       for (const q of ends) {

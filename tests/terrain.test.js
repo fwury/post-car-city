@@ -33,7 +33,8 @@ for (const kind of ['river', 'shore', 'inland']) {
     assert.equal(ds.length, Math.round(1.5e6 / PEOPLE_PER_DISTRICT));
     for (const d of ds) {
       assert.ok(!w.terrain.isWater(...d.station), `${d.key} has its station in the water`);
-      for (const l of d.network.links) assert.ok(isDistrictKey(l.neighbour), `${d.key} links out to ${l.neighbour}`);
+      // (Or out into the country, on as a road: never to the sea.)
+      for (const l of d.network.links) assert.ok(isDistrictKey(l.neighbour) || l.country, `${d.key} links out to ${l.neighbour}`);
     }
     // Boundaries along a river lie on it; along the shore, half a greenway in from it.
     for (const d of ds) {

@@ -503,7 +503,8 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
       let prev = -Infinity;
       const apart = (x) => x - prev >= STOP_SPACING[0] - 10;
       for (const t of M.targets.slice().sort((a, b) => a - b)) {
-        const pick = here.filter((h) => Math.abs(h.s - t) <= STOP_SNAP && h.s > 20 && h.s < L - 20 && apart(h.s) && sidesFor(h.s)).sort((a, b) => b.score - Math.abs(b.s - t) / 12 - (a.score - Math.abs(a.s - t) / 12))[0];
+        const within = (r) => here.filter((h) => Math.abs(h.s - t) <= r && h.s > 20 && h.s < L - 20 && apart(h.s) && sidesFor(h.s)).sort((a, b) => b.score - Math.abs(b.s - t) / 12 - (a.score - Math.abs(a.s - t) / 12))[0];
+        const pick = within(STOP_SNAP);
         if (pick) {
           stopAt(pick.j, pick.s);
           prev = pick.s;
@@ -519,7 +520,15 @@ export function planJunctions(seedKey, { majors, local, alleys = [], greenways =
             }
           }
         }
-        if (s0 === null) continue;
+        if (s0 === null) {
+          // (Failing both, a junction a little further off rather than none.)
+          const far = within(STOP_SNAP * 2);
+          if (far) {
+            stopAt(far.j, far.s);
+            prev = far.s;
+          }
+          continue;
+        }
         const j = keep({ p: pointAt(M.pts, M.cum, s0), arms: armsAlong(M, s0, M.type), kinds: new Set(['crossing']), kind: crossing });
         onLine.push({ s: s0, r: MINOR_REACH, side: false, opens: new Set() });
         here.push({ j, s: s0, score: 0 });

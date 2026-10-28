@@ -160,6 +160,16 @@ export function createNames(seed) {
   return {
     city,
     surname: (...k) => pick(SURNAMES, ...k),
+    // Out beyond the city: an industrial area, a park-and-ride, and the
+    // greenbelt's attractions.
+    industrial: (k) => `${place(9100, k)} ${pick(['Industrial Park', 'Industrial Area', 'Works', 'Business Park', 'Industrial Estate'], 9101, k)}`,
+    parkAndRide: (k) => `${place(9200, k)} Park-and-Ride`,
+    attraction(kind, k) {
+      if (kind === 'zoo') return `${city()} Zoo`;
+      if (kind === 'botanical') return u(9301, k) < 0.5 ? `${city()} Botanical Garden` : `${city()} Conservatory and Gardens`;
+      if (kind === 'amusement') return `${place(9302, k).split(' ')[0]} ${pick(['Wonderland', 'Adventure Park', 'Fun Park', 'Playland'], 9303, k)}`;
+      return `${place(9304, k).split(' ')[0]} Raceway`;
+    },
     // A college or other school: by the city, the place, or a founder.
     school(d, h, kind, n) {
       const k = hashString(d.key) + n * 7919;

@@ -234,7 +234,9 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     // (Never rowhouse-thin in the city centre.)
     const centreForm = oldTownIn(d) ? CENTRE_FORM : 0;
     const onBlvd = new Uint8Array(N);
-    for (const l of d.network.lines) stamp(CELL, onBlvd, W, H, x0, y0, l.points);
+    // (Not a boulevard out to the country: neighbourhoods are planned as
+    // if it were not there.)
+    for (const l of d.network.lines) if (!l.country) stamp(CELL, onBlvd, W, H, x0, y0, l.points);
     const fromBlvd = distanceField(CELL, onBlvd, W, H);
     const dens = new Float64Array(N);
     let people = 0;
@@ -279,7 +281,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     }
     const spacing = Math.sqrt(NEIGHBOURHOOD_AREA) * 1.05;
     const farFrom = (p, r) => centres.every((c) => len(sub(c, p)) >= r);
-    const lines = d.network.lines.filter((l) => l.kind !== 'roundabout').slice().sort((a, b) => (a.key < b.key ? -1 : 1));
+    const lines = d.network.lines.filter((l) => l.kind !== 'roundabout' && !l.country).slice().sort((a, b) => (a.key < b.key ? -1 : 1));
     for (const st of metroIn(d)) {
       const n = cellOf(st.p[0], st.p[1]);
       if (st.core || centres.length >= count || n < 0 || mask[n] !== LAND || onRail[n] || fromEdge[n] < 400) continue;

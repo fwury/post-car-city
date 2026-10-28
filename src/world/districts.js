@@ -29,6 +29,7 @@ import { createNames } from './names.js';
 import { createNeighbourhoods } from './neighbourhoods.js';
 import { higherEdPlan } from './university.js';
 import { facilityPlan, parkFacilityCount } from './facilities.js';
+import { createPeriphery } from './periphery.js';
 export { PARK_AREA_HA } from './parks.js';
 import { createCores, keyInts } from './cores.js';
 import { createBlocks } from './blocks.js';
@@ -788,8 +789,25 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   };
   const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops, tramsIn: (d) => trams.in(d), parkFacilities });
 
+  // What lies round the city: worked out once, when first wanted.
+  let periphery = null;
+  const peripheryOf = () =>
+    (periphery ||= createPeriphery(seed, {
+      terrain,
+      population,
+      centre,
+      rings: cityCores.flatMap((c) => base(c).rings),
+      outLinks: cityCores.flatMap((c) => boulevards.network(base(c)).links.filter((l) => l.country).map((l) => ({ p: l.p, dir: [-l.n[0], -l.n[1]] }))),
+      railTails: rail.segments.filter((s) => s.country).map((s) => s.pts),
+      metroLines: metro.lines,
+      names,
+    }));
+
   return {
     seed, population, terrain, centre, cityCores, rail, metro, cores, growth, boulevards,
+    get periphery() {
+      return peripheryOf();
+    },
     blocks: (d) => blocks.of(d),
     forgetBlocks: (d) => blocks.forget(d),
     // Stage 5: the stream, trail and woods of a stretch of greenway.

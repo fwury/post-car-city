@@ -4,6 +4,7 @@
 // that would overlap one already placed are left out.
 
 import { palette } from './styles.js';
+import { peripheryLabels } from './peripheryLayer.js';
 
 const FONT = '-apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif';
 
@@ -135,6 +136,18 @@ export function drawLabels(ctx, camera, world, blocksFor) {
       ctx.font = font;
       const w = ctx.measureText(name).width;
       if (free(x, y - 20, w, 18)) text(name, x, y - 20, 0, font, palette.ink, 4);
+    }
+  }
+  // Round the city: industrial areas, the greenbelt's attractions,
+  // park-and-rides.
+  if (z >= 0.02 && world.periphery) {
+    for (const { name, p, big } of peripheryLabels(world.periphery)) {
+      if (!big && z < 0.06) continue;
+      const font = `${big ? 700 : 600} ${big ? 13 : 12}px ${FONT}`;
+      const [x, y] = camera.worldToScreen(p[0], p[1]);
+      ctx.font = font;
+      const w = ctx.measureText(name).width;
+      if (free(x, y, w, 16)) text(name, x, y, 0, font, palette.inkSoft, 4);
     }
   }
 }
