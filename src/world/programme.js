@@ -39,6 +39,8 @@ const OLD_TOWN_USES = new Set(['museum', 'gallery', 'districtLibrary']);
 const ADULT_SCHOOL_PEOPLE = 5e4; // people to an adult secondary school
 // The buildings of the city's facilities, by the plan's names.
 const FACILITY_USES = { aquarium: 'aquarium', athleticTraining: 'athleticTrainingCentre', mentalHealthHospital: 'mentalHealthHospital', correctional: 'correctionalCentre' };
+const CORE_COUNT = 14; // the departments every main campus has
+const CAMPUS_LOT_MIN = 1500; // m²: the least a campus lot is halved to
 const CAMPUS_STADIUM = 1.2e4; // m²: the least a campus stadium's block takes
 const CAMPUS_WORSHIP = ['church', 'mosque', 'synagogue']; // a campus's places of worship, of several faiths
 const FACING_REACH = 200; // metres from its plaza a big building facing it may stand
@@ -156,6 +158,24 @@ function join(A, B) {
   const je = inB.get(key(A[(end + 1) % n]));
   for (let j = (jb + 1) % m; j !== je; j = (j + 1) % m) out.push(B[j]);
   return signedArea(out) > 0 ? out : null;
+}
+
+// The part of a polygon on the side of a line (through o) that n points to.
+function clipHalf(P, o, n) {
+  const side = (q) => (q[0] - o[0]) * n[0] + (q[1] - o[1]) * n[1];
+  const out = [];
+  for (let i = 0; i < P.length; i++) {
+    const a = P[i];
+    const b = P[(i + 1) % P.length];
+    const sa = side(a);
+    const sb = side(b);
+    if (sa >= 0) out.push(a);
+    if (sa >= 0 !== sb >= 0) {
+      const t = sa / (sa - sb);
+      out.push([a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]);
+    }
+  }
+  return out;
 }
 
 export function assignProgramme(seed, d, blocks, planned = null) {
@@ -417,7 +437,8 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     if (!h.campus) continue;
     const main = h.university === 'main';
     const cu = (...k) => toUnit(hash(seed, 'campus', ...keyInts(d.coreInfo), h.id, ...k));
-    const lots = plots.filter((p) => p.hood === h.id && p.block.use === 'campus' && p.kind !== 'passage');
+    // (By block: a lot on the edge may lie a little over the line.)
+    const lots = plots.filter((p) => p.block.hood === h.id && p.block.use === 'campus' && p.kind !== 'passage');
     const spare = () => lots.filter((p) => !p.dedicated);
     const closest = (q) => spare().sort((a, b) => len(sub(a.c, q)) - len(sub(b.c, q)))[0];
     const lawn = blocks.find((b) => b.use === 'park' && b.hood === h.id && b.plots);
@@ -439,10 +460,41 @@ export function assignProgramme(seed, d, blocks, planned = null) {
     const sb = blocks
       .filter((b) => b.use === 'campus' && b.hood === h.id && b.plots && b.plots.every((p) => !p.dedicated) && b.area >= CAMPUS_STADIUM)
       .sort((x, y) => len(sub(centroid(y.pts), at)) - len(sub(centroid(x.pts), at)))[0];
-    if (sb) dedicateBlock(sb, 'campusStadium');
+    if (sb) {
+      // (Its lots go with it.)
+      const gone = new Set(sb.plots);
+      dedicateBlock(sb, 'campusStadium');
+      for (let k = lots.length - 1; k >= 0; k--) if (gone.has(lots[k])) lots.splice(k, 1);
+    }
     give(closest(at), 'studentUnion', { old: true });
     give(closest(h.centre), 'campusClinic', { old: false });
     for (const use of CAMPUS_WORSHIP.slice(0, main ? 3 : 2)) give(closest(h.centre), use);
+    // (Lots enough for every programme's department: a campus short of
+    // them halves its biggest free lots.)
+    const need = main ? CORE_COUNT : departmentsFor('small', () => 0).length;
+    for (let guard = 0; spare().length < need && guard < 40; guard++) {
+      const p = lots.filter((q) => !q.dedicated).sort((a, b) => polygonArea(b.pts) - polygonArea(a.pts))[0];
+      if (!p || polygonArea(p.pts) < 2 * CAMPUS_LOT_MIN) break;
+      // (Across its longer way, through its middle.)
+      const c0 = centroid(p.pts);
+      let [sxx, sxy, syy] = [0, 0, 0];
+      for (const q of p.pts) {
+        const [dx, dy] = sub(q, c0);
+        sxx += dx * dx;
+        sxy += dx * dy;
+        syy += dy * dy;
+      }
+      const th = 0.5 * Math.atan2(2 * sxy, sxx - syy);
+      const axis = [Math.cos(th), Math.sin(th)];
+      const halves = [1, -1].map((sd) => clipHalf(p.pts, c0, [axis[0] * sd, axis[1] * sd]));
+      if (halves.some((H) => H.length < 3 || polygonArea(H) < CAMPUS_LOT_MIN)) break;
+      const [p1, p2] = halves.map((pts) => ({ ...p, pts, c: centroid(pts) }));
+      const list = p.block.plots;
+      list.splice(list.indexOf(p), 1, p1, p2);
+      list.forEach((q, k) => (q.index = k));
+      plots.splice(plots.indexOf(p), 1, p1, p2);
+      lots.splice(lots.indexOf(p), 1, p1, p2);
+    }
     // The departments, then research buildings on what is left.
     const names = createNames(seed);
     const nameOf = namerFor(seed, `${d.key}:${h.id}`, (k) => names.surname(hashString(d.key), h.id, k));
@@ -490,6 +542,22 @@ export function assignProgramme(seed, d, blocks, planned = null) {
       put(p, 'boutiqueHotel', 'upper');
       hotels.push(p);
     }
+  }
+
+  // ---- The business district ----
+  // The city-centre district's core: the city's convention centre, and its
+  // observation tower on a block of its own, a plaza all round it.
+  const coreHood = hoods.find((h) => h.core);
+  if (oldHood && coreHood) {
+    dedicate(S, 'conventionCentre', ['podium'], 800, MIN_PLOT.conventionCentre);
+    // (A free podium block in the business district about so far from the
+    // station; failing that, any free block of the size near it.)
+    const sized = (b) => b.plots && free(b) && b.area >= OBSERVATION_BLOCK[0] && b.area <= OBSERVATION_BLOCK[1];
+    const byReach = (x, y) => Math.abs(len(sub(centroid(x.pts), S)) - OBSERVATION_REACH) - Math.abs(len(sub(centroid(y.pts), S)) - OBSERVATION_REACH);
+    const site =
+      blocks.filter((b) => b.use === 'podium' && b.hood === coreHood.id && sized(b)).sort(byReach)[0] ||
+      blocks.filter((b) => (b.use === 'podium' || b.use === 'perimeter') && sized(b) && len(sub(centroid(b.pts), S)) < OBSERVATION_REACH * 2.5).sort(byReach)[0];
+    if (site) dedicateBlock(site, 'observationTower');
   }
 
   // ---- Each neighbourhood's own ----
@@ -550,18 +618,6 @@ export function assignProgramme(seed, d, blocks, planned = null) {
         }
       }
     }
-  }
-
-  // ---- The business district ----
-  // The city-centre district's core: the city's convention centre, and its
-  // observation tower on a block of its own, a plaza all round it.
-  const coreHood = hoods.find((h) => h.core);
-  if (oldHood && coreHood) {
-    dedicate(S, 'conventionCentre', ['podium'], 800, MIN_PLOT.conventionCentre);
-    const site = blocks
-      .filter((b) => b.use === 'podium' && b.plots && b.hood === coreHood.id && free(b) && b.area >= OBSERVATION_BLOCK[0] && b.area <= OBSERVATION_BLOCK[1])
-      .sort((x, y) => Math.abs(len(sub(centroid(x.pts), S)) - OBSERVATION_REACH) - Math.abs(len(sub(centroid(y.pts), S)) - OBSERVATION_REACH))[0];
-    if (site) dedicateBlock(site, 'observationTower');
   }
 
   // ---- The city centre's facilities ----

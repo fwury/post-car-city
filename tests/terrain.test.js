@@ -41,7 +41,7 @@ for (const kind of ['river', 'shore', 'inland']) {
       for (const c of d.chains) {
         const P = c.geo.points;
         if (c.geo.kind === 'river') {
-          const on = P.filter(([x, y]) => w.terrain.nearestRiver(x, y).d < 5).length;
+          const on = P.filter(([x, y]) => (w.terrain.nearestRiver(x, y) || { d: Infinity }).d < 5).length;
           assert.ok(on > P.length * 0.5, `${c.key} is only partly on its river`);
         }
         if (c.geo.kind === 'shore') {

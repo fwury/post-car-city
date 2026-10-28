@@ -410,7 +410,7 @@ Notes on what was built:
 - From 3M, a general aviation airfield: one 1.6 km runway with apron and
   hangars at the end of a road that crosses the expressway to it.
 
-## Phase 9. Water
+## Phase 9. Water (mostly done; see notes)
 
 26. **Natural rivers.**
     - Follow real river dynamics (read up on them): width that varies,
@@ -434,6 +434,30 @@ Notes on what was built:
     which districts join the city (and the city shape noise) by
     closeness to the water, so the built-up area elongates along it.
     Do it together with Phase 9.
+
+Notes on what was built:
+- Rivers meander (swinging up to 2.4 widths either way every 13 widths or
+  so, more or less by stretch), widen and narrow by up to 30% along their
+  way, and half of river and estuary cities get a smaller river joining.
+- Not done: braided channels, river islands with built-up land and
+  bridges (growth never crosses a river, so a small island would sit as
+  open country inside the city; it needs growth to cross bridged
+  channels), and canals.
+- Waterfronts: in the inner city (further out the bigger the city; on the
+  shore, out to the stretch nearest the centre) a river's lower banks are
+  paved promenades with plazas at the water every 500 m or so and now and
+  then a boardwalk; the shore is a quay with piers. Further out, bank
+  trails and beaches as before, and bluffs on some sandless shores.
+- Three in four districts near a river have their centre drawn onto its
+  bank (not the city centre's, whose business district needs room all
+  round). Main streets that run into a river with no bridge stop at the
+  bank.
+- Cities stretch along their river or coast: a district's distance from
+  the water counts extra when ranking which districts make up the city.
+- Tests touched: block and building fixtures now sample the districts next
+  to the centre (the fixed rectangle they used no longer held four); the
+  sharp-plot allowance is 1.5% (river-bank districts have more wedge-shaped
+  blocks); the river-boundary check copes with points far from any river.
 
 ## Phase 10. Leftovers
 
