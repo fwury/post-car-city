@@ -161,8 +161,32 @@ export const USES = {
   bloodDonation: { label: 'Blood donation centre', cat: 'health', floor: 'ground' },
   altPrimary: { label: 'Alternative primary school', cat: 'education', floor: 'dedicated' },
   altSecondary: { label: 'Alternative secondary school', cat: 'education', floor: 'dedicated' },
-  college: { label: 'College or university campus', cat: 'education', floor: 'dedicated' },
   museum: { label: 'Museum', cat: 'civic', floor: 'dedicated' },
+  // A university campus's.
+  campusLawn: { label: 'Front lawn', cat: 'park', floor: 'open' },
+  universityLibrary: { label: 'University library', cat: 'education', floor: 'dedicated' },
+  convocationHall: { label: 'Convocation hall', cat: 'education', floor: 'dedicated' },
+  universityMuseum: { label: 'University museum', cat: 'culture', floor: 'dedicated' },
+  campusBookstore: { label: 'University bookstore', cat: 'shop', floor: 'dedicated' },
+  athleticCentre: { label: 'Athletic centre', cat: 'recreation', floor: 'dedicated' },
+  studentUnion: { label: 'Student union', cat: 'education', floor: 'dedicated' },
+  campusClinic: { label: 'Student health clinic', cat: 'health', floor: 'dedicated' },
+  campusStadium: { label: 'Varsity stadium', cat: 'recreation', floor: 'dedicated' },
+  department: { label: 'Department building', cat: 'education', floor: 'dedicated' },
+  studentResidence: { label: 'Student residence', cat: 'housing', floor: 'upper' },
+  // Higher education besides: on main streets, by their names.
+  college: { label: 'College', cat: 'education', floor: 'dedicated' },
+  adultSchool: { label: 'Adult secondary school', cat: 'education', floor: 'dedicated' },
+  // The city's facilities.
+  fairground: { label: 'Fairground', cat: 'park', floor: 'open' },
+  zoo: { label: 'Zoo', cat: 'park', floor: 'open' },
+  aquarium: { label: 'Aquarium', cat: 'culture', floor: 'dedicated' },
+  athleticTrainingCentre: { label: 'Athletic training centre', cat: 'recreation', floor: 'dedicated' },
+  mentalHealthHospital: { label: 'Mental health hospital', cat: 'health', floor: 'dedicated' },
+  correctionalCentre: { label: 'Correctional centre', cat: 'civic', floor: 'dedicated' },
+  polytechnic: { label: 'Polytechnic', cat: 'education', floor: 'dedicated' },
+  tradeSchool: { label: 'Trade school', cat: 'education', floor: 'dedicated' },
+  specialistSchool: { label: 'School', cat: 'education', floor: 'dedicated' },
   // The old town's, in the city-centre district.
   cityHall: { label: 'City hall', cat: 'civic', floor: 'dedicated' },
   // The business district's.
@@ -253,6 +277,8 @@ export const MIN_PLOT = {
   performingArts: 2500, hotel: 1200, officeTower: 1200, departmentStore: 3000, inn: 350, hospice: 900,
   altPrimary: 1500, altSecondary: 2000, skatingRink: 2500, climbing: 1000, gymnastics: 1200,
   emergencyHousing: 600, transitionalHousing: 600,
+  adultSchool: 1500, aquarium: 7000, athleticTrainingCentre: 9000, mentalHealthHospital: 5000, correctionalCentre: 7000,
+  college: 3000, polytechnic: 3500, tradeSchool: 2000, specialistSchool: 1500,
 };
 
 // Places of worship, in about Toronto's proportions.

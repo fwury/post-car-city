@@ -150,7 +150,54 @@ export function createNames(seed) {
     mainCache.set(d.stage3, m);
     return m;
   }
+  // The city's own name: one word.
+  const city = () => {
+    const root = pick(ROOTS, 7001);
+    let end = pick(ENDINGS, 7002);
+    if (root.endsWith(end[0])) end = end.slice(1);
+    return root + end;
+  };
   return {
+    city,
+    surname: (...k) => pick(SURNAMES, ...k),
+    // A college or other school: by the city, the place, or a founder.
+    school(d, h, kind, n) {
+      const k = hashString(d.key) + n * 7919;
+      const r = u(k, 60);
+      const here = place(hashString(d.key), 2, h.id).split(' ')[0];
+      const who = pick(SURNAMES, k, 61);
+      const by = r < 0.15 ? city() : r < 0.7 ? here : who;
+      switch (kind) {
+        case 'college': return r < 0.5 ? `${by} College` : `${by} College of Applied Arts and Technology`;
+        case 'polytechnic': return r < 0.5 ? `${by} Polytechnic` : `${by} Institute of Technology`;
+        case 'trades': return u(k, 62) < 0.5 ? `${by} Trade School` : `${by} Institute of Skilled Trades`;
+        case 'art': return `${city()} College of Art and Design`;
+        case 'music': return u(k, 62) < 0.5 ? `${city()} Conservatory of Music` : `${who} School of Music and Drama`;
+        case 'film': return `${city()} Film and Acting School`;
+        case 'culinary': return `${city()} Culinary Institute`;
+        case 'seminary': return `${who} Theological Seminary`;
+        default: return `${who} Law School`;
+      }
+    },
+    // A university by its campus: the main one the city's own ("University
+    // of X", "X University"...), the others by a place or a founder.
+    university(d, h) {
+      const k = hashString(d.key) + h.id * 7919;
+      const r = u(k, 50);
+      if (h.university === 'main') {
+        if (r < 0.4) return `University of ${city()}`;
+        if (r < 0.6) return `${city()} University`;
+        if (r < 0.85) return `${pick(SURNAMES, k, 51)} University`;
+        return `Royal ${city()} College`;
+      }
+      const here = place(hashString(d.key), 1).split(' ')[0];
+      if (r < 0.25) return `${here} University`;
+      if (r < 0.45) return `${pick(SURNAMES, k, 51)} University`;
+      if (r < 0.6) return `${city()} Metropolitan University`;
+      if (r < 0.75) return `${city()} Institute of Technology`;
+      if (r < 0.9) return `University of ${here}`;
+      return `${pick(SURNAMES, k, 51)} College`;
+    },
     mainStreet: (d, l) => mainStreets(d).get(l) || null,
     district: (d) => place(hashString(d.key), 1),
     // (The city-centre district's core is its business district, by one of

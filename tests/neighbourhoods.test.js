@@ -70,7 +70,8 @@ test('each neighbourhood houses about 15 000 people, at its own density', () => 
   const near = all.filter((h) => h.population >= 12000 && h.population <= 18000).length;
   // (Fewer than before metro stations fixed many centres in place.)
   assert.ok(near / all.length > 0.82, `only ${near} of ${all.length} neighbourhoods have 12 000 to 18 000 people`);
-  for (const h of all) assert.ok(h.population > 5000 && h.population < 27000, `${h.key} has ${h.population} people`);
+  // (A campus houses only its students.)
+  for (const h of all) if (!h.campus) assert.ok(h.population > 5000 && h.population < 27000, `${h.key} has ${h.population} people`);
   // So areas differ: dense perimeter blocks small, rowhouses and campuses large.
   const areas = all.map((h) => h.area).sort((a, b) => a - b);
   assert.ok(areas[Math.floor(areas.length * 0.95)] / areas[Math.floor(areas.length * 0.05)] > 1.8, 'neighbourhoods are all much the same size');

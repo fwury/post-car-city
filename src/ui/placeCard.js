@@ -52,7 +52,7 @@ export function createPlaceCard(el) {
       const q = hit.plot;
       const b = q.bldg;
       // The place tapped, and the building it is in.
-      const title = label(hit.use) || label(q.dedicated) || (q.cls === 'podium' && b && b.tower ? 'Tower over shops and offices' : KINDS[q.cls]) || 'Building';
+      const title = (q.name && (!hit.use || hit.use === q.dedicated) ? q.name : null) || label(hit.use) || label(q.dedicated) || (q.cls === 'podium' && b && b.tower ? 'Tower over shops and offices' : KINDS[q.cls]) || 'Building';
       const rows = [];
       if (!b) {
         if (hood) rows.push(['Neighbourhood', hood]);

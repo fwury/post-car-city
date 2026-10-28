@@ -57,7 +57,7 @@ export const BLOCK_SIZES = {
   perimeter: { long: 175, short: 140, min: 80 },
   rowhouse: { long: 240, short: 86, min: 60, minLong: 95 },
   podium: { long: 165, short: 135, min: 80 },
-  campus: { long: 270, short: 220, min: 110 },
+  campus: { long: 190, short: 150, min: 80 },
   // (The old town's perimeter blocks: smaller, cut less evenly.)
   oldTown: { long: 115, short: 85, min: 45 },
 };
@@ -70,7 +70,8 @@ const PARK_SHARE = 0.5; // of that pair, the park's share (the school's grounds 
 const PARK_SITE_SET_BACK = 150; // metres a park's site keeps from main streets
 const REMNANT = 0.12e4; // m², net: a block smaller than this is left green
 const STEP = 10; // metres between points of a new street
-const CAMPUS_SHARE = 0.45; // of a campus neighbourhood's land, the campus itself
+const RESIDENCE_RING = 0.75; // of a campus neighbourhood's radius, beyond this its residences
+const RESIDENCE_TOWERS = 0.4; // of the main campus's residences, those towers on podiums
 const FORCED_MIN = 60; // metres: narrowest side of a park or school split off a site
 const SQUARE_MIN = 62; // metres, centreline: narrowest a square's block may be
 const SPLAY_BELOW = (55 * Math.PI) / 180; // a building line corner sharper than this is splayed
@@ -83,7 +84,6 @@ const LINEAR_PARK_SHARE = 0.5; // of such stretches of boundary, those made line
 const LINEAR_PARK_WIDTH = [28, 40]; // metres
 const ROW_AWKWARD_AREA = 0.9e4; // m²: a rowhouse block bigger than this that is far from rectangular is split again ...
 const TERRACE_RECT_GOOD = 0.78; // ... (rectangular enough, by this measure); a smaller one is a green
-const STADIUM_SHARE = 0.6; // of districts, those with a stadium
 const STADIUM_SITE = [250, 200]; // metres, centreline: a stadium's block (a 60 000-seat bowl and its concourse)
 const STADIUM_REACH = [300, 1500]; // metres from the station
 const ROW_STRIP = 74; // metres, centreline to centreline: a rowhouse block's width (two houses, gardens and the lane)
@@ -343,7 +343,7 @@ function centralSite(st) {
   };
 }
 
-export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [], tramsIn = () => null }) {
+export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [], tramsIn = () => null, parkFacilities = () => [] }) {
   // A path that would run through water is left out.
   const dryPath = (pts) => pts && !pts.some((q) => isWater(q[0], q[1]));
   const names = createNames(seed);
@@ -970,14 +970,23 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     const oldCentre = hoods[0] && hoods[0].core ? hoods[0].centre : d.station;
     const oldHood = hoods.find((h) => h.oldTown);
     const inOldHood = (q) => !!oldHood && pointInPolygon(q[0], q[1], oldHood.polygon);
+    // (A campus is given over to people on foot too.)
+    const campusHoods = hoods.filter((h) => h.campus);
+    const onCampus = (q) => campusHoods.find((h) => pointInPolygon(q[0], q[1], h.polygon));
     const inOldTown = (q) => (oldHood ? inOldHood(q) : !!(hoods[0] && hoods[0].core) && len(sub(q, oldCentre)) < OLD_TOWN);
     const zoneOf = (node, ax) => {
       const h = hoodAt(ax.c);
-      // A campus takes the middle of its neighbourhood; homes round it.
-      if (h && h.campus && len(sub(ax.c, h.centre)) < Math.sqrt((CAMPUS_SHARE * h.area) / Math.PI)) return 'campus';
+      // A university takes its whole neighbourhood: its residences round
+      // the edge (quadrangles, and on the main campus towers too), the
+      // campus within.
+      if (h && h.campus) {
+        const r = len(sub(ax.c, h.centre)) / Math.sqrt(h.area / Math.PI);
+        if (r < RESIDENCE_RING) return 'campus';
+        return h.university === 'main' && toUnit(hash(seed, 'residence', Math.floor(ax.c[0]), Math.floor(ax.c[1]))) < RESIDENCE_TOWERS ? 'podium' : 'perimeter';
+      }
       if (h && h.core && inOldTown(ax.c)) return 'perimeter';
-      // (The city-centre district's core, its business district, all of it.)
-      if (h && h.core && (oldHood || len(sub(ax.c, d.station)) < d.coreReach * 1.25)) return 'podium';
+      // (A district's core is podiums all through, but for its old centre.)
+      if (h && h.core) return 'podium';
       // A neighbourhood is built in one form throughout: rowhouses or
       // perimeter blocks (its main streets mixed use either way).
       return h ? formOf(h) : 'perimeter';
@@ -1409,8 +1418,8 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       return null;
     };
 
-    // About three districts in five have a stadium.
-    const wantStadium = toUnit(hash(seed, 'stadium', ...keyInts(d.coreInfo))) < STADIUM_SHARE;
+    // A stadium where the city's plan puts one: about one per million people.
+    const wantStadium = (d.stage3.facilities || []).includes('stadium');
     let stadiumPlaced = false;
     // Cut a block of a stadium's size from a node: a strip of its width
     // along one side, then that strip cut to its length. Returns the block
@@ -1695,7 +1704,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     // city; main streets and boulevards still cross it.
     // (So is the old-town neighbourhood beside the core, all of it.)
     const coreSquare = squareOf.get(0);
-    if (coreSquare || oldHood) {
+    if (coreSquare || oldHood || campusHoods.length) {
       const c = coreSquare ? axes(coreSquare.pts).c : null;
       for (const lf of leaves) {
         lf.tags.forEach((t, i) => {
@@ -1703,8 +1712,9 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
           const a = lf.pts[i];
           const b = lf.pts[(i + 1) % lf.pts.length];
           const m = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
-          if (inOldHood(m)) {
-            pedestrianiseStreet(t, oldHood.centre);
+          const ch = onCampus(m);
+          if (inOldHood(m) || ch) {
+            pedestrianiseStreet(t, ch ? ch.centre : oldHood.centre);
             t.reach = Infinity;
           } else if (c && (inOldTown(m) || len(sub(m, c)) < PEDESTRIAN_ZONE)) {
             pedestrianiseStreet(t, c);
@@ -1986,7 +1996,8 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       if (!b.plots || !b.plots.length) continue;
       if (b.use === 'park') {
         b.layout = layoutNeighbourhoodPark(b.pts, parkRng);
-        if (b.layout.centre) {
+        // (No community centre on a campus lawn.)
+        if (b.layout.centre && b.plots[0].dedicated !== 'campusLawn') {
           b.plots[0].bldg = communityCentre(b.layout.centre);
           b.plots[0].also = 'communityCentre';
         }
@@ -1996,7 +2007,7 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
       if (b.use === 'stadium' && b.plots[0].bldg && b.plots[0].bldg.pitch) b.layout = { features: [{ kind: 'pitch', pts: b.plots[0].bldg.pitch }], paths: [] };
     }
     // District parks, laid out the same way by every district they touch.
-    const districtParks = d.parks.map((pk) => ({ key: pk.key, layout: layoutDistrictPark(pk.shape, rngFor(seed, 'district-park', hashString(pk.key)), isWater) }));
+    const districtParks = d.parks.map((pk) => ({ key: pk.key, layout: layoutDistrictPark(pk.shape, rngFor(seed, 'district-park', hashString(pk.key)), isWater, parkFacilities(pk)) }));
 
     // The streets along greenways and parks, as centreline loops.
     const sides = lines.filter((l) => l.tag.kind === 'greenway' || l.tag.kind === 'park').map((l) => ({ kind: l.tag.kind, pts: l.pts }));

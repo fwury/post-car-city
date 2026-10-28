@@ -25,7 +25,7 @@ self.onmessage = (e) => {
       const result = {
         blocks: b.blocks.map(({ pts, centreline, use, hood, front, inner, court, alley, layout, plots }) => ({
           pts, centreline, use, hood, front, inner, court, alley, layout,
-          plots: plots && plots.map(({ pts: q, kind, cls, ground, upper, dedicated, storeys, baseStoreys, dwellings, corner, c, bldg, layout: pl, also, group, shops, offices, towerSite, walkway, entrances }) => ({ pts: q, kind, cls, ground, upper, dedicated, storeys, baseStoreys, dwellings, corner, c, bldg, layout: pl, also, group, shops, offices, towerSite, walkway, entrances })),
+          plots: plots && plots.map(({ pts: q, kind, cls, ground, upper, dedicated, storeys, baseStoreys, dwellings, corner, c, bldg, layout: pl, also, group, shops, offices, towerSite, walkway, entrances, name }) => ({ pts: q, kind, cls, ground, upper, dedicated, storeys, baseStoreys, dwellings, corner, c, bldg, layout: pl, also, group, shops, offices, towerSite, walkway, entrances, name })),
         })),
         streets: b.streets,
         hoodLines: b.hoodLines,

@@ -58,7 +58,11 @@ const CBD_PEOPLE = 0.55; // ...though its business district houses this share of
 const CENTRE_FORM = 0.55; // ...its housing no thinner than this, on the scale from rowhouses (0) to perimeter blocks (1)
 const BOULEVARD_BOOST = 0.15; // a little denser along a boulevard
 const CAMPUS_METRO = 900; // metres from a metro station a campus is sought
-const CAMPUS_CHANCE = 0.35; // share of districts with a campus neighbourhood (university, hospital)
+const CORE_HOUSING = 0.85; // a core's homes, to a neighbourhood's of its density
+const UNIVERSITY_PEOPLE = 1e6; // people to a university, about
+const MAIN_CAMPUS_HOUSING = 0.35; // the main campus's homes (its residences), to a neighbourhood's
+const CAMPUS_HOUSING = 1.8; // a small campus's neighbourhood is drawn as if this many times as housed: so smaller...
+const CAMPUS_RESIDENTS = 0.3; // ...though it houses only this share of what it would
 const BALANCE_STEPS = 10;
 const LLOYD_STEPS = 6; // rounds of moving the free centres to the middle of their people // rounds of evening out populations after the main streets are in
 const CAMPUS_SHARE = 0.45; // share of a campus neighbourhood's land that is not housing
@@ -109,7 +113,7 @@ function along(pts, s) {
   return pts[pts.length - 1];
 }
 
-export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metroIn = () => [], oldTownIn = () => null, population = 0 }) {
+export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metroIn = () => [], oldTownIn = () => null, population = 0, higherEdIn = () => [], facilitiesIn = () => [] }) {
   const mainStreets = createMainStreets(seed);
   const friction = createNoise(seed, 'neighbourhood-friction');
   // Housing form: perimeter blocks where high, rowhouses and villas where low.
@@ -250,7 +254,10 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     people *= scale;
     // A campus takes in a university or hospital, so it houses fewer people
     // for its size.
-    const hasCampus = toUnit(hash(seed, 'campus', ...keyInts(d.coreInfo))) < CAMPUS_CHANCE;
+    // (A university: the city centre's main campus, and elsewhere about one
+    // to a million people in all.)
+    const others = Math.max(0, population / UNIVERSITY_PEOPLE - 1) / Math.max(1, population / PEOPLE_PER_DISTRICT - 1);
+    const hasCampus = !!oldTownIn(d) || toUnit(hash(seed, 'campus', ...keyInts(d.coreInfo))) < Math.min(1, others);
     const residents = people - (hasCampus ? CAMPUS_SHARE * NEIGHBOURHOOD_PEOPLE : 0);
     const count = 1 + Math.min(NEIGHBOURHOODS[1], Math.max(NEIGHBOURHOODS[0], Math.round(residents / NEIGHBOURHOOD_PEOPLE) - 1));
 
@@ -382,7 +389,19 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     // more open half), near a metro station if one is, else picked by its
     // place alone.
     let campus = null;
-    if (hasCampus) {
+    // (The main campus: at the metro station nearest the city centre's
+    // core, the old town's aside.)
+    if (hasCampus && oldTown) {
+      let best = Infinity;
+      for (let k = 2; k < fixed; k++) {
+        const r = len(sub(centres[k], S));
+        if (r < best) {
+          best = r;
+          campus = centres[k];
+        }
+      }
+    }
+    if (hasCampus && !campus) {
       let best = -1;
       const room = (k) => Math.min(...centres.map((c, j) => (j === k ? Infinity : len(sub(c, centres[k])))));
       const rooms = [];
@@ -433,7 +452,10 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
         }
       }
     }
-    const housing = (k) => (centres[k] === campus ? 1 - CAMPUS_SHARE : 1);
+    // (A campus houses few: the main one is a big neighbourhood for its
+    // people, the others small ones.)
+    // (And the core, for its civic buildings, offices and squares.)
+    const housing = (k) => (k === 0 ? CORE_HOUSING : centres[k] !== campus ? 1 : oldTown ? MAIN_CAMPUS_HOUSING : CAMPUS_HOUSING);
     // People living in each neighbourhood of a labelling.
     const peopleOf = (lab, m) => {
       const pop = new Float64Array(m);
@@ -895,8 +917,10 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     const pop = peopleOf(label, total);
     for (const h of hoods) {
       // (The business district's towers are half offices: fewer homes.)
-      h.population = Math.round(pop[h.id] * (oldTown && h.core ? CBD_PEOPLE : 1));
       h.campus = centres[h.id] === campus;
+      // (A small campus's students, in its residences.)
+      h.population = Math.round(pop[h.id] * (oldTown && h.core ? CBD_PEOPLE : 1) * (h.campus && !oldTown ? CAMPUS_RESIDENTS / CAMPUS_HOUSING : 1));
+      if (h.campus) h.university = oldTown ? 'main' : 'small';
       // People per km² of the neighbourhood's land, and the housing that implies.
       h.density = h.area > 0 ? Math.round(pop[h.id] / (h.area / 1e6)) : 0;
       h.character = h.core ? 'core' : h.oldTown ? 'old town' : h.campus ? 'campus' : 'perimeter blocks';
@@ -955,7 +979,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
     }
     // The rasters later stages read: residents per m² and neighbourhood per cell.
     const raster = { x0, y0, W, H, cell: CELL, dens, label };
-    return { hoods, chains: again.chains, crossings, lines: streets.lines, raster, oldTown: streets.oldTown, cityPeople: oldTown ? population : 0 };
+    return { hoods, chains: again.chains, crossings, lines: streets.lines, raster, oldTown: streets.oldTown, cityPeople: oldTown ? population : 0, higherEd: higherEdIn(d), facilities: facilitiesIn(d) };
   }
 
   // ---- Boundary tracing ----
