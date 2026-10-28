@@ -96,3 +96,25 @@ test('rivers meander, widen and narrow along their way', () => {
   const D = Math.hypot(rv.pts[rv.pts.length - 1][0] - rv.pts[0][0], rv.pts[rv.pts.length - 1][1] - rv.pts[0][1]);
   assert.ok(L / D > 1.08, `sinuosity ${(L / D).toFixed(2)}`);
 });
+
+test('inner-city waterfronts are for people: quays and plazas on the river, quays and piers on the shore', () => {
+  for (const kind of ['river', 'shore']) {
+    const w = createWorld(seedFor(kind), { population: 1.5e6 });
+    const [cx, cy] = w.centre;
+    const ds = w.districtsInRect(cx - 2500, cy - 2500, cx + 2500, cy + 2500);
+    const gs = ds.flatMap((d) => d.chains.filter((c) => c.geo.kind === (kind === 'river' ? 'river' : 'shore')).map((c) => w.greenway(c.geo)));
+    assert.ok(gs.length, `${kind}: no waterfront near the centre`);
+    assert.ok(gs.some((g) => g.quays && g.quays.length), `${kind}: no quays`);
+    if (kind === 'river') assert.ok(gs.some((g) => g.plazas && g.plazas.length), 'no plazas at the water');
+    // Main streets stop at the bank unless a bridge carries them across.
+    for (const d of ds) {
+      for (const l of d.stage3.lines) {
+        for (const q of [l.points[0], l.points[l.points.length - 1]]) {
+          const r = w.terrain.nearestRiver(q[0], q[1]);
+          const crossing = d.stage3.crossings.some((x) => Math.hypot(x.p[0] - q[0], x.p[1] - q[1]) < 30);
+          assert.ok(crossing || !r || r.d >= r.width / 2, `${d.key}: ${l.key} ends in the river`);
+        }
+      }
+    }
+  }
+});

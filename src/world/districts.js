@@ -17,7 +17,7 @@ import { rngFor } from '../core/rng.js';
 import { createNoise, createWarp } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
-import { createBoulevards, distToPieces } from './boulevards.js';
+import { createBoulevards, distToPieces, lineBox, piecesOf } from './boulevards.js';
 import { createParks } from './parks.js';
 import { createGreenways } from './greenway.js';
 import { createTransit } from './transit.js';
@@ -42,6 +42,7 @@ export const GREENWAY_MIN = 50;
 export const GREENWAY_MAX = 160;
 export const BOULEVARD_WIDTH = STREET_TYPES.boulevard.width;
 const CORE_CLEAR = 300; // greenways keep this far from a station
+const RIVER_STOP = 12; // metres back from the water a main street with no bridge stops
 const DISTRICT_REACH = 7000; // no district extends further than this from its core
 const DISTRICT_SEARCH = 5500; // cores this far outside a view can still reach into it
 const SMOOTHING = 4; // Chaikin passes on boundaries
@@ -253,7 +254,18 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     return warpFine(p[0], p[1], p);
   };
   const widthNoise = createNoise(seed, 'greenway-width');
-  const greenways = createGreenways(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), terrain, armsAt: (k) => armsAt(k) });
+  // The inner city, whose waterfronts are made for people: further out
+  // the bigger the city.
+  const innerReach = terrain.radius * (0.42 + 0.2 * Math.max(0, Math.min(1, (population - 7.5e5) / 6e6)));
+  // (On the shore, out as far as the stretch of it nearest the centre.)
+  const shoreReach = terrain.hasSea ? Math.max(innerReach, Math.max(0, terrain.shore(centre[0], centre[1])) + innerReach * 0.7) : innerReach;
+  const greenways = createGreenways(seed, {
+    greenwayWidth: (x, y) => greenwayWidth(x, y),
+    terrain,
+    armsAt: (k) => armsAt(k),
+    inner: (x, y) => Math.hypot(x - centre[0], y - centre[1]) < innerReach,
+    innerShore: (x, y) => Math.hypot(x - centre[0], y - centre[1]) < shoreReach,
+  });
   // The greenways leaving a junction (by its point key): each one's key
   // and its direction out of the junction.
   const armsCache = new LruCache(20000);
@@ -669,6 +681,25 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     };
     // Stage 3. The core is the neighbourhood around the station.
     d.stage3 = hoods.of(d);
+    // A main street running out into a river with no street across it on
+    // the far bank (no crossing agreed there) stops at the bank.
+    for (const l of d.stage3.lines) {
+      const P = l.points;
+      if (P.length < 3 || dist(...P[0], ...P[P.length - 1]) < 1) continue;
+      const wet = (q) => {
+        const r = terrain.nearestRiver(q[0], q[1]);
+        return !!r && r.d < r.width / 2 + RIVER_STOP;
+      };
+      const crossed = (q) => (d.stage3.crossings || []).some((x) => dist(...x.p, ...q) < 30);
+      let [a, b] = [0, P.length - 1];
+      if (wet(P[b]) && !crossed(P[b])) while (b > a + 1 && wet(P[b])) b--;
+      if (wet(P[a]) && !crossed(P[a])) while (a < b - 1 && wet(P[a])) a++;
+      if (a === 0 && b === P.length - 1) continue;
+      l.points = P.slice(a, b + 1);
+      l.bbox = lineBox(l.points);
+      l.pieces = piecesOf(l.points);
+      l.atBank = true;
+    }
     d.core = d.stage3.hoods[0].polygon;
     d.coreArea = d.stage3.hoods[0].area;
     districts.set(core.key, d);
