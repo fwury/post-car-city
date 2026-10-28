@@ -99,6 +99,9 @@ const PEDESTRIAN_ZONE = 120; // metres from the district's square its pedestrian
 const PEDESTRIAN_REACH = 220; // metres from its square a pedestrian street runs
 const FALLBACK_REACH = 250; // metres from a centre a square may stand if none was found by it
 const EDGE_CELL = 4; // metres: the raster the greenway-side streets are found on
+const BIKE_APART = 60; // metres: bike share stations no closer than this
+const BIKE_STATION = 28; // metres from a station's middle to its bike share
+const BIKE_IN = 14; // metres in from a park's corner or a greenway's edge
 
 const sub = (a, b) => [a[0] - b[0], a[1] - b[1]];
 const len = (v) => Math.hypot(v[0], v[1]);
@@ -108,6 +111,18 @@ const unit = (v) => {
 };
 const dot = (a, b) => a[0] * b[0] + a[1] * b[1];
 const cross = (a, b) => a[0] * b[1] - a[1] * b[0];
+const add = (a, b) => [a[0] + b[0], a[1] + b[1]];
+const mul = (a, k) => [a[0] * k, a[1] * k];
+// Where segments ab and cd cross, if they do.
+const segCross = (a, b, c, e) => {
+  const r = sub(b, a);
+  const s = sub(e, c);
+  const den = cross(r, s);
+  if (Math.abs(den) < 1e-9) return null;
+  const t = cross(sub(c, a), s) / den;
+  const v = cross(sub(c, a), r) / den;
+  return t >= 0 && t <= 1 && v >= 0 && v <= 1 ? add(a, mul(r, t)) : null;
+};
 
 export const axesOf = (pts) => axes(pts);
 
@@ -343,7 +358,7 @@ function centralSite(st) {
   };
 }
 
-export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [], tramsIn = () => null, parkFacilities = () => [] }) {
+export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => false, railIn = () => [], stationsIn = () => [], metroIn = () => [], tramsIn = () => null, parkFacilities = () => [] }) {
   // A path that would run through water is left out.
   const dryPath = (pts) => pts && !pts.some((q) => isWater(q[0], q[1]));
   const names = createNames(seed);
@@ -2054,7 +2069,70 @@ export function createBlocks(seed, { greenwayWidth, greenway, isWater = () => fa
     const paved = [...squareOf.values()].filter((sq) => sq.infill && sq.infill.size).map((sq) => sq.pts);
     const onSquare = (q) => paved.some((P) => pointInPolygon(q[0], q[1], P) || distToLine(q[0], q[1], P.concat([P[0]])) < PEDESTRIAN / 2 + 2);
     const intersections = laidOut.filter((j) => j.arms.some((a) => isTramStreet(a.type)) || !onSquare(j.p));
-    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tramStopList, greenLinks, districtParks, linearParks, arcades, entrances, halls: site ? [{ pts: site.hall, central: true, t: site.t }] : [] };
+
+    // Bike share stations: at every rail and metro station and tram stop
+    // (on the sidewalk beside it), in every neighbourhood park (by a path,
+    // near a corner), at each district park entrance, and where a primary
+    // greenway meets a main street or boulevard (beside the greenway). Two
+    // never stand close together.
+    const bikeShare = [];
+    const addBike = (q, kind) => {
+      if (!q || isWater(q[0], q[1]) || bikeShare.some((o) => len(sub(o.p, q)) < BIKE_APART)) return;
+      bikeShare.push({ p: q, kind });
+    };
+    const ownLand = (q) => d.rings.some((r) => pointInPolygon(q[0], q[1], r));
+    for (const st of stationsIn(d)) addBike(add(st.p, [BIKE_STATION, 0]), 'rail');
+    for (const st of metroIn(d)) addBike(add(st.p, [0, BIKE_STATION]), 'metro');
+    for (const st of tramStopList) {
+      const n = [-st.dir[1], st.dir[0]];
+      const w = (STREET_TYPES[st.type] ? STREET_TYPES[st.type].width : 30) / 2 + 2;
+      const sd = (st.from + st.to) / 2 >= 0 ? 1 : -1;
+      addBike(add(st.p, mul(n, sd * w)), 'tram');
+    }
+    for (const b of blocks) {
+      if (b.use !== 'park' || !b.pts) continue;
+      // (The corner nearest the neighbourhood's square, a little in.)
+      const c = axes(b.pts).c;
+      const h = hoods.find((x) => x.id === b.hood);
+      const toward = h ? h.centre : c;
+      const corner = b.pts.slice().sort((x, y) => len(sub(x, toward)) - len(sub(y, toward)))[0];
+      addBike(add(corner, mul(unit(sub(c, corner)), BIKE_IN)), 'park');
+    }
+    for (const dp of districtParks) {
+      const pk = d.parks.find((x) => x.key === dp.key);
+      if (!pk) continue;
+      for (const path of dp.layout.paths || []) {
+        for (const e of [path.pts[0], path.pts[path.pts.length - 1]]) {
+          if (distToLine(e[0], e[1], pk.shape.concat([pk.shape[0]])) < 25 && ownLand(e)) addBike(e, 'park');
+        }
+      }
+    }
+    {
+      const streetsOver = [...st.lines.map((l) => l.points), ...d.network.lines.filter((l) => l.kind !== 'roundabout').map((l) => l.points)];
+      for (const c of d.chains) {
+        if (c.geo.kind !== 'green') continue;
+        const G = c.geo.points;
+        for (const P of streetsOver) {
+          for (let i = 0; i + 1 < P.length; i++) {
+            for (let k = 0; k + 1 < G.length; k += 2) {
+              const x = segCross(P[i], P[i + 1], G[k], G[Math.min(G.length - 1, k + 2)]);
+              if (!x) continue;
+              // (Beside the greenway, on this district's side.)
+              const t = unit(sub(P[i + 1], P[i]));
+              const off = greenwayWidth(x[0], x[1]) / 2 + BIKE_IN;
+              for (const sd of [1, -1]) {
+                const q = add(x, mul(t, sd * off));
+                if (ownLand(q)) {
+                  addBike(q, 'greenway');
+                  break;
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+    return { blocks, streets: local, intersections, sides, supers: supers.length, parkSites: [...parkSite.values()], programme, planned, hoodLines, tramStops: tramStopList, greenLinks, districtParks, linearParks, arcades, entrances, bikeShare, halls: site ? [{ pts: site.hall, central: true, t: site.t }] : [] };
   }
 
   // Forget a district's blocks (a worker that has handed them on keeps none).

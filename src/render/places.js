@@ -29,6 +29,7 @@ const KINDS = {
   market: ['#c88a3a', 'square'],
   post: ['#6b7c93', 'letter'],
   rail: ['#2f6db5', 'stairs'],
+  bike: ['#3e8a52', 'bike'],
 };
 
 // Uses shown, with their kind and from which tier: 1 the district's own,
@@ -38,7 +39,7 @@ const SHOWN = {
   altPrimary: ['school', 1.5], altSecondary: ['school', 1.5], stadium: ['sport', 1], recCentre: ['sport', 1.5], skatingRink: ['sport', 1.5],
   climbing: ['sport', 1.5], gymnastics: ['sport', 1.5], museum: ['culture', 1], gallery: ['culture', 2], performingArts: ['stage', 1],
   cinema: ['stage', 1.5], library: ['library', 1.5], districtLibrary: ['library', 1], police: ['police', 1], fireStation: ['fire', 1],
-  courthouse: ['civic', 1], cityHall: ['civic', 1], universityLibrary: ['library', 1], convocationHall: ['school', 1], universityMuseum: ['culture', 1], campusBookstore: ['shop', 1.5], athleticCentre: ['sport', 1.5], studentUnion: ['school', 1.5], campusClinic: ['health', 1.5], campusStadium: ['sport', 1], department: ['school', 1.5], college: ['school', 1], polytechnic: ['school', 1], tradeSchool: ['school', 1], specialistSchool: ['school', 1], adultSchool: ['school', 1.5], aquarium: ['culture', 1], athleticTrainingCentre: ['sport', 1], mentalHealthHospital: ['health', 1], correctionalCentre: ['civic', 1], fairground: ['stage', 1], zoo: ['culture', 1], studentResidence: ['lodging', 1.5], mainCourthouse: ['civic', 1], courthousePlaza: ['market', 1], artsPlaza: ['market', 1], researchHospital: ['health', 1], childrensHospital: ['health', 1], cancerCentre: ['health', 1], rehabHospital: ['health', 1], eyeHospital: ['health', 1], researchInstitute: ['health', 1.5], mainArts: ['stage', 1], operaHouse: ['stage', 1], theatre: ['stage', 1.5], embassy: ['civic', 1.5], conventionCentre: ['civic', 1], observationTower: ['stage', 1], mainLibrary: ['library', 1], touristCentre: ['civic', 1.5], boutiqueHotel: ['lodging', 1.5], governmentOffice: ['civic', 1.5], communityCentre: ['civic', 1.5], employment: ['civic', 2], postOffice: ['post', 1.5],
+  courthouse: ['civic', 1], cityHall: ['civic', 1], universityLibrary: ['library', 1], convocationHall: ['school', 1], universityMuseum: ['culture', 1], campusBookstore: ['shop', 1.5], athleticCentre: ['sport', 1.5], studentUnion: ['school', 1.5], campusClinic: ['health', 1.5], campusStadium: ['sport', 1], department: ['school', 1.5], bikeShare: ['bike', 2], college: ['school', 1], polytechnic: ['school', 1], tradeSchool: ['school', 1], specialistSchool: ['school', 1], adultSchool: ['school', 1.5], aquarium: ['culture', 1], athleticTrainingCentre: ['sport', 1], mentalHealthHospital: ['health', 1], correctionalCentre: ['civic', 1], fairground: ['stage', 1], zoo: ['culture', 1], studentResidence: ['lodging', 1.5], mainCourthouse: ['civic', 1], courthousePlaza: ['market', 1], artsPlaza: ['market', 1], researchHospital: ['health', 1], childrensHospital: ['health', 1], cancerCentre: ['health', 1], rehabHospital: ['health', 1], eyeHospital: ['health', 1], researchInstitute: ['health', 1.5], mainArts: ['stage', 1], operaHouse: ['stage', 1], theatre: ['stage', 1.5], embassy: ['civic', 1.5], conventionCentre: ['civic', 1], observationTower: ['stage', 1], mainLibrary: ['library', 1], touristCentre: ['civic', 1.5], boutiqueHotel: ['lodging', 1.5], governmentOffice: ['civic', 1.5], communityCentre: ['civic', 1.5], employment: ['civic', 2], postOffice: ['post', 1.5],
   church: ['worship', 1.5], cathedral: ['worship', 1], mosque: ['mosque', 1.5], synagogue: ['synagogue', 1.5], temple: ['worship', 1.5],
   stationEntrance: ['rail', 1.5],
   departmentStore: ['shop', 1], hotel: ['lodging', 1], inn: ['lodging', 1.5], market: ['market', 1.5], districtPlaza: ['market', 1],
@@ -92,6 +93,8 @@ export function placesOf(blocks) {
       }
     }
   }
+  // Bike share stations.
+  for (const bs of blocks.bikeShare || []) out.push({ p: bs.p, use: 'bikeShare', kind: 'bike', tier: SHOWN.bikeShare[1], block: null, plot: { dedicated: 'bikeShare', cls: 'dedicated', c: bs.p } });
   // A district park's fairground or zoo.
   for (const dp of blocks.districtParks || []) {
     for (const f of (dp.layout && dp.layout.features) || []) {
@@ -187,6 +190,26 @@ function badge(ctx, x, y, colour, glyph) {
 
 // Glyphs, drawn in white about a 10 px box centred on the origin.
 const GLYPHS = {
+  // A bicycle: two wheels and the frame between.
+  bike(c) {
+    c.lineWidth = 1.2;
+    c.beginPath();
+    c.arc(-2.8, 1.6, 2.2, 0, Math.PI * 2);
+    c.moveTo(5, 1.6);
+    c.arc(2.8, 1.6, 2.2, 0, Math.PI * 2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(-2.8, 1.6);
+    c.lineTo(-0.6, -2.2);
+    c.lineTo(2, -2.2);
+    c.lineTo(2.8, 1.6);
+    c.moveTo(-0.6, -2.2);
+    c.lineTo(0.4, 1.6);
+    c.lineTo(-2.8, 1.6);
+    c.moveTo(-1.6, -3.4);
+    c.lineTo(0.2, -3.4);
+    c.stroke();
+  },
   // Stairs going down, and an arrow down them.
   stairs(c) {
     c.beginPath();

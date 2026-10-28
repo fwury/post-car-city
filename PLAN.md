@@ -461,7 +461,7 @@ Notes on what was built:
 
 ## Phase 10. Leftovers
 
-29. **Bike share stations** (pending from before). Small icons only, no
+29. **Bike share stations** (done: shown close in, from zoom 1.6). Small icons only, no
     docks drawn, at:
     - every rail and metro station and tram stop (on the main street
       sidewalk or a side street);
@@ -471,6 +471,46 @@ Notes on what was built:
       (beside the greenway).
 30. **Bus routes** for the peripheral, non-built-up areas, the greenbelt
     attractions included.
+
+## Phase 11. Rework after review (in this order)
+
+31. **Main streets, from scratch, London-style.**
+    - Main streets come first; neighbourhoods are drawn round them (each
+      neighbourhood about its high street), still meeting every
+      neighbourhood criterion (size, population, amenities, metro).
+    - Organic, not a grid: gently curving, long and continuous, running
+      through several neighbourhoods and across district boundaries,
+      not broken by boulevards or secondary greenways (they cross them).
+    - Never along a neighbourhood's edge: down its middle.
+    - Few turns, so tram routes along them run fairly straight.
+32. **Where a main street meets a river or greenway** it either crosses
+    (bridge or tunnel), or ends at the boundary of the greenway, never
+    partway in. At a river it may instead end at a T junction with a new
+    **riverside boulevard**.
+33. **Regional rail in larger cities**: more radial lines, so most
+    districts have rail (London Overground), with lines merging and other
+    patterns, simpler further out. A smaller, narrower central loop (two
+    parallel lines joined by curves at the ends, Yamanote-like) so lines
+    don't wind round the centre before heading out.
+34. **Periphery, redone.**
+    - Roads: proper diverging diamond interchanges, of real size, where
+      roads continue past the expressway; trumpets where they end. One
+      multi-use path per road, from the boulevard's sidewalk, beyond a
+      wide tree-lined median. No sharp bends.
+    - Park-and-rides between the road and the rail line, reached by road
+      from the interchange.
+    - Industrial areas further out, on roads continuing past the
+      expressway, with more than one road in; big buildings
+      (distribution centres and plants are bigger than a city block);
+      roundabouts where a road meets an industrial street, plain
+      junctions between industrial streets; no lot reached straight off a
+      road. No steel mills or chemical plants (those are off the map).
+    - Logistics: distribution centres out there; fulfilment hubs at the
+      built-up edge, where freight moves to cargo e-bikes.
+    - Metro extensions only where they go somewhere, run straight on from
+      the line's end.
+    - Airports kept simple: runways, taxiways, one big block for the
+      terminals and one for hangars, reached by road.
 
 ## Open question
 

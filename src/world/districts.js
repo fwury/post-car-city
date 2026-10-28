@@ -875,7 +875,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     }
     return parkPlan.get(pk.key) || [];
   };
-  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops, tramsIn: (d) => trams.in(d), parkFacilities });
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops, metroIn: (d) => transit.of(d).metroStops, tramsIn: (d) => trams.in(d), parkFacilities });
 
   // What lies round the city: worked out once, when first wanted.
   let periphery = null;
