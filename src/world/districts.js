@@ -783,6 +783,9 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
       l.bbox = lineBox(l.points);
       l.pieces = piecesOf(l.points);
       l.atBank = true;
+      // (It ends at the greenway's edge, or the bank, now.)
+      if (startWet) l.edgeStart = true;
+      if (endWet) l.edgeEnd = true;
     }
     d.core = d.stage3.hoods[0].polygon;
     d.coreArea = d.stage3.hoods[0].area;
