@@ -270,9 +270,10 @@ test('main streets never dead-end (they may end at a park gate, or the land\'s e
       for (const [k, [e, crossingStart, park]] of ends.entries()) {
         if (crossingStart) continue; // carries on in the next district
         // Meets the street along the greenway at the land's edge.
-        if (k === 1 && l.edgeEnd) {
-          // (Or a district park's.)
-          const edge = Math.min(distToLine(e[0], e[1], ring), ...d.parks.map((pk) => distToLine(e[0], e[1], pk.shape.concat([pk.shape[0]]))));
+        if (k === 1 ? l.edgeEnd : l.edgeStart) {
+          // At the greenway's edge (where its green begins), not partway
+          // across it; or a district park's.
+          const edge = Math.min(Math.abs(distToLine(e[0], e[1], ring) - world.greenwayWidth(e[0], e[1]) / 2), ...d.parks.map((pk) => distToLine(e[0], e[1], pk.shape.concat([pk.shape[0]]))));
           assert.ok(edge < 40, `${l.key} ends away from the land's edge`);
           continue;
         }

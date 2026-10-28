@@ -36,6 +36,7 @@ self.onmessage = (e) => {
         linearParks: b.linearParks,
         arcades: b.arcades,
         entrances: b.entrances,
+        bikeShare: b.bikeShare,
         halls: b.halls,
         planned: b.planned,
         housed: b.programme.housed,

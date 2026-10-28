@@ -177,6 +177,8 @@ export const USES = {
   // Higher education besides: on main streets, by their names.
   college: { label: 'College', cat: 'education', floor: 'dedicated' },
   adultSchool: { label: 'Adult secondary school', cat: 'education', floor: 'dedicated' },
+  // A bike share station: bikes to take and leave.
+  bikeShare: { label: 'Bike share', cat: 'transport', floor: 'open' },
   // The city's facilities.
   fairground: { label: 'Fairground', cat: 'park', floor: 'open' },
   zoo: { label: 'Zoo', cat: 'park', floor: 'open' },

@@ -281,6 +281,7 @@ export function createTrams(seed, { cores, district, metroLines, plazaOf, linked
       if (L.src.parkStart && first.edges.length === 1) first.end = 'park';
       if (L.src.parkEnd && last.edges.length === 1) last.end = 'park';
       if (L.src.edgeEnd && last.edges.length === 1) last.end = 'edge';
+      if (L.src.edgeStart && first.edges.length === 1) first.end = 'edge';
       // (A main street ending at the district's edge with nothing beyond:
       // the city's edge.)
       const ring = ds.find((d) => d.key === L.d).ring;

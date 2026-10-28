@@ -7,7 +7,8 @@ import { polygonArea, pointInPolygon } from '../src/util/geom.js';
 import { STYLES } from '../src/world/architecture.js';
 
 const world = createWorld(seedFromText('1'));
-const districts = world.districtsInRect(3000, 3000, 5500, 5500).slice(0, 2);
+// (Two districts next to the centre's.)
+const districts = world.cityCores.slice(1, 3).map((c) => world.district(c));
 const plotsOf = (d) => world.blocks(d).blocks.flatMap((b) => (b.plots || []).map((p) => ({ p, b })));
 
 test('every home and shop stands in a building on its own plot', () => {

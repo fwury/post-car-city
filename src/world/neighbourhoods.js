@@ -952,15 +952,23 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
       const u = (...k) => toUnit(hash(seed, 'centre-role', ...keyInts(d.coreInfo), ...k));
       const open = hoods.filter((h) => !h.core && !h.oldTown && !h.campus);
       const withMetro = open.filter((h) => h.metro && h.metro.length);
-      const pool = (withMetro.length >= 3 ? withMetro : open).slice().sort((a, b) => u(1, a.id) - u(1, b.id));
+      // (Those with a metro station first, in an order of their own.)
+      const order = (list) => list.slice().sort((a, b) => u(1, a.id) - u(1, b.id));
+      const pool = [...order(withMetro), ...order(open.filter((h) => !withMetro.includes(h)))];
       const campusHood = hoods.find((h) => h.campus);
       const take = (near) => {
         if (!pool.length) return null;
         let k = 0;
-        if (near) for (let i = 1; i < pool.length; i++) if (len(sub(pool[i].centre, near)) < len(sub(pool[k].centre, near))) k = i;
+        // (Near a place, among those with a station if any are left.)
+        const metroLeft = pool.some((h) => h.metro && h.metro.length);
+        if (near) for (let i = 1; i < pool.length; i++) if ((!metroLeft || (pool[i].metro && pool[i].metro.length)) && len(sub(pool[i].centre, near)) < len(sub(pool[k].centre, near))) k = i;
         return pool.splice(k, 1)[0];
       };
       const chance = population < CLUSTER_FROM ? 0 : Math.min(CLUSTER_CHANCE[1], CLUSTER_CHANCE[0] + ((population - CLUSTER_FROM) / CLUSTER_SPAN) * (CLUSTER_CHANCE[1] - CLUSTER_CHANCE[0]));
+      // (The courts and the arts take stations first; the hospital, if
+      // none is left, the place nearest the campus.)
+      const courtsFirst = take();
+      const artsFirst = take();
       const medical = take(campusHood && campusHood.centre);
       if (medical) {
         medical.role = 'medical';
@@ -969,7 +977,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
           medical.suffix = MEDICAL_NAMES[Math.floor(u(3) * MEDICAL_NAMES.length)];
         }
       }
-      const arts = take();
+      const arts = artsFirst;
       if (arts) {
         arts.role = 'arts';
         if (u(4) < chance) {
@@ -977,7 +985,7 @@ export function createNeighbourhoods(seed, { boulevards, railIn = () => [], metr
           arts.suffix = ARTS_NAMES[Math.floor(u(5) * ARTS_NAMES.length)];
         }
       }
-      const courts = take();
+      const courts = courtsFirst;
       if (courts) courts.role = 'courts';
     }
     // The rasters later stages read: residents per m² and neighbourhood per cell.

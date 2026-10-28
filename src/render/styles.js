@@ -10,6 +10,10 @@ export const palette = {
   contour: 'rgba(150, 140, 110, 0.35)',
   hillTint: 'rgba(150, 136, 98, 0.06)',
   sand: '#f3e6c4',
+  quay: '#e4dac8', // paved promenades, quays and piers by the water
+  quayEdge: '#bdae95',
+  boardwalk: '#c9a77c',
+  bluff: '#d7c29a',
   bridgeCasing: '#b4ada1',
   core: '#f8ecdc',
   natural: '#bde2a9', // primary greenways, district parks

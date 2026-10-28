@@ -410,7 +410,7 @@ Notes on what was built:
 - From 3M, a general aviation airfield: one 1.6 km runway with apron and
   hangars at the end of a road that crosses the expressway to it.
 
-## Phase 9. Water
+## Phase 9. Water (mostly done; see notes)
 
 26. **Natural rivers.**
     - Follow real river dynamics (read up on them): width that varies,
@@ -435,9 +435,33 @@ Notes on what was built:
     closeness to the water, so the built-up area elongates along it.
     Do it together with Phase 9.
 
+Notes on what was built:
+- Rivers meander (swinging up to 2.4 widths either way every 13 widths or
+  so, more or less by stretch), widen and narrow by up to 30% along their
+  way, and half of river and estuary cities get a smaller river joining.
+- Not done: braided channels, river islands with built-up land and
+  bridges (growth never crosses a river, so a small island would sit as
+  open country inside the city; it needs growth to cross bridged
+  channels), and canals.
+- Waterfronts: in the inner city (further out the bigger the city; on the
+  shore, out to the stretch nearest the centre) a river's lower banks are
+  paved promenades with plazas at the water every 500 m or so and now and
+  then a boardwalk; the shore is a quay with piers. Further out, bank
+  trails and beaches as before, and bluffs on some sandless shores.
+- Three in four districts near a river have their centre drawn onto its
+  bank (not the city centre's, whose business district needs room all
+  round). Main streets that run into a river with no bridge stop at the
+  bank.
+- Cities stretch along their river or coast: a district's distance from
+  the water counts extra when ranking which districts make up the city.
+- Tests touched: block and building fixtures now sample the districts next
+  to the centre (the fixed rectangle they used no longer held four); the
+  sharp-plot allowance is 1.5% (river-bank districts have more wedge-shaped
+  blocks); the river-boundary check copes with points far from any river.
+
 ## Phase 10. Leftovers
 
-29. **Bike share stations** (pending from before). Small icons only, no
+29. **Bike share stations** (done: shown close in, from zoom 1.6). Small icons only, no
     docks drawn, at:
     - every rail and metro station and tram stop (on the main street
       sidewalk or a side street);
@@ -447,6 +471,46 @@ Notes on what was built:
       (beside the greenway).
 30. **Bus routes** for the peripheral, non-built-up areas, the greenbelt
     attractions included.
+
+## Phase 11. Rework after review (in this order)
+
+31. **Main streets, from scratch, London-style.**
+    - Main streets come first; neighbourhoods are drawn round them (each
+      neighbourhood about its high street), still meeting every
+      neighbourhood criterion (size, population, amenities, metro).
+    - Organic, not a grid: gently curving, long and continuous, running
+      through several neighbourhoods and across district boundaries,
+      not broken by boulevards or secondary greenways (they cross them).
+    - Never along a neighbourhood's edge: down its middle.
+    - Few turns, so tram routes along them run fairly straight.
+32. **Where a main street meets a river or greenway** it either crosses
+    (bridge or tunnel), or ends at the boundary of the greenway, never
+    partway in. At a river it may instead end at a T junction with a new
+    **riverside boulevard**.
+33. **Regional rail in larger cities**: more radial lines, so most
+    districts have rail (London Overground), with lines merging and other
+    patterns, simpler further out. A smaller, narrower central loop (two
+    parallel lines joined by curves at the ends, Yamanote-like) so lines
+    don't wind round the centre before heading out.
+34. **Periphery, redone.**
+    - Roads: proper diverging diamond interchanges, of real size, where
+      roads continue past the expressway; trumpets where they end. One
+      multi-use path per road, from the boulevard's sidewalk, beyond a
+      wide tree-lined median. No sharp bends.
+    - Park-and-rides between the road and the rail line, reached by road
+      from the interchange.
+    - Industrial areas further out, on roads continuing past the
+      expressway, with more than one road in; big buildings
+      (distribution centres and plants are bigger than a city block);
+      roundabouts where a road meets an industrial street, plain
+      junctions between industrial streets; no lot reached straight off a
+      road. No steel mills or chemical plants (those are off the map).
+    - Logistics: distribution centres out there; fulfilment hubs at the
+      built-up edge, where freight moves to cargo e-bikes.
+    - Metro extensions only where they go somewhere, run straight on from
+      the line's end.
+    - Airports kept simple: runways, taxiways, one big block for the
+      terminals and one for hangars, reached by road.
 
 ## Open question
 

@@ -17,7 +17,7 @@ import { rngFor } from '../core/rng.js';
 import { createNoise, createWarp } from '../core/noise.js';
 import { LruCache } from './cache.js';
 import { STREET_TYPES } from './streetTypes.js';
-import { createBoulevards, distToPieces } from './boulevards.js';
+import { createBoulevards, distToPieces, lineBox, piecesOf } from './boulevards.js';
 import { createParks } from './parks.js';
 import { createGreenways } from './greenway.js';
 import { createTransit } from './transit.js';
@@ -42,6 +42,14 @@ export const GREENWAY_MIN = 50;
 export const GREENWAY_MAX = 160;
 export const BOULEVARD_WIDTH = STREET_TYPES.boulevard.width;
 const CORE_CLEAR = 300; // greenways keep this far from a station
+// Distance from q to segment ab.
+const segDistance = (q, a, b) => {
+  const abx = b[0] - a[0];
+  const aby = b[1] - a[1];
+  const t = Math.max(0, Math.min(1, ((q[0] - a[0]) * abx + (q[1] - a[1]) * aby) / (abx * abx + aby * aby || 1)));
+  return Math.hypot(q[0] - a[0] - abx * t, q[1] - a[1] - aby * t);
+};
+const RIVER_STOP = 12; // metres back from the water a main street with no bridge stops
 const DISTRICT_REACH = 7000; // no district extends further than this from its core
 const DISTRICT_SEARCH = 5500; // cores this far outside a view can still reach into it
 const SMOOTHING = 4; // Chaikin passes on boundaries
@@ -131,7 +139,12 @@ const CORE_REACH = 1.25;
 // distance, fading out by the second.
 const SNAP = [280, 460];
 const RIVER_FLARE = [60, 360]; // a greenway widens to hold a river this near it
-const DRY = 450; // cores keep this far from the water
+const DRY = 450; // metres: cores keep this far from the water
+const RIVER_DRY = 140; // but only this far back from a river's water: a centre may stand on its bank
+const RIVER_CORE = 170; // metres back from the water a centre drawn to the river stands
+const RIVER_DRAW = 0.75; // share of centres near a river drawn onto its bank
+const CENTRE_STAYS = 1800; // metres from the middle of the site: the city centre's core is not drawn to the river
+const WATER_PULL = 1.25; // how much more a district's distance from the water counts toward its joining the city
 const CITY_SHAPE = 0.35; // how far from round the city's outline wanders
 
 const smooth01 = (t) => {
@@ -144,29 +157,67 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
   // Cores on dry land only: none in the water or on its very edge.
   const allCores = createCores(seed);
   const dryMemo = new Map();
+  const isDry = (x, y) => {
+    const r = terrain.nearestRiver(x, y);
+    return terrain.shore(x, y) > DRY && !(r && r.d < r.width / 2 + RIVER_DRY) && !terrain.isHigh(x, y) && !terrain.isHigh(x + 600, y) && !terrain.isHigh(x - 600, y) && !terrain.isHigh(x, y + 600) && !terrain.isHigh(x, y - 600);
+  };
+  // A district near a river most likely has its centre right on it: the
+  // core drawn onto the bank, on its own side.
+  const moved = new Map();
+  const placed = (c) => {
+    let m = moved.get(c.key);
+    if (m) return m;
+    m = c;
+    const r = terrain.nearestRiver(c.x, c.y);
+    // (Not the city's own centre, whose business district needs room all
+    // round its station.)
+    if (r && r.d > r.width / 2 && Math.hypot(c.x, c.y) > CENTRE_STAYS && toUnit(hash(seed, 'river-centre', ...keyInts(c))) < RIVER_DRAW) {
+      const n = [(c.x - r.p[0]) / r.d, (c.y - r.p[1]) / r.d];
+      const q = [r.p[0] + n[0] * (r.width / 2 + RIVER_CORE), r.p[1] + n[1] * (r.width / 2 + RIVER_CORE)];
+      if (isDry(q[0], q[1])) m = { ...c, x: q[0], y: q[1], onRiver: true };
+    }
+    moved.set(c.key, m);
+    return m;
+  };
   const dry = (c) => {
     let v = dryMemo.get(c.key);
     if (v === undefined) {
-      const r = terrain.nearestRiver(c.x, c.y);
-      v = terrain.shore(c.x, c.y) > DRY && !(r && r.d < r.width / 2 + DRY) && !terrain.isHigh(c.x, c.y) && !terrain.isHigh(c.x + 600, c.y) && !terrain.isHigh(c.x - 600, c.y) && !terrain.isHigh(c.x, c.y + 600) && !terrain.isHigh(c.x, c.y - 600);
+      v = isDry(c.x, c.y);
       dryMemo.set(c.key, v);
     }
     return v;
   };
   const cores = {
     ...allCores,
-    coresInRect: (x0, y0, x1, y1) => allCores.coresInRect(x0, y0, x1, y1).filter(dry),
+    coresInRect: (x0, y0, x1, y1) => allCores.coresInRect(x0, y0, x1, y1).map(placed).filter(dry),
   };
   // The city: as many districts as its people need, the ones nearest the
   // centre (by a distance stretched a little by direction, so the city is
   // not round).
   const shapeNoise = createNoise(seed, 'city-shape');
   const reach = terrain.radius * 2.2 + 4000;
+  // (River and shore cities stretch along the water: a district's
+  // distance from it counts for more.)
+  const waterLines = terrain.rivers.filter((rv) => !rv.channel).map((rv) => rv.pts);
+  const fromWater = (x, y) => {
+    let best = terrain.hasSea ? Math.max(0, terrain.shore(x, y)) : Infinity;
+    for (const P of waterLines) {
+      for (let i = 0; i + 1 < P.length; i += 2) {
+        const a = P[i];
+        const b = P[Math.min(P.length - 1, i + 2)];
+        const ab = [b[0] - a[0], b[1] - a[1]];
+        const t = Math.max(0, Math.min(1, ((x - a[0]) * ab[0] + (y - a[1]) * ab[1]) / (ab[0] * ab[0] + ab[1] * ab[1] || 1)));
+        best = Math.min(best, Math.hypot(x - a[0] - ab[0] * t, y - a[1] - ab[1] * t));
+      }
+    }
+    return Number.isFinite(best) ? best : 0;
+  };
   const ranked = cores.coresInRect(-reach, -reach, reach, reach)
     .map((c) => {
       const a = Math.atan2(c.y, c.x);
       const k = 1 + CITY_SHAPE * shapeNoise.fbm(Math.cos(a) * 1.3 + 5, Math.sin(a) * 1.3, 2);
-      return { c, r: Math.hypot(c.x, c.y) * k };
+      const w = fromWater(c.x, c.y);
+      return { c, r: Math.sqrt(c.x * c.x + c.y * c.y + WATER_PULL * w * w) * k };
     })
     .sort((a, b) => a.r - b.r || (a.c.key < b.c.key ? -1 : 1));
   const cityCores = ranked.slice(0, terrain.districts).map((e) => e.c);
@@ -253,7 +304,18 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     return warpFine(p[0], p[1], p);
   };
   const widthNoise = createNoise(seed, 'greenway-width');
-  const greenways = createGreenways(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), terrain, armsAt: (k) => armsAt(k) });
+  // The inner city, whose waterfronts are made for people: further out
+  // the bigger the city.
+  const innerReach = terrain.radius * (0.42 + 0.2 * Math.max(0, Math.min(1, (population - 7.5e5) / 6e6)));
+  // (On the shore, out as far as the stretch of it nearest the centre.)
+  const shoreReach = terrain.hasSea ? Math.max(innerReach, Math.max(0, terrain.shore(centre[0], centre[1])) + innerReach * 0.7) : innerReach;
+  const greenways = createGreenways(seed, {
+    greenwayWidth: (x, y) => greenwayWidth(x, y),
+    terrain,
+    armsAt: (k) => armsAt(k),
+    inner: (x, y) => Math.hypot(x - centre[0], y - centre[1]) < innerReach,
+    innerShore: (x, y) => Math.hypot(x - centre[0], y - centre[1]) < shoreReach,
+  });
   // The greenways leaving a junction (by its point key): each one's key
   // and its direction out of the junction.
   const armsCache = new LruCache(20000);
@@ -669,6 +731,62 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     };
     // Stage 3. The core is the neighbourhood around the station.
     d.stage3 = hoods.of(d);
+    // A main street that does not cross a greenway (or a river) into the
+    // next district stops at its edge: at the bank, or where the greenway's
+    // green begins, never partway across.
+    const toChain = (q) => {
+      let best = Infinity;
+      for (const c of d.chains) {
+        const P = c.points;
+        for (let i = 0; i + 1 < P.length; i++) {
+          const [ax, ay] = P[i];
+          const abx = P[i + 1][0] - ax;
+          const aby = P[i + 1][1] - ay;
+          const t = Math.max(0, Math.min(1, ((q[0] - ax) * abx + (q[1] - ay) * aby) / (abx * abx + aby * aby || 1)));
+          best = Math.min(best, Math.hypot(q[0] - ax - abx * t, q[1] - ay - aby * t));
+        }
+      }
+      return best;
+    };
+    for (const l of d.stage3.lines) {
+      const P = l.points;
+      if (P.length < 3 || dist(...P[0], ...P[P.length - 1]) < 1) continue;
+      const wet = (q) => {
+        const r = terrain.nearestRiver(q[0], q[1]);
+        return (!!r && r.d < r.width / 2 + RIVER_STOP) || toChain(q) < greenwayWidth(q[0], q[1]) / 2 + 1;
+      };
+      // (Not where it crosses into the next district, or meets another street.)
+      const others = [...d.stage3.lines.filter((o) => o !== l).map((o) => o.points), ...d.network.lines.map((o) => o.points)];
+      const onStreet = (q) => others.some((O) => O.some((p, i) => i > 0 && segDistance(q, O[i - 1], p) < 2));
+      // (Its own crossings only: another street's may lie close by.)
+      const mine = new Set([l.crossing, l.crossingEnd].filter(Boolean));
+      const crossed = (q) => (d.stage3.crossings || []).some((x) => mine.has(x.key) && dist(...x.p, ...q) < 30) || onStreet(q);
+      let [a, b] = [0, P.length - 1];
+      const endWet = wet(P[b]) && !crossed(P[b]);
+      const startWet = wet(P[a]) && !crossed(P[a]);
+      if (endWet) while (b > a + 1 && wet(P[b])) b--;
+      if (startWet) while (a < b - 1 && wet(P[a])) a++;
+      if (!endWet && !startWet) continue;
+      const Q = P.slice(a, b + 1).map((q) => q.slice());
+      // (Still in the water at the last stretch: back along it to the bank.)
+      for (const [i, j] of [[Q.length - 1, Q.length - 2], [0, 1]]) {
+        if (!wet(Q[i]) || (i === 0 ? !startWet : !endWet)) continue;
+        let [lo, hi] = [0, 1];
+        for (let k = 0; k < 16; k++) {
+          const m = (lo + hi) / 2;
+          if (wet([Q[i][0] + (Q[j][0] - Q[i][0]) * m, Q[i][1] + (Q[j][1] - Q[i][1]) * m])) lo = m;
+          else hi = m;
+        }
+        Q[i] = [Q[i][0] + (Q[j][0] - Q[i][0]) * hi, Q[i][1] + (Q[j][1] - Q[i][1]) * hi];
+      }
+      l.points = Q;
+      l.bbox = lineBox(l.points);
+      l.pieces = piecesOf(l.points);
+      l.atBank = true;
+      // (It ends at the greenway's edge, or the bank, now.)
+      if (startWet) l.edgeStart = true;
+      if (endWet) l.edgeEnd = true;
+    }
     d.core = d.stage3.hoods[0].polygon;
     d.coreArea = d.stage3.hoods[0].area;
     districts.set(core.key, d);
@@ -787,7 +905,7 @@ export function createWorld(seed, { population = DEFAULT_POPULATION } = {}) {
     }
     return parkPlan.get(pk.key) || [];
   };
-  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops, tramsIn: (d) => trams.in(d), parkFacilities });
+  const blocks = createBlocks(seed, { greenwayWidth: (x, y) => greenwayWidth(x, y), greenway: (geo) => greenways.of(geo), isWater: terrain.isWater, railIn: (d) => rail.corridorsIn(d.bbox.x0, d.bbox.y0, d.bbox.x1, d.bbox.y1), stationsIn: (d) => transit.of(d).railStops, metroIn: (d) => transit.of(d).metroStops, tramsIn: (d) => trams.in(d), parkFacilities });
 
   // What lies round the city: worked out once, when first wanted.
   let periphery = null;

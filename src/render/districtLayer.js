@@ -34,7 +34,7 @@ const THROAT = 260; // metres over which its tracks fan out
 const CYCLE_TRACK = 7.5; // metres off the viaduct's centreline: the cycle track on the path beneath
 const VIADUCT_HEIGHT = 8; // tram stops as markers from here (to scale from DETAIL_MIN_ZOOM)
 import { palette } from './styles.js';
-import { TRAIL_WIDTH, BEACH } from '../world/greenway.js';
+import { TRAIL_WIDTH, BEACH, QUAY } from '../world/greenway.js';
 import { layoutPaths, drawLayouts } from './parkLayer.js';
 import { drawBlocks, hoodLinePath, BLOCK_MIN_ZOOM } from './blockLayer.js';
 import { DETAIL_MIN_ZOOM, drawJunctionGround, drawJunctionMarks, drawPlatforms, drawSections, streetExtras, drawRails, offsetLine, sectionFeatures, RAIL_GAUGE } from './streetDetail.js';
@@ -446,8 +446,63 @@ export function drawDistricts(ctx, view, world, layers) {
       }
     }
   }
+  // The waterfront on land: quays and plazas at the water, bluffs.
+  const fronts = [];
+  if (layers.green && terrain && zoom >= 0.04) {
+    for (const { d } of items) {
+      for (const c of d.chains) {
+        if (c.geo.kind !== 'shore' && c.geo.kind !== 'river') continue;
+        const p = greenwayPathsFor(world.greenway(c.geo), d.origin);
+        if (p.quays || p.plazas || p.bluffs || p.boardwalks || p.piers) fronts.push({ d, p });
+      }
+    }
+    ctx.lineCap = 'butt';
+    for (const { d, p } of fronts) {
+      place(d);
+      if (p.bluffs) {
+        ctx.strokeStyle = palette.bluff;
+        ctx.lineWidth = 22;
+        ctx.stroke(p.bluffs);
+      }
+      if (p.quays) {
+        // (On the water's edge, twice as wide: the water covers the outer half.)
+        ctx.strokeStyle = palette.quayEdge;
+        ctx.lineWidth = QUAY * 2 + px(1);
+        ctx.stroke(p.quays);
+        ctx.strokeStyle = palette.quay;
+        ctx.lineWidth = QUAY * 2;
+        ctx.stroke(p.quays);
+      }
+      if (p.plazas) {
+        ctx.fillStyle = palette.quay;
+        ctx.fill(p.plazas);
+      }
+    }
+    ctx.lineCap = 'round';
+  }
   // Water: the sea (or lake) and the rivers.
   if (terrain) drawWater(ctx, view, terrain, px);
+  // Out over the water: boardwalks and piers.
+  if (fronts.length) {
+    ctx.lineCap = 'butt';
+    for (const { d, p } of fronts) {
+      place(d);
+      if (p.boardwalks) {
+        ctx.strokeStyle = palette.boardwalk;
+        ctx.lineWidth = 7;
+        ctx.stroke(p.boardwalks);
+      }
+      if (p.piers) {
+        ctx.strokeStyle = palette.quayEdge;
+        ctx.lineWidth = 12 + px(1.2);
+        ctx.stroke(p.piers);
+        ctx.strokeStyle = palette.quay;
+        ctx.lineWidth = 12;
+        ctx.stroke(p.piers);
+      }
+    }
+    ctx.lineCap = 'round';
+  }
 
   // Boulevards and main streets carry on under the greenways: drawn again
   // inside each greenway strip as tunnels, pale with dashed edges, so a
@@ -894,7 +949,24 @@ function greenwayPathsFor(g, origin) {
     for (const L of list) addPoly(path, L, ox, oy, false);
     return path;
   };
-  p = { origin, stream: g.streams.length ? lines(g.streams) : null, trails: lines(g.trails), beaches: g.beaches && g.beaches.length ? lines(g.beaches) : null };
+  const some = (list) => (list && list.length ? list : null);
+  const polys = (list) => {
+    const path = new Path2D();
+    for (const L of list) addPoly(path, L, ox, oy, true);
+    return path;
+  };
+  p = {
+    origin,
+    stream: g.streams.length ? lines(g.streams) : null,
+    trails: lines(g.trails),
+    beaches: some(g.beaches) && lines(g.beaches),
+    // The waterfront: quays and plazas, bluffs; boardwalks and piers.
+    quays: some(g.quays) && lines(g.quays),
+    plazas: some(g.plazas) && polys(g.plazas),
+    bluffs: some(g.bluffs) && lines(g.bluffs),
+    boardwalks: some(g.boardwalks) && lines(g.boardwalks),
+    piers: some(g.piers) && lines(g.piers),
+  };
   greenwayPaths.set(g, p);
   return p;
 }
